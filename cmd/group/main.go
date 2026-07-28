@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"autoscaler/internal/discovery"
@@ -17,6 +18,8 @@ import (
 	"autoscaler/internal/executor"
 	"autoscaler/internal/loadbalancer"
 	"autoscaler/internal/scaler"
+
+	"github.com/joho/godotenv"
 )
 
 const (
@@ -40,8 +43,9 @@ var policy = scaler.Policy{
 }
 
 func main() {
+	_ = godotenv.Load()
 	ctx := context.Background()
-	client := dockerclient.New("/var/run/docker.sock")
+	client := dockerclient.New(os.Getenv("HOME") + os.Getenv("DOCKER_SOCKET"))
 	balancer := loadbalancer.NewRoundRobin()
 
 	go reconcileLoop(ctx, client, balancer)

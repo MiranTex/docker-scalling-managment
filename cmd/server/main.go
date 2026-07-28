@@ -3,11 +3,14 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"autoscaler/internal/discovery"
 	"autoscaler/internal/dockerclient"
 	"autoscaler/internal/executor"
 	"autoscaler/internal/scaler"
+
+	"github.com/joho/godotenv"
 )
 
 // serviceLabel é a label que o autoscaler usa para saber a quais containers
@@ -26,8 +29,11 @@ var samplePolicy = scaler.Policy{
 }
 
 func main() {
+
+	_ = godotenv.Load()
+
 	ctx := context.Background()
-	client := dockerclient.New("/var/run/docker.sock")
+	client := dockerclient.New(os.Getenv("HOME") + os.Getenv("DOCKER_SOCKET"))
 
 	containers, err := client.ListContainers(ctx, false, nil)
 	if err != nil {

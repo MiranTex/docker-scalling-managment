@@ -5,11 +5,14 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"autoscaler/internal/discovery"
 	"autoscaler/internal/dockerclient"
 	"autoscaler/internal/loadbalancer"
+
+	"github.com/joho/godotenv"
 )
 
 // serviceLabel identifica quais containers pertencem ao serviço balanceado —
@@ -28,8 +31,9 @@ const (
 )
 
 func main() {
+	_ = godotenv.Load()
 	ctx := context.Background()
-	client := dockerclient.New("/var/run/docker.sock")
+	client := dockerclient.New(os.Getenv("HOME") + os.Getenv("DOCKER_SOCKET"))
 	balancer := loadbalancer.NewRoundRobin()
 
 	go discoveryLoop(ctx, client, balancer)

@@ -9,6 +9,7 @@ import (
 	"text/tabwriter"
 
 	"autoscaler/internal/dockerclient"
+	"github.com/joho/godotenv"
 )
 
 // serviceLabel é a label que o resto do sistema (scaler, executor,
@@ -18,9 +19,13 @@ import (
 const serviceLabel = "autoscaler.service"
 
 func runList(args []string) {
+
+	_ = godotenv.Load()
+
+
 	fs := flag.NewFlagSet("list", flag.ExitOnError)
 	all := fs.Bool("all", false, "incluir containers parados, não só os em execução")
-	socket := fs.String("socket", "/var/run/docker.sock", "caminho do unix socket do Docker")
+	socket := fs.String("socket", os.Getenv("HOME")+os.Getenv("DOCKER_SOCKET"), "caminho do unix socket do Docker")
 	fs.Parse(args)
 
 	ctx := context.Background()
