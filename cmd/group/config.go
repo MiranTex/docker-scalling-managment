@@ -1,8 +1,7 @@
 package main
 
 import (
-	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"strconv"
 	"time"
@@ -71,7 +70,8 @@ func loadConfig() config {
 	}
 
 	if cfg.targetService == "" {
-		log.Fatal("group: variável de ambiente TARGET_SERVICE é obrigatória (qual serviço este grupo gerencia)")
+		slog.Error("configuração inválida: TARGET_SERVICE é obrigatória (qual serviço este grupo gerencia)")
+		os.Exit(1)
 	}
 	return cfg
 }
@@ -90,7 +90,8 @@ func envInt(key string, def int) int {
 	}
 	n, err := strconv.Atoi(v)
 	if err != nil {
-		log.Fatalf("group: %s=%q inválido, esperava um inteiro: %v", key, v, err)
+		slog.Error("configuração inválida", "var", key, "value", v, "want", "inteiro", "err", err)
+		os.Exit(1)
 	}
 	return n
 }
@@ -102,7 +103,8 @@ func envFloat(key string, def float64) float64 {
 	}
 	n, err := strconv.ParseFloat(v, 64)
 	if err != nil {
-		log.Fatalf("group: %s=%q inválido, esperava um número: %v", key, v, err)
+		slog.Error("configuração inválida", "var", key, "value", v, "want", "número", "err", err)
+		os.Exit(1)
 	}
 	return n
 }
@@ -115,19 +117,29 @@ func envMillis(key string, defMillis int) time.Duration {
 	return time.Duration(envInt(key, defMillis)) * time.Millisecond
 }
 
-// summary é só uma linha de log legível pra conferir a configuração efetiva
-// ao subir — útil quando ela vem inteira de variáveis de ambiente e não dá
-// pra "ver" no código.
-func (c config) summary() string {
+// logAttrs devolve a configuração efetiva como pares chave/valor prontos
+// pra passar a um slog.Logger — útil pra conferir no log de startup como o
+// processo ficou configurado, já que ela vem inteira de variáveis de
+// ambiente e não dá pra "ver" no código.
+func (c config) logAttrs() []any {
 	healthCheck := "tcp"
 	if c.healthCheckPath != "" {
-		healthCheck = "http " + c.healthCheckPath
+		healthCheck = "http:" + c.healthCheckPath
 	}
-	return fmt.Sprintf(
-		"service=%s label=%s port=%d listen=%s replicas=[%d,%d] cpu=[%.0f%%,%.0f%%] tick=%s sustained=%d cooldown=%s drain=%s shutdown=%s health=%s",
-		c.targetService, c.serviceLabel, c.backendPort, c.listenAddr,
-		c.policy.MinReplicas, c.policy.MaxReplicas,
-		c.policy.CPUScaleDownPercent, c.policy.CPUScaleUpPercent, c.reconcileTick,
-		c.policy.SustainedTicks, c.policy.Cooldown, c.drainTimeout, c.shutdownTimeout, healthCheck,
-	)
+	return []any{
+		"service", c.targetService,
+		"label", c.serviceLabel,
+		"backend_port", c.backendPort,
+		"listen_addr", c.listenAddr,
+		"min_replicas", c.policy.MinReplicas,
+		"max_replicas", c.policy.MaxReplicas,
+		"cpu_scale_down_percent", c.policy.CPUScaleDownPercent,
+		"cpu_scale_up_percent", c.policy.CPUScaleUpPercent,
+		"reconcile_tick", c.reconcileTick.String(),
+		"sustained_ticks", c.policy.SustainedTicks,
+		"cooldown", c.policy.Cooldown.String(),
+		"drain_timeout", c.drainTimeout.String(),
+		"shutdown_timeout", c.shutdownTimeout.String(),
+		"health_check", healthCheck,
+	}
 }

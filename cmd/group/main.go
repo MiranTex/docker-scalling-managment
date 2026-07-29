@@ -13,8 +13,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
+	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -30,6 +31,7 @@ import (
 
 func main() {
 	_ = godotenv.Load()
+	logger := setupLogger()
 	cfg := loadConfig()
 
 	// ctx é cancelado assim que um SIGINT/SIGTERM chega, o que faz o
@@ -43,7 +45,7 @@ func main() {
 	evaluator := scaler.NewEvaluator(cfg.policy)
 	draining := newDrainSet()
 
-	go reconcileLoop(ctx, cfg, client, balancer, evaluator, draining)
+	go reconcileLoop(ctx, cfg, client, logger, balancer, evaluator, draining)
 
 	srv := &http.Server{
 		Addr:    cfg.listenAddr,
@@ -51,71 +53,83 @@ func main() {
 	}
 
 	go func() {
-		log.Printf("group: ouvindo em %s (%s)", cfg.listenAddr, cfg.summary())
+		logger.Info("group iniciado", cfg.logAttrs()...)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("group: erro no servidor HTTP: %v", err)
+			logger.Error("erro no servidor HTTP", "err", err)
+			os.Exit(1)
 		}
 	}()
 
 	<-ctx.Done()
-	log.Printf("group: sinal de encerramento recebido, drenando requisições em andamento (até %s)", cfg.shutdownTimeout)
+	logger.Info("sinal de encerramento recebido, drenando requisições em andamento", "shutdown_timeout", cfg.shutdownTimeout.String())
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.shutdownTimeout)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Printf("group: shutdown do servidor HTTP não terminou a tempo: %v", err)
+		logger.Warn("shutdown do servidor HTTP não terminou a tempo", "err", err)
 	}
-	log.Printf("group: encerrado")
+	logger.Info("group encerrado")
 }
 
 // reconcileLoop é o coração do grupo: a cada tick, lê o estado atual dos
 // containers do serviço UMA vez e usa essa mesma leitura tanto pra decidir
 // se escala quanto para atualizar a lista de backends do load balancer.
-func reconcileLoop(ctx context.Context, cfg config, client *dockerclient.Client, balancer *loadbalancer.RoundRobin, evaluator *scaler.Evaluator, draining *drainSet) {
+func reconcileLoop(ctx context.Context, cfg config, client *dockerclient.Client, logger *slog.Logger, balancer *loadbalancer.RoundRobin, evaluator *scaler.Evaluator, draining *drainSet) {
 	ticker := time.NewTicker(cfg.reconcileTick)
 	defer ticker.Stop()
 
 	for {
-		reconcile(ctx, cfg, client, balancer, evaluator, draining)
+		reconcile(ctx, cfg, client, logger, balancer, evaluator, draining)
 		select {
 		case <-ticker.C:
 		case <-ctx.Done():
-			log.Printf("group: reconcile loop encerrado (%v)", ctx.Err())
+			logger.Info("reconcile loop encerrado", "err", ctx.Err())
 			return
 		}
 	}
 }
 
-func reconcile(ctx context.Context, cfg config, client *dockerclient.Client, balancer *loadbalancer.RoundRobin, evaluator *scaler.Evaluator, draining *drainSet) {
+func reconcile(ctx context.Context, cfg config, client *dockerclient.Client, logger *slog.Logger, balancer *loadbalancer.RoundRobin, evaluator *scaler.Evaluator, draining *drainSet) {
+	logger = logger.With("service", cfg.targetService)
+
 	filters := map[string][]string{
 		"label": {fmt.Sprintf("%s=%s", cfg.serviceLabel, cfg.targetService)},
 	}
 	containers, err := client.ListContainers(ctx, false, filters)
 	if err != nil {
-		log.Printf("group: erro listando containers: %v", err)
+		logger.Error("erro listando containers", "err", err)
 		return
 	}
 
 	if len(containers) == 0 {
-		log.Printf("group: nenhum container encontrado para %q, load balancer sem backends", cfg.targetService)
+		logger.Warn("nenhum container encontrado para o serviço, load balancer sem backends")
 		balancer.SetBackends(nil)
 		return
 	}
 
 	if metrics, err := discovery.AggregateMetrics(ctx, client, cfg.targetService, containers); err != nil {
-		log.Printf("group: erro coletando métricas: %v", err)
+		logger.Error("erro coletando métricas", "err", err)
 	} else {
 		decision := evaluator.Evaluate(metrics, time.Now())
-		log.Printf("group: replicas=%d avg_cpu=%.2f%% -> %s (delta=%d): %s",
-			metrics.Replicas, metrics.AvgCPUPercent, decision.Action, decision.Delta, decision.Reason)
+		level := slog.LevelDebug
+		if decision.Action != scaler.NoAction {
+			level = slog.LevelInfo
+		}
+		logger.Log(ctx, level, "reconcile avaliado",
+			"replicas", metrics.Replicas,
+			"avg_cpu_percent", metrics.AvgCPUPercent,
+			"action", decision.Action.String(),
+			"delta", decision.Delta,
+			"reason", decision.Reason,
+		)
 
 		switch decision.Action {
 		case scaler.ScaleUp:
 			if err := executor.Apply(ctx, client, decision, containers); err != nil {
-				log.Printf("group: erro aplicando decisão: %v", err)
+				logger.Error("erro aplicando scale up", "err", err)
 			}
 		case scaler.ScaleDown:
-			startDrain(ctx, cfg, client, draining, containers)
+			startDrain(ctx, cfg, client, logger, draining, containers)
 		}
 	}
 
@@ -125,7 +139,7 @@ func reconcile(ctx context.Context, cfg config, client *dockerclient.Client, bal
 	active := draining.excludeDraining(containers)
 	backends := discovery.Backends(ctx, client, active, cfg.backendPort, cfg.healthCheckPath, cfg.healthCheckTimeout)
 	balancer.SetBackends(backends)
-	log.Printf("group: %d/%d container(s) saudável(is)", len(backends), len(active))
+	logger.Debug("backends atualizados", "healthy", len(backends), "total", len(active))
 }
 
 // startDrain escolhe um alvo de scale down entre os containers que ainda
@@ -133,22 +147,24 @@ func reconcile(ctx context.Context, cfg config, client *dockerclient.Client, bal
 // (via draining.add, refletido no próximo SetBackends deste mesmo
 // reconcile) e só depois de cfg.drainTimeout efetivamente para e remove o
 // container — dando tempo das requisições já em andamento nele terminarem.
-func startDrain(ctx context.Context, cfg config, client *dockerclient.Client, draining *drainSet, containers []dockerclient.Container) {
+func startDrain(ctx context.Context, cfg config, client *dockerclient.Client, logger *slog.Logger, draining *drainSet, containers []dockerclient.Container) {
 	candidates := draining.excludeDraining(containers)
 	target, err := executor.SelectScaleDownTarget(candidates)
 	if err != nil {
-		log.Printf("group: scale down sem candidatos livres (todos já em drenagem)")
+		logger.Warn("scale down sem candidatos livres, todos já em drenagem")
 		return
 	}
 
 	draining.add(target.ID)
-	log.Printf("group: container %s escolhido para scale down, saindo do load balancer e será removido em %s",
-		target.ID[:12], cfg.drainTimeout)
+	logger.Info("container escolhido para scale down, saindo do load balancer",
+		"container_id", target.ID[:12], "drain_timeout", cfg.drainTimeout.String())
 
 	go func(id string) {
 		time.Sleep(cfg.drainTimeout)
 		if err := executor.Remove(ctx, client, id); err != nil {
-			log.Printf("group: erro removendo container %s: %v", id[:12], err)
+			logger.Error("erro removendo container", "container_id", id[:12], "err", err)
+		} else {
+			logger.Info("container removido", "container_id", id[:12])
 		}
 		draining.remove(id)
 	}(target.ID)

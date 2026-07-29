@@ -1,7 +1,7 @@
 package loadbalancer
 
 import (
-	"log"
+	"log/slog"
 	"net/http"
 	"net/http/httputil"
 )
@@ -24,7 +24,7 @@ func NewProxy(balancer *RoundRobin) http.Handler {
 			req.URL.Host = backend.Addr
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			log.Printf("loadbalancer: erro encaminhando requisição: %v", err)
+			slog.Error("erro encaminhando requisição", "err", err, "path", r.URL.Path)
 			http.Error(w, "bad gateway", http.StatusBadGateway)
 		},
 	}

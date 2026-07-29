@@ -28,10 +28,25 @@ services:
       MAX_REPLICAS: "5"
       CPU_SCALE_UP_PERCENT: "50"
       CPU_SCALE_DOWN_PERCENT: "20"
+      # Anti-flapping: só escala depois de N ticks consecutivos fora do
+      # limiar, e espera esse tempo entre uma ação de scaling e a próxima.
+      SUSTAINED_TICKS: "2"
+      COOLDOWN_SECONDS: "30"
+      # Tempo que um container escolhido pra scale down fica fora do load
+      # balancer antes de ser efetivamente parado (drena requisições em
+      # andamento) e tempo que o próprio processo espera, ao receber
+      # SIGTERM, pelas requisições HTTP em andamento antes de encerrar.
+      DRAIN_TIMEOUT_SECONDS: "10"
+      SHUTDOWN_TIMEOUT_SECONDS: "15"
       # Vazio (default) faz só um dial TCP na porta. Se a aplicação expuser
       # uma rota de health check de verdade, defina aqui pra validar o
       # status HTTP em vez de só "a porta abriu".
       HEALTH_CHECK_PATH: "/health"
+      # Logs estruturados: "json" (default, bom pra agregadores de log) ou
+      # "text" (mais legível rodando local). Nível mínimo: debug, info
+      # (default), warn ou error.
+      LOG_FORMAT: "json"
+      LOG_LEVEL: "info"
     volumes:
       # O grupo precisa falar com o Docker do host pra listar/criar/remover
       # containers e coletar stats — por isso o socket é montado dentro dele.
