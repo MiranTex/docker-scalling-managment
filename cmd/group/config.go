@@ -22,6 +22,11 @@ type config struct {
 	targetService string
 	backendPort   int
 	listenAddr    string
+	// metricsAddr é o endereço de um servidor HTTP separado (não o mesmo
+	// listenAddr do proxy) que expõe /healthz, /readyz e /metrics — separado
+	// pra esses caminhos não serem capturados pelo handler "tudo vai pro
+	// backend" do load balancer.
+	metricsAddr string
 
 	reconcileTick time.Duration
 	// healthCheckPath vazio faz um simples dial TCP; definido (ex: "/health")
@@ -52,6 +57,7 @@ func loadConfig() config {
 		targetService: os.Getenv("TARGET_SERVICE"),
 		backendPort:   envInt("BACKEND_PORT", 80),
 		listenAddr:    envString("LISTEN_ADDR", ":8090"),
+		metricsAddr:   envString("METRICS_ADDR", ":9090"),
 
 		reconcileTick:      envSeconds("RECONCILE_TICK_SECONDS", 3),
 		healthCheckPath:    os.Getenv("HEALTH_CHECK_PATH"),
@@ -131,6 +137,7 @@ func (c config) logAttrs() []any {
 		"label", c.serviceLabel,
 		"backend_port", c.backendPort,
 		"listen_addr", c.listenAddr,
+		"metrics_addr", c.metricsAddr,
 		"min_replicas", c.policy.MinReplicas,
 		"max_replicas", c.policy.MaxReplicas,
 		"cpu_scale_down_percent", c.policy.CPUScaleDownPercent,

@@ -39,6 +39,12 @@ func (d *drainSet) contains(id string) bool {
 	return ok
 }
 
+func (d *drainSet) len() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return len(d.ids)
+}
+
 // excludeDraining devolve members sem os containers que já estão em
 // drenagem — usados para não escalar para baixo o mesmo container duas
 // vezes e para não oferecê-lo mais como backend do load balancer.

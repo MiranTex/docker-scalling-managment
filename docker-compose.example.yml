@@ -47,12 +47,18 @@ services:
       # (default), warn ou error.
       LOG_FORMAT: "json"
       LOG_LEVEL: "info"
+      # Servidor HTTP separado (não passa pelo load balancer) com /healthz
+      # (liveness), /readyz (200 só se há backend saudável) e /metrics
+      # (Prometheus). Aponte o scrape config do seu Prometheus pra cá.
+      METRICS_ADDR: ":9090"
     volumes:
       # O grupo precisa falar com o Docker do host pra listar/criar/remover
       # containers e coletar stats — por isso o socket é montado dentro dele.
       - /var/run/docker.sock:/var/run/docker.sock
     # Sem "ports": o nginx é quem fica exposto ao mundo; o grupo só precisa
-    # ser alcançável pelo nginx dentro da rede do compose.
+    # ser alcançável pelo nginx dentro da rede do compose. Se for fazer o
+    # Prometheus fora do compose falar direto com METRICS_ADDR, publique a
+    # porta 9090 aqui.
 
 # O(s) container(s) do serviço "demo" em si não entram aqui: eles são criados
 # e destruídos dinamicamente pelo próprio grupo (executor.scaleUp/scaleDown),
