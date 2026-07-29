@@ -3,6 +3,10 @@
 // serve como load balancer pra ele (loadbalancer). cmd/server e
 // cmd/loadbalancer continuam existindo como ferramentas separadas, úteis pra
 // estudar cada peça isolada; este binário é a junção das duas.
+//
+// Toda a configuração vem de variáveis de ambiente (veja config.go) — é o
+// que permite rodar várias instâncias, uma por serviço, cada uma num
+// container com seu próprio conjunto de envs.
 package main
 
 import (
@@ -10,7 +14,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
 	"time"
 
 	"autoscaler/internal/discovery"
@@ -22,36 +25,18 @@ import (
 	"github.com/joho/godotenv"
 )
 
-const (
-	serviceLabel  = "autoscaler.service"
-	targetService = "web"
-	backendPort   = 80
-	listenAddr    = ":8090"
-
-	// reconcileTick é de quanto em quanto tempo o grupo relê o estado do
-	// Docker: reavalia a política de escala E atualiza os backends
-	// saudáveis do load balancer, na mesma passada.
-	reconcileTick      = 3 * time.Second
-	healthCheckTimeout = 500 * time.Millisecond
-)
-
-var policy = scaler.Policy{
-	MinReplicas:         1,
-	MaxReplicas:         3,
-	CPUScaleUpPercent:   50,
-	CPUScaleDownPercent: 25,
-}
-
 func main() {
 	_ = godotenv.Load()
+	cfg := loadConfig()
+
 	ctx := context.Background()
-	client := dockerclient.New(os.Getenv("HOME") + os.Getenv("DOCKER_SOCKET"))
+	client := dockerclient.New(cfg.dockerSocket)
 	balancer := loadbalancer.NewRoundRobin()
 
-	go reconcileLoop(ctx, client, balancer)
+	go reconcileLoop(ctx, cfg, client, balancer)
 
-	log.Printf("group: ouvindo em %s, gerenciando serviço %q (porta %d)", listenAddr, targetService, backendPort)
-	if err := http.ListenAndServe(listenAddr, loadbalancer.NewProxy(balancer)); err != nil {
+	log.Printf("group: ouvindo em %s (%s)", cfg.listenAddr, cfg.summary())
+	if err := http.ListenAndServe(cfg.listenAddr, loadbalancer.NewProxy(balancer)); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -59,19 +44,19 @@ func main() {
 // reconcileLoop é o coração do grupo: a cada tick, lê o estado atual dos
 // containers do serviço UMA vez e usa essa mesma leitura tanto pra decidir
 // se escala quanto para atualizar a lista de backends do load balancer.
-func reconcileLoop(ctx context.Context, client *dockerclient.Client, balancer *loadbalancer.RoundRobin) {
-	ticker := time.NewTicker(reconcileTick)
+func reconcileLoop(ctx context.Context, cfg config, client *dockerclient.Client, balancer *loadbalancer.RoundRobin) {
+	ticker := time.NewTicker(cfg.reconcileTick)
 	defer ticker.Stop()
 
 	for {
-		reconcile(ctx, client, balancer)
+		reconcile(ctx, cfg, client, balancer)
 		<-ticker.C
 	}
 }
 
-func reconcile(ctx context.Context, client *dockerclient.Client, balancer *loadbalancer.RoundRobin) {
+func reconcile(ctx context.Context, cfg config, client *dockerclient.Client, balancer *loadbalancer.RoundRobin) {
 	filters := map[string][]string{
-		"label": {fmt.Sprintf("%s=%s", serviceLabel, targetService)},
+		"label": {fmt.Sprintf("%s=%s", cfg.serviceLabel, cfg.targetService)},
 	}
 	containers, err := client.ListContainers(ctx, false, filters)
 	if err != nil {
@@ -80,15 +65,15 @@ func reconcile(ctx context.Context, client *dockerclient.Client, balancer *loadb
 	}
 
 	if len(containers) == 0 {
-		log.Printf("group: nenhum container encontrado para %q, load balancer sem backends", targetService)
+		log.Printf("group: nenhum container encontrado para %q, load balancer sem backends", cfg.targetService)
 		balancer.SetBackends(nil)
 		return
 	}
 
-	if metrics, err := discovery.AggregateMetrics(ctx, client, targetService, containers); err != nil {
+	if metrics, err := discovery.AggregateMetrics(ctx, client, cfg.targetService, containers); err != nil {
 		log.Printf("group: erro coletando métricas: %v", err)
 	} else {
-		decision := scaler.Evaluate(policy, metrics)
+		decision := scaler.Evaluate(cfg.policy, metrics)
 		log.Printf("group: replicas=%d avg_cpu=%.2f%% -> %s (delta=%d): %s",
 			metrics.Replicas, metrics.AvgCPUPercent, decision.Action, decision.Delta, decision.Reason)
 
@@ -102,7 +87,7 @@ func reconcile(ctx context.Context, client *dockerclient.Client, balancer *loadb
 		}
 	}
 
-	backends := discovery.Backends(ctx, client, containers, backendPort, healthCheckTimeout)
+	backends := discovery.Backends(ctx, client, containers, cfg.backendPort, cfg.healthCheckPath, cfg.healthCheckTimeout)
 	balancer.SetBackends(backends)
 	log.Printf("group: %d/%d container(s) saudável(is)", len(backends), len(containers))
 }
