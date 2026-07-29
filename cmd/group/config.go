@@ -30,6 +30,16 @@ type config struct {
 	healthCheckPath    string
 	healthCheckTimeout time.Duration
 
+	// drainTimeout é quanto tempo um container escolhido para scale down
+	// fica fora dos backends do load balancer antes de ser efetivamente
+	// parado — dá tempo das requisições já em andamento nele terminarem.
+	drainTimeout time.Duration
+
+	// shutdownTimeout é quanto tempo o próprio processo group espera, ao
+	// receber SIGTERM/SIGINT, pelas requisições HTTP em andamento
+	// terminarem antes de encerrar à força.
+	shutdownTimeout time.Duration
+
 	policy scaler.Policy
 }
 
@@ -47,12 +57,16 @@ func loadConfig() config {
 		reconcileTick:      envSeconds("RECONCILE_TICK_SECONDS", 3),
 		healthCheckPath:    os.Getenv("HEALTH_CHECK_PATH"),
 		healthCheckTimeout: envMillis("HEALTH_CHECK_TIMEOUT_MS", 500),
+		drainTimeout:       envSeconds("DRAIN_TIMEOUT_SECONDS", 10),
+		shutdownTimeout:    envSeconds("SHUTDOWN_TIMEOUT_SECONDS", 15),
 
 		policy: scaler.Policy{
 			MinReplicas:         envInt("MIN_REPLICAS", 1),
 			MaxReplicas:         envInt("MAX_REPLICAS", 3),
 			CPUScaleUpPercent:   envFloat("CPU_SCALE_UP_PERCENT", 50),
 			CPUScaleDownPercent: envFloat("CPU_SCALE_DOWN_PERCENT", 20),
+			SustainedTicks:      envInt("SUSTAINED_TICKS", 2),
+			Cooldown:            envSeconds("COOLDOWN_SECONDS", 30),
 		},
 	}
 
@@ -110,9 +124,10 @@ func (c config) summary() string {
 		healthCheck = "http " + c.healthCheckPath
 	}
 	return fmt.Sprintf(
-		"service=%s label=%s port=%d listen=%s replicas=[%d,%d] cpu=[%.0f%%,%.0f%%] tick=%s health=%s",
+		"service=%s label=%s port=%d listen=%s replicas=[%d,%d] cpu=[%.0f%%,%.0f%%] tick=%s sustained=%d cooldown=%s drain=%s shutdown=%s health=%s",
 		c.targetService, c.serviceLabel, c.backendPort, c.listenAddr,
 		c.policy.MinReplicas, c.policy.MaxReplicas,
-		c.policy.CPUScaleDownPercent, c.policy.CPUScaleUpPercent, c.reconcileTick, healthCheck,
+		c.policy.CPUScaleDownPercent, c.policy.CPUScaleUpPercent, c.reconcileTick,
+		c.policy.SustainedTicks, c.policy.Cooldown, c.drainTimeout, c.shutdownTimeout, healthCheck,
 	)
 }

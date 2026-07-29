@@ -67,21 +67,39 @@ func scaleUp(ctx context.Context, client *dockerclient.Client, members []dockerc
 	return nil
 }
 
-// scaleDown remove o último container da lista. A ordem de /containers/json
-// não é garantida cronologicamente, então essa escolha é só um ponto de
-// partida simples — critérios melhores (mais recente, menos carregado) podem
-// vir depois.
+// scaleDown escolhe e remove imediatamente um container do grupo. Usado
+// pelo fluxo simples (sem drain do load balancer); cmd/group usa
+// SelectScaleDownTarget + Remove separadamente para tirar o alvo dos
+// backends antes de pará-lo.
 func scaleDown(ctx context.Context, client *dockerclient.Client, members []dockerclient.Container) error {
-	if len(members) == 0 {
-		return errors.New("executor: scale down sem containers para remover")
+	target, err := SelectScaleDownTarget(members)
+	if err != nil {
+		return err
 	}
-	target := members[len(members)-1]
+	return Remove(ctx, client, target.ID)
+}
 
-	if err := client.StopContainer(ctx, target.ID, stopTimeoutSeconds); err != nil {
-		return fmt.Errorf("executor: parando container %s: %w", target.ID[:12], err)
+// SelectScaleDownTarget escolhe qual container seria removido num scale
+// down, sem removê-lo. A ordem de /containers/json não é garantida
+// cronologicamente, então essa escolha (o último da lista) é só um ponto de
+// partida simples — critérios melhores (mais recente, menos carregado) podem
+// vir depois. Separado de Remove para permitir tirar o alvo dos backends do
+// load balancer antes de efetivamente pará-lo (evita rotear requisições para
+// um container que já está de saída).
+func SelectScaleDownTarget(members []dockerclient.Container) (dockerclient.Container, error) {
+	if len(members) == 0 {
+		return dockerclient.Container{}, errors.New("executor: scale down sem containers para remover")
 	}
-	if err := client.RemoveContainer(ctx, target.ID, false); err != nil {
-		return fmt.Errorf("executor: removendo container %s: %w", target.ID[:12], err)
+	return members[len(members)-1], nil
+}
+
+// Remove para (com timeout gracioso) e remove um container pelo ID.
+func Remove(ctx context.Context, client *dockerclient.Client, containerID string) error {
+	if err := client.StopContainer(ctx, containerID, stopTimeoutSeconds); err != nil {
+		return fmt.Errorf("executor: parando container %s: %w", containerID[:12], err)
+	}
+	if err := client.RemoveContainer(ctx, containerID, false); err != nil {
+		return fmt.Errorf("executor: removendo container %s: %w", containerID[:12], err)
 	}
 	return nil
 }
