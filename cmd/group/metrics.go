@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"autoscaler/internal/discovery"
 	"autoscaler/internal/loadbalancer"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -25,6 +26,17 @@ type groupMetrics struct {
 	scaleActions    *prometheus.CounterVec
 	proxyRequests   *prometheus.CounterVec
 	proxyDuration   *prometheus.HistogramVec
+
+	// Métricas por container (não por serviço): CPU/memória/rede/disco de
+	// cada réplica individualmente, pra dar pra ver no Grafana qual
+	// container específico está consumindo mais recurso dentro do grupo.
+	containerCPUPercent    *prometheus.GaugeVec
+	containerMemoryPercent *prometheus.GaugeVec
+	containerMemoryBytes   *prometheus.GaugeVec
+	containerNetworkRx     *prometheus.GaugeVec
+	containerNetworkTx     *prometheus.GaugeVec
+	containerDiskRead      *prometheus.GaugeVec
+	containerDiskWrite     *prometheus.GaugeVec
 }
 
 func newGroupMetrics() *groupMetrics {
@@ -69,6 +81,69 @@ func newGroupMetrics() *groupMetrics {
 			Help:    "Duração das requisições encaminhadas pelo load balancer.",
 			Buckets: prometheus.DefBuckets,
 		}, []string{"service"}),
+
+		containerCPUPercent: factory.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "autoscaler_container_cpu_percent",
+			Help: "Uso de CPU (%) de cada container individualmente.",
+		}, []string{"service", "container_name"}),
+
+		containerMemoryPercent: factory.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "autoscaler_container_memory_percent",
+			Help: "Uso de memória (%) de cada container, relativo ao limite configurado.",
+		}, []string{"service", "container_name"}),
+
+		containerMemoryBytes: factory.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "autoscaler_container_memory_usage_bytes",
+			Help: "Uso de memória (bytes) de cada container.",
+		}, []string{"service", "container_name"}),
+
+		// Rede e disco são contadores acumulados desde que o container
+		// subiu (o Docker não devolve uma taxa pronta) -- por isso viram
+		// gauge aqui: quem calcula bytes/segundo é a query no Grafana
+		// (rate()/increase()), não este processo.
+		containerNetworkRx: factory.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "autoscaler_container_network_receive_bytes",
+			Help: "Total de bytes recebidos pelo container desde que subiu (contador acumulado).",
+		}, []string{"service", "container_name"}),
+
+		containerNetworkTx: factory.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "autoscaler_container_network_transmit_bytes",
+			Help: "Total de bytes transmitidos pelo container desde que subiu (contador acumulado).",
+		}, []string{"service", "container_name"}),
+
+		containerDiskRead: factory.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "autoscaler_container_disk_read_bytes",
+			Help: "Total de bytes lidos de disco pelo container desde que subiu (contador acumulado).",
+		}, []string{"service", "container_name"}),
+
+		containerDiskWrite: factory.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "autoscaler_container_disk_write_bytes",
+			Help: "Total de bytes escritos em disco pelo container desde que subiu (contador acumulado).",
+		}, []string{"service", "container_name"}),
+	}
+}
+
+// updateContainerStats substitui os valores por container pelas leituras
+// mais recentes. Faz Reset() em cada métrica antes de repopular: sem isso,
+// um container removido num scale down deixaria uma série "fantasma"
+// (última leitura conhecida, parada pra sempre) no Prometheus/Grafana.
+func (m *groupMetrics) updateContainerStats(service string, stats []discovery.ContainerStats) {
+	m.containerCPUPercent.Reset()
+	m.containerMemoryPercent.Reset()
+	m.containerMemoryBytes.Reset()
+	m.containerNetworkRx.Reset()
+	m.containerNetworkTx.Reset()
+	m.containerDiskRead.Reset()
+	m.containerDiskWrite.Reset()
+
+	for _, s := range stats {
+		m.containerCPUPercent.WithLabelValues(service, s.Name).Set(s.CPUPercent)
+		m.containerMemoryPercent.WithLabelValues(service, s.Name).Set(s.MemoryPercent)
+		m.containerMemoryBytes.WithLabelValues(service, s.Name).Set(float64(s.MemoryUsageBytes))
+		m.containerNetworkRx.WithLabelValues(service, s.Name).Set(float64(s.NetworkRxBytes))
+		m.containerNetworkTx.WithLabelValues(service, s.Name).Set(float64(s.NetworkTxBytes))
+		m.containerDiskRead.WithLabelValues(service, s.Name).Set(float64(s.DiskReadBytes))
+		m.containerDiskWrite.WithLabelValues(service, s.Name).Set(float64(s.DiskWriteBytes))
 	}
 }
 

@@ -1,0 +1,10 @@
+# Provisionamento automático do datasource: o Grafana lê isto ao subir e já
+# fica com o Prometheus configurado, sem precisar clicar em nada na UI.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true

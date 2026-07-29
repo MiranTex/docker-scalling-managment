@@ -8,6 +8,7 @@ package discovery
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -30,29 +31,76 @@ func GroupByLabel(containers []dockerclient.Container, labelKey string) map[stri
 	return groups
 }
 
-// AggregateMetrics coleta o stats de cada container do grupo e calcula a
-// média de CPU do serviço como um todo. Erro se members estiver vazio: não
-// há "média" de um grupo sem membros, e quem chama deve tratar esse caso
-// antes de decidir se escala.
-func AggregateMetrics(ctx context.Context, client *dockerclient.Client, service string, members []dockerclient.Container) (scaler.ServiceMetrics, error) {
+// ContainerStats é o detalhe de recursos de UM container do grupo, coletado
+// na mesma leitura de stats já usada por AggregateMetrics pra calcular a
+// média de CPU do serviço — não faz nenhuma chamada extra ao Docker, só
+// aproveita campos do mesmo payload que já vinha sendo lido.
+//
+// NetworkRxBytes/TxBytes e DiskReadBytes/WriteBytes são contadores
+// acumulados desde que o container subiu (não uma taxa); expostos como
+// gauge no Prometheus, é a query (rate()/increase()) quem calcula
+// bytes/segundo, não este pacote.
+type ContainerStats struct {
+	ContainerID      string
+	Name             string
+	CPUPercent       float64
+	MemoryPercent    float64
+	MemoryUsageBytes uint64
+	NetworkRxBytes   uint64
+	NetworkTxBytes   uint64
+	DiskReadBytes    uint64
+	DiskWriteBytes   uint64
+}
+
+// containerName devolve o primeiro nome do container sem a barra inicial
+// que a API do Docker sempre inclui (ex: "/idle1" -> "idle1"), ou o ID
+// curto se por algum motivo não vier nome nenhum.
+func containerName(ctr dockerclient.Container) string {
+	if len(ctr.Names) > 0 {
+		return strings.TrimPrefix(ctr.Names[0], "/")
+	}
+	return ctr.ID[:12]
+}
+
+// AggregateMetrics coleta o stats de cada container do grupo, calcula a
+// média de CPU do serviço como um todo (pro scaler decidir) e devolve
+// também o detalhe por container (pra observabilidade). Erro se members
+// estiver vazio: não há "média" de um grupo sem membros, e quem chama deve
+// tratar esse caso antes de decidir se escala.
+func AggregateMetrics(ctx context.Context, client *dockerclient.Client, service string, members []dockerclient.Container) (scaler.ServiceMetrics, []ContainerStats, error) {
 	if len(members) == 0 {
-		return scaler.ServiceMetrics{}, fmt.Errorf("discovery: nenhum container no grupo %q", service)
+		return scaler.ServiceMetrics{}, nil, fmt.Errorf("discovery: nenhum container no grupo %q", service)
 	}
 
 	var totalCPU float64
+	details := make([]ContainerStats, 0, len(members))
 	for _, ctr := range members {
 		stats, err := client.ContainerStats(ctx, ctr.ID)
 		if err != nil {
-			return scaler.ServiceMetrics{}, fmt.Errorf("stats do container %s: %w", ctr.ID[:12], err)
+			return scaler.ServiceMetrics{}, nil, fmt.Errorf("stats do container %s: %w", ctr.ID[:12], err)
 		}
 		totalCPU += stats.CPUPercent()
+
+		rx, tx := stats.NetworkBytes()
+		diskRead, diskWrite := stats.DiskBytes()
+		details = append(details, ContainerStats{
+			ContainerID:      ctr.ID,
+			Name:             containerName(ctr),
+			CPUPercent:       stats.CPUPercent(),
+			MemoryPercent:    stats.MemoryPercent(),
+			MemoryUsageBytes: stats.MemoryStats.Usage,
+			NetworkRxBytes:   rx,
+			NetworkTxBytes:   tx,
+			DiskReadBytes:    diskRead,
+			DiskWriteBytes:   diskWrite,
+		})
 	}
 
 	return scaler.ServiceMetrics{
 		Name:          service,
 		Replicas:      len(members),
 		AvgCPUPercent: totalCPU / float64(len(members)),
-	}, nil
+	}, details, nil
 }
 
 // Backends resolve o IP de cada container do grupo e testa sua saúde na

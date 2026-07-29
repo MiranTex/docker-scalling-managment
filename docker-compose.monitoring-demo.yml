@@ -1,0 +1,60 @@
+# Stack de demonstração pra testar o fluxo end-to-end de observabilidade:
+# um backend real sendo escalado pelo group, um Prometheus fazendo scrape
+# do /metrics dele, e um Grafana já com datasource+dashboard prontos.
+# Suba com: docker compose -f docker-compose.monitoring-demo.yml up -d
+services:
+  # Container "molde" inicial do serviço "demo" -- o group clona a partir
+  # dele quando decide escalar. nginx:alpine só pra ter algo respondendo
+  # HTTP na porta 80, suficiente pro health check e pro proxy funcionarem.
+  demo-backend:
+    image: nginx:alpine
+    labels:
+      autoscaler.service: "demo"
+
+  group-demo:
+    image: autoscaler-group:latest
+    environment:
+      TARGET_SERVICE: demo
+      BACKEND_PORT: "80"
+      MIN_REPLICAS: "1"
+      MAX_REPLICAS: "5"
+      CPU_SCALE_UP_PERCENT: "50"
+      CPU_SCALE_DOWN_PERCENT: "20"
+      RECONCILE_TICK_SECONDS: "3"
+      LOG_FORMAT: "text"
+      LOG_LEVEL: "debug"
+      METRICS_ADDR: ":9090"
+    ports:
+      # Proxy (pra você bater requisições reais no serviço "demo").
+      # Usa 8095 no host porque a 8090 já está ocupada por outro projeto teu.
+      - "8095:8090"
+      # /healthz, /readyz, /metrics. Usa 9095 no host pelo mesmo motivo
+      # (9090 já está ocupada por outro projeto teu).
+      - "9095:9090"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - demo-backend
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./monitoring-demo/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9091:9090"
+    depends_on:
+      - group-demo
+
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    volumes:
+      - ./monitoring-demo/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring-demo/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus

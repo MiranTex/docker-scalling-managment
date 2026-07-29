@@ -1,15 +1,20 @@
 package dockerclient
 
-import "context"
+import (
+	"context"
+	"strings"
+)
 
 // Stats é o subconjunto do payload de /containers/{id}/stats que precisamos
-// para calcular uso de CPU e memória. O Docker devolve contadores brutos e
-// acumulados, não percentuais prontos — por isso os campos "pre" (leitura
-// anterior), usados como base pro delta.
+// para calcular uso de CPU, memória, rede e disco. O Docker devolve
+// contadores brutos e acumulados, não percentuais/taxas prontos — por isso
+// os campos "pre" (leitura anterior), usados como base pro delta de CPU.
 type Stats struct {
-	CPUStats    cpuStats    `json:"cpu_stats"`
-	PreCPUStats cpuStats    `json:"precpu_stats"`
-	MemoryStats memoryStats `json:"memory_stats"`
+	CPUStats    cpuStats               `json:"cpu_stats"`
+	PreCPUStats cpuStats               `json:"precpu_stats"`
+	MemoryStats memoryStats            `json:"memory_stats"`
+	Networks    map[string]networkStat `json:"networks"`
+	BlkioStats  blkioStats             `json:"blkio_stats"`
 }
 
 type cpuStats struct {
@@ -23,6 +28,26 @@ type cpuStats struct {
 type memoryStats struct {
 	Usage uint64 `json:"usage"`
 	Limit uint64 `json:"limit"`
+}
+
+// networkStat é o contador acumulado (desde que o container subiu) de uma
+// interface de rede — normalmente só existe "eth0", mas um container pode
+// ter mais de uma rede Docker anexada.
+type networkStat struct {
+	RxBytes uint64 `json:"rx_bytes"`
+	TxBytes uint64 `json:"tx_bytes"`
+}
+
+type blkioStats struct {
+	// IoServiceBytesRecursive é uma entrada por (dispositivo, operação):
+	// duas linhas por disco, uma "read" e uma "write", acumuladas desde que
+	// o container subiu.
+	IoServiceBytesRecursive []blkioEntry `json:"io_service_bytes_recursive"`
+}
+
+type blkioEntry struct {
+	Op    string `json:"op"`
+	Value uint64 `json:"value"`
 }
 
 // ContainerStats pega uma única leitura instantânea de uso de recursos do
@@ -64,4 +89,30 @@ func (s *Stats) MemoryPercent() float64 {
 		return 0
 	}
 	return float64(s.MemoryStats.Usage) / float64(s.MemoryStats.Limit) * 100.0
+}
+
+// NetworkBytes soma rx/tx de todas as interfaces de rede do container.
+// São contadores acumulados desde que o container subiu (não uma taxa) —
+// por isso o valor só faz sentido como série temporal: quem calcula
+// bytes/segundo é a query (ex: rate() no PromQL), não este método.
+func (s *Stats) NetworkBytes() (rx, tx uint64) {
+	for _, n := range s.Networks {
+		rx += n.RxBytes
+		tx += n.TxBytes
+	}
+	return rx, tx
+}
+
+// DiskBytes soma leitura/escrita de todos os dispositivos de bloco do
+// container, também como contador acumulado (mesma lógica de NetworkBytes).
+func (s *Stats) DiskBytes() (read, write uint64) {
+	for _, e := range s.BlkioStats.IoServiceBytesRecursive {
+		switch {
+		case strings.EqualFold(e.Op, "read"):
+			read += e.Value
+		case strings.EqualFold(e.Op, "write"):
+			write += e.Value
+		}
+	}
+	return read, write
 }

@@ -1,0 +1,10 @@
+# Config mínima do Prometheus pra esta demo: faz scrape do endpoint
+# /metrics do group-demo a cada 5s (mais rápido que o default de produção,
+# só pra ver os gráficos se mexerem rápido durante o teste).
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: autoscaler-group
+    static_configs:
+      - targets: ["group-demo:9090"]

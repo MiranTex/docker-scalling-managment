@@ -43,7 +43,7 @@ func main() {
 	byService := discovery.GroupByLabel(containers, serviceLabel)
 
 	for service, members := range byService {
-		metrics, err := discovery.AggregateMetrics(ctx, client, service, members)
+		metrics, _, err := discovery.AggregateMetrics(ctx, client, service, members)
 		if err != nil {
 			fmt.Printf("%s: erro ao coletar métricas: %v\n", service, err)
 			continue

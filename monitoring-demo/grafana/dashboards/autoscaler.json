@@ -1,0 +1,104 @@
+{
+  "title": "Autoscaler Group",
+  "uid": "autoscaler-group",
+  "timezone": "browser",
+  "refresh": "5s",
+  "time": { "from": "now-15m", "to": "now" },
+  "schemaVersion": 39,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Réplicas",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        { "expr": "autoscaler_replicas", "legendFormat": "{{service}}" }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "CPU média (%)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        { "expr": "autoscaler_avg_cpu_percent", "legendFormat": "{{service}}" }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Backends saudáveis / em drenagem",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        { "expr": "autoscaler_healthy_backends", "legendFormat": "saudáveis {{service}}" },
+        { "expr": "autoscaler_draining_containers", "legendFormat": "drenando {{service}}" }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Ações de scaling (taxa/min)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        { "expr": "rate(autoscaler_scale_actions_total[5m]) * 60", "legendFormat": "{{action}} {{service}}" }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Requisições proxied (taxa/s)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "targets": [
+        { "expr": "rate(autoscaler_proxy_requests_total[1m])", "legendFormat": "{{status}} {{service}}" }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Latência do proxy (p50/p95)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, rate(autoscaler_proxy_request_duration_seconds_bucket[5m]))", "legendFormat": "p50 {{service}}" },
+        { "expr": "histogram_quantile(0.95, rate(autoscaler_proxy_request_duration_seconds_bucket[5m]))", "legendFormat": "p95 {{service}}" }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "CPU por container (%)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "targets": [
+        { "expr": "autoscaler_container_cpu_percent", "legendFormat": "{{service}} / {{container_name}}" }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Memória por container (bytes)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "targets": [
+        { "expr": "autoscaler_container_memory_usage_bytes", "legendFormat": "{{service}} / {{container_name}}" }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Rede por container (bytes/s)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+      "targets": [
+        { "expr": "rate(autoscaler_container_network_receive_bytes[1m])", "legendFormat": "rx {{service}} / {{container_name}}" },
+        { "expr": "rate(autoscaler_container_network_transmit_bytes[1m])", "legendFormat": "tx {{service}} / {{container_name}}" }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "Disco por container (bytes/s)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
+      "targets": [
+        { "expr": "rate(autoscaler_container_disk_read_bytes[1m])", "legendFormat": "read {{service}} / {{container_name}}" },
+        { "expr": "rate(autoscaler_container_disk_write_bytes[1m])", "legendFormat": "write {{service}} / {{container_name}}" }
+      ]
+    }
+  ]
+}

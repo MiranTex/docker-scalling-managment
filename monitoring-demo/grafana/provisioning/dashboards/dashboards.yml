@@ -1,0 +1,11 @@
+# Diz ao Grafana pra carregar qualquer dashboard JSON encontrado na pasta
+# /var/lib/grafana/dashboards dentro do container -- é lá que montamos
+# monitoring-demo/grafana/dashboards.
+apiVersion: 1
+
+providers:
+  - name: autoscaler
+    folder: Autoscaler
+    type: file
+    options:
+      path: /var/lib/grafana/dashboards

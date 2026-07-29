@@ -121,7 +121,7 @@ func reconcile(ctx context.Context, cfg config, client *dockerclient.Client, log
 		return
 	}
 
-	if svcMetrics, err := discovery.AggregateMetrics(ctx, client, cfg.targetService, containers); err != nil {
+	if svcMetrics, containerStats, err := discovery.AggregateMetrics(ctx, client, cfg.targetService, containers); err != nil {
 		logger.Error("erro coletando métricas", "err", err)
 	} else {
 		decision := evaluator.Evaluate(svcMetrics, time.Now())
@@ -138,6 +138,7 @@ func reconcile(ctx context.Context, cfg config, client *dockerclient.Client, log
 		)
 		metrics.replicas.WithLabelValues(cfg.targetService).Set(float64(svcMetrics.Replicas))
 		metrics.avgCPUPercent.WithLabelValues(cfg.targetService).Set(svcMetrics.AvgCPUPercent)
+		metrics.updateContainerStats(cfg.targetService, containerStats)
 
 		switch decision.Action {
 		case scaler.ScaleUp:
