@@ -33,7 +33,7 @@ func main() {
 	_ = godotenv.Load()
 
 	ctx := context.Background()
-	client := dockerclient.New(os.Getenv("HOME") + os.Getenv("DOCKER_SOCKET"))
+	client := dockerclient.New(os.Getenv("DOCKER_SOCKET"))
 
 	containers, err := client.ListContainers(ctx, false, nil)
 	if err != nil {

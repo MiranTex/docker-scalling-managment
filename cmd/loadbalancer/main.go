@@ -33,7 +33,7 @@ const (
 func main() {
 	_ = godotenv.Load()
 	ctx := context.Background()
-	client := dockerclient.New(os.Getenv("HOME") + os.Getenv("DOCKER_SOCKET"))
+	client := dockerclient.New(os.Getenv("DOCKER_SOCKET"))
 	balancer := loadbalancer.NewRoundRobin()
 
 	go discoveryLoop(ctx, client, balancer)
@@ -73,5 +73,5 @@ func discoverBackends(ctx context.Context, client *dockerclient.Client) ([]loadb
 		return nil, fmt.Errorf("listando containers: %w", err)
 	}
 
-	return discovery.Backends(ctx, client, containers, backendPort, healthCheckTimeout), nil
+	return discovery.Backends(ctx, client, containers, backendPort, "", healthCheckTimeout), nil
 }

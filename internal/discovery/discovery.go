@@ -55,12 +55,16 @@ func AggregateMetrics(ctx context.Context, client *dockerclient.Client, service 
 	}, nil
 }
 
-// Backends resolve o IP de cada container do grupo e testa se ele está
-// aceitando conexão na porta informada, devolvendo só os que passaram no
-// health check. Os checks rodam em paralelo porque cada um pode levar até
-// healthCheckTimeout, e não queremos que N containers lentos somem seus
-// tempos de espera em série.
-func Backends(ctx context.Context, client *dockerclient.Client, members []dockerclient.Container, port int, healthCheckTimeout time.Duration) []loadbalancer.Backend {
+// Backends resolve o IP de cada container do grupo e testa sua saúde na
+// porta informada, devolvendo só os que passaram no health check. Os checks
+// rodam em paralelo porque cada um pode levar até healthCheckTimeout, e não
+// queremos que N containers lentos somem seus tempos de espera em série.
+//
+// healthCheckPath define o tipo de check: vazio faz só um dial TCP (serve
+// pra qualquer protocolo, mas não valida o conteúdo da resposta); definido
+// (ex: "/health") faz um GET HTTP de verdade nesse caminho, exigindo status
+// < 400 — mais preciso pra serviços HTTP.
+func Backends(ctx context.Context, client *dockerclient.Client, members []dockerclient.Container, port int, healthCheckPath string, healthCheckTimeout time.Duration) []loadbalancer.Backend {
 	results := make([]loadbalancer.Backend, len(members))
 	found := make([]bool, len(members))
 
@@ -80,7 +84,11 @@ func Backends(ctx context.Context, client *dockerclient.Client, members []docker
 			}
 
 			addr := fmt.Sprintf("%s:%d", ip, port)
-			if !loadbalancer.TCPHealthy(addr, healthCheckTimeout) {
+			healthy := loadbalancer.TCPHealthy(addr, healthCheckTimeout)
+			if healthy && healthCheckPath != "" {
+				healthy = loadbalancer.HTTPHealthy(ctx, addr, healthCheckPath, healthCheckTimeout)
+			}
+			if !healthy {
 				return
 			}
 
