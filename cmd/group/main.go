@@ -168,7 +168,7 @@ func reconcile(ctx context.Context, cfg config, client *dockerclient.Client, log
 // container — dando tempo das requisições já em andamento nele terminarem.
 func startDrain(ctx context.Context, cfg config, client *dockerclient.Client, logger *slog.Logger, draining *drainSet, containers []dockerclient.Container, metrics *groupMetrics) {
 	candidates := draining.excludeDraining(containers)
-	target, err := executor.SelectScaleDownTarget(candidates)
+	target, err := executor.SelectScaleDownTarget(ctx, client, candidates)
 	if err != nil {
 		logger.Warn("scale down sem candidatos livres, todos já em drenagem")
 		return

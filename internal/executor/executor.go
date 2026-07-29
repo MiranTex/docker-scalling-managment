@@ -72,7 +72,7 @@ func scaleUp(ctx context.Context, client *dockerclient.Client, members []dockerc
 // SelectScaleDownTarget + Remove separadamente para tirar o alvo dos
 // backends antes de pará-lo.
 func scaleDown(ctx context.Context, client *dockerclient.Client, members []dockerclient.Container) error {
-	target, err := SelectScaleDownTarget(members)
+	target, err := SelectScaleDownTarget(ctx, client, members)
 	if err != nil {
 		return err
 	}
@@ -80,17 +80,37 @@ func scaleDown(ctx context.Context, client *dockerclient.Client, members []docke
 }
 
 // SelectScaleDownTarget escolhe qual container seria removido num scale
-// down, sem removê-lo. A ordem de /containers/json não é garantida
-// cronologicamente, então essa escolha (o último da lista) é só um ponto de
-// partida simples — critérios melhores (mais recente, menos carregado) podem
-// vir depois. Separado de Remove para permitir tirar o alvo dos backends do
-// load balancer antes de efetivamente pará-lo (evita rotear requisições para
-// um container que já está de saída).
-func SelectScaleDownTarget(members []dockerclient.Container) (dockerclient.Container, error) {
+// down, sem removê-lo: consulta o uso de CPU atual de cada candidato e
+// escolhe o menos carregado, reduzindo a chance de derrubar um container
+// que está no meio de requisições pesadas (o antigo critério, "o último da
+// lista", não tinha relação nenhuma com carga real). Separado de Remove
+// para permitir tirar o alvo dos backends do load balancer antes de
+// efetivamente pará-lo.
+//
+// Se a coleta de stats falhar para algum candidato, ele é ignorado (tratado
+// como "carga desconhecida", nunca preferido sobre um candidato com dado
+// real); se falhar para todos, cai de volta a remover o último da lista.
+func SelectScaleDownTarget(ctx context.Context, client *dockerclient.Client, members []dockerclient.Container) (dockerclient.Container, error) {
 	if len(members) == 0 {
 		return dockerclient.Container{}, errors.New("executor: scale down sem containers para remover")
 	}
-	return members[len(members)-1], nil
+
+	target := members[len(members)-1]
+	targetCPU := 0.0
+	targetKnown := false
+
+	for _, m := range members {
+		stats, err := client.ContainerStats(ctx, m.ID)
+		if err != nil {
+			continue
+		}
+		cpu := stats.CPUPercent()
+		if !targetKnown || cpu < targetCPU {
+			target, targetCPU, targetKnown = m, cpu, true
+		}
+	}
+
+	return target, nil
 }
 
 // Remove para (com timeout gracioso) e remove um container pelo ID.
