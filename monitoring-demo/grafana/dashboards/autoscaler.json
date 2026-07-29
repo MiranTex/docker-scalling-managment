@@ -5,99 +5,183 @@
   "refresh": "5s",
   "time": { "from": "now-15m", "to": "now" },
   "schemaVersion": 39,
+  "templating": {
+    "list": [
+      {
+        "name": "service",
+        "label": "Serviço",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values(autoscaler_replicas, service)",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "current": { "selected": true, "text": "All", "value": "$__all" }
+      },
+      {
+        "name": "compose_service",
+        "label": "Container (logs)",
+        "type": "query",
+        "datasource": { "type": "loki", "uid": "loki" },
+        "query": "label_values(compose_service)",
+        "refresh": 2,
+        "multi": false,
+        "includeAll": false,
+        "current": { "selected": true, "text": "group-demo", "value": "group-demo" }
+      }
+    ]
+  },
   "panels": [
     {
       "id": 1,
-      "title": "Réplicas",
+      "title": "Réplicas -- serviço: $service",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "options": {
+        "legend": { "showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["last"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
       "targets": [
-        { "expr": "autoscaler_replicas", "legendFormat": "{{service}}" }
+        { "expr": "autoscaler_replicas{service=~\"$service\"}", "legendFormat": "serviço: {{service}}" }
       ]
     },
     {
       "id": 2,
-      "title": "CPU média (%)",
+      "title": "CPU média (%) -- serviço: $service",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "options": {
+        "legend": { "showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["last"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
       "targets": [
-        { "expr": "autoscaler_avg_cpu_percent", "legendFormat": "{{service}}" }
+        { "expr": "autoscaler_avg_cpu_percent{service=~\"$service\"}", "legendFormat": "serviço: {{service}}" }
       ]
     },
     {
       "id": 3,
-      "title": "Backends saudáveis / em drenagem",
+      "title": "Backends saudáveis / em drenagem -- serviço: $service",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "options": {
+        "legend": { "showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["last"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
       "targets": [
-        { "expr": "autoscaler_healthy_backends", "legendFormat": "saudáveis {{service}}" },
-        { "expr": "autoscaler_draining_containers", "legendFormat": "drenando {{service}}" }
+        { "expr": "autoscaler_healthy_backends{service=~\"$service\"}", "legendFormat": "saudáveis -- serviço: {{service}}" },
+        { "expr": "autoscaler_draining_containers{service=~\"$service\"}", "legendFormat": "drenando -- serviço: {{service}}" }
       ]
     },
     {
       "id": 4,
-      "title": "Ações de scaling (taxa/min)",
+      "title": "Ações de scaling (taxa/min) -- serviço: $service",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "options": {
+        "legend": { "showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["last"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
       "targets": [
-        { "expr": "rate(autoscaler_scale_actions_total[5m]) * 60", "legendFormat": "{{action}} {{service}}" }
+        { "expr": "rate(autoscaler_scale_actions_total{service=~\"$service\"}[5m]) * 60", "legendFormat": "{{action}} -- serviço: {{service}}" }
       ]
     },
     {
       "id": 5,
-      "title": "Requisições proxied (taxa/s)",
+      "title": "Requisições proxied (taxa/s) -- serviço: $service",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "options": {
+        "legend": { "showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["last"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
       "targets": [
-        { "expr": "rate(autoscaler_proxy_requests_total[1m])", "legendFormat": "{{status}} {{service}}" }
+        { "expr": "rate(autoscaler_proxy_requests_total{service=~\"$service\"}[1m])", "legendFormat": "{{status}} -- serviço: {{service}}" }
       ]
     },
     {
       "id": 6,
-      "title": "Latência do proxy (p50/p95)",
+      "title": "Latência do proxy (p50/p95) -- serviço: $service",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "options": {
+        "legend": { "showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["last"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
       "targets": [
-        { "expr": "histogram_quantile(0.50, rate(autoscaler_proxy_request_duration_seconds_bucket[5m]))", "legendFormat": "p50 {{service}}" },
-        { "expr": "histogram_quantile(0.95, rate(autoscaler_proxy_request_duration_seconds_bucket[5m]))", "legendFormat": "p95 {{service}}" }
+        { "expr": "histogram_quantile(0.50, rate(autoscaler_proxy_request_duration_seconds_bucket{service=~\"$service\"}[5m]))", "legendFormat": "p50 -- serviço: {{service}}" },
+        { "expr": "histogram_quantile(0.95, rate(autoscaler_proxy_request_duration_seconds_bucket{service=~\"$service\"}[5m]))", "legendFormat": "p95 -- serviço: {{service}}" }
       ]
     },
     {
       "id": 7,
-      "title": "CPU por container (%)",
+      "title": "CPU por container (%) -- serviço: $service",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "options": {
+        "legend": { "showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["last"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
       "targets": [
-        { "expr": "autoscaler_container_cpu_percent", "legendFormat": "{{service}} / {{container_name}}" }
+        { "expr": "autoscaler_container_cpu_percent{service=~\"$service\"}", "legendFormat": "serviço: {{service}} / container: {{container_name}}" }
       ]
     },
     {
       "id": 8,
-      "title": "Memória por container (bytes)",
+      "title": "Memória por container (bytes) -- serviço: $service",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "options": {
+        "legend": { "showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["last"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
       "targets": [
-        { "expr": "autoscaler_container_memory_usage_bytes", "legendFormat": "{{service}} / {{container_name}}" }
+        { "expr": "autoscaler_container_memory_usage_bytes{service=~\"$service\"}", "legendFormat": "serviço: {{service}} / container: {{container_name}}" }
       ]
     },
     {
       "id": 9,
-      "title": "Rede por container (bytes/s)",
+      "title": "Rede por container (bytes/s) -- serviço: $service",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+      "options": {
+        "legend": { "showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["last"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
       "targets": [
-        { "expr": "rate(autoscaler_container_network_receive_bytes[1m])", "legendFormat": "rx {{service}} / {{container_name}}" },
-        { "expr": "rate(autoscaler_container_network_transmit_bytes[1m])", "legendFormat": "tx {{service}} / {{container_name}}" }
+        { "expr": "rate(autoscaler_container_network_receive_bytes{service=~\"$service\"}[1m])", "legendFormat": "rx -- serviço: {{service}} / container: {{container_name}}" },
+        { "expr": "rate(autoscaler_container_network_transmit_bytes{service=~\"$service\"}[1m])", "legendFormat": "tx -- serviço: {{service}} / container: {{container_name}}" }
       ]
     },
     {
       "id": 10,
-      "title": "Disco por container (bytes/s)",
+      "title": "Disco por container (bytes/s) -- serviço: $service",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
+      "options": {
+        "legend": { "showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["last"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
       "targets": [
-        { "expr": "rate(autoscaler_container_disk_read_bytes[1m])", "legendFormat": "read {{service}} / {{container_name}}" },
-        { "expr": "rate(autoscaler_container_disk_write_bytes[1m])", "legendFormat": "write {{service}} / {{container_name}}" }
+        { "expr": "rate(autoscaler_container_disk_read_bytes{service=~\"$service\"}[1m])", "legendFormat": "read -- serviço: {{service}} / container: {{container_name}}" },
+        { "expr": "rate(autoscaler_container_disk_write_bytes{service=~\"$service\"}[1m])", "legendFormat": "write -- serviço: {{service}} / container: {{container_name}}" }
+      ]
+    },
+    {
+      "id": 11,
+      "title": "Logs -- container: $compose_service",
+      "type": "logs",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 40 },
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "expr": "{compose_service=\"$compose_service\"}"
+        }
       ]
     }
   ]

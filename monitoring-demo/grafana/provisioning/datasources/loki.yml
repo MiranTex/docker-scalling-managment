@@ -1,0 +1,10 @@
+# Segundo datasource: mesma mecânica do prometheus.yml, só que apontando
+# pro Loki. O Grafana passa a falar LogQL com este em vez de PromQL.
+apiVersion: 1
+
+datasources:
+  - name: Loki
+    uid: loki
+    type: loki
+    access: proxy
+    url: http://loki:3100

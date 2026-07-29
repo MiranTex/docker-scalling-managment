@@ -1,10 +1,29 @@
-# Config mínima do Prometheus pra esta demo: faz scrape do endpoint
-# /metrics do group-demo a cada 5s (mais rápido que o default de produção,
-# só pra ver os gráficos se mexerem rápido durante o teste).
+# Auto-descoberta via Docker: em vez de listar alvos fixos, o Prometheus
+# pergunta ao socket Docker quem existe e filtra pelos que tiverem a label
+# prometheus.scrape=true, pegando a porta da label prometheus.port. Assim
+# qualquer projeto novo na rede "observability-net" só precisa dessas duas
+# labels no seu container -- nada aqui precisa ser editado.
 global:
   scrape_interval: 5s
 
 scrape_configs:
-  - job_name: autoscaler-group
-    static_configs:
-      - targets: ["group-demo:9090"]
+  - job_name: docker-sd
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+    relabel_configs:
+      - source_labels: [__meta_docker_container_label_prometheus_scrape]
+        regex: "true"
+        action: keep
+      - source_labels: [__meta_docker_network_ip, __meta_docker_container_label_prometheus_port]
+        separator: ":"
+        target_label: __address__
+      # "compose_service" (não "service"): o nosso próprio /metrics já usa a
+      # label "service" pro serviço que o autoscaler gerencia (ex: "demo") --
+      # se relabelássemos pra "service" aqui, colidiria e o Prometheus
+      # renomearia a nossa pra "exported_service" automaticamente.
+      - source_labels: [__meta_docker_container_label_com_docker_compose_service]
+        target_label: compose_service
+      - source_labels: [__meta_docker_container_name]
+        regex: "/(.*)"
+        target_label: container

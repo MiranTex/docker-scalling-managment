@@ -1,0 +1,87 @@
+# A "plataforma" de observabilidade: Prometheus + Loki + Promtail + Grafana,
+# desacoplados de qualquer projeto específico. Pensado pra subir UMA VEZ e
+# ficar de pé, servindo múltiplos projetos ao mesmo tempo.
+#
+# Suba com: docker compose -f docker-compose.observability.yml up -d
+#
+# Qualquer projeto que queira métricas coletadas aqui só precisa:
+#   1. Se conectar à rede "observability-net" (externa, criada por este compose)
+#   2. Expor um /metrics em formato Prometheus
+#   3. Ter as labels prometheus.scrape=true e prometheus.port=<porta> no
+#      container -- o Prometheus descobre sozinho via docker_sd_configs,
+#      sem precisar editar prometheus.yml a cada projeto novo.
+# Logs (via Loki/Promtail) já funcionam pra QUALQUER container do host,
+# nem precisam estar nesta rede -- o Promtail descobre via socket Docker,
+# não via rede (ver monitoring-demo/promtail/promtail-config.yml).
+networks:
+  observability-net:
+    name: observability-net
+
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=6h
+    volumes:
+      - ./monitoring-demo/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # Socket Docker: pra auto-descobrir containers via docker_sd_configs,
+      # igual ao que o Promtail já faz pra logs.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports:
+      - "9091:9090"
+    networks:
+      - observability-net
+    # A imagem oficial do Prometheus roda como usuário não-root (nobody);
+    # sem isto ele não tem permissão de ler o socket Docker (dono root:docker).
+    # 999 é o GID do grupo "docker" neste host -- confirme com `getent group docker`
+    # se for reaplicar isto noutra máquina.
+    group_add:
+      - "999"
+    mem_limit: 256m
+    cpus: 0.5
+
+  loki:
+    image: grafana/loki:latest
+    command: -config.file=/etc/loki/loki-config.yml
+    volumes:
+      - ./monitoring-demo/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+    ports:
+      - "3100:3100"
+    networks:
+      - observability-net
+    mem_limit: 256m
+    cpus: 0.5
+
+  promtail:
+    image: grafana/promtail:latest
+    command: -config.file=/etc/promtail/promtail-config.yml
+    volumes:
+      - ./monitoring-demo/promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    networks:
+      - observability-net
+    depends_on:
+      - loki
+    mem_limit: 128m
+    cpus: 0.3
+
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    volumes:
+      - ./monitoring-demo/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring-demo/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    networks:
+      - observability-net
+    depends_on:
+      - prometheus
+      - loki
+    mem_limit: 384m
+    cpus: 0.5
