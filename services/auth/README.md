@@ -1,9 +1,19 @@
 # auth
 
 Serviço de autenticação do base-stack. Fase 1: registo/login por
-email+senha, emissão e rotação de tokens, JWKS. Fase 2 (esta): API keys
-para autenticação máquina-a-máquina. Fases futuras: login social via
-OAuth2/OIDC, passkeys via WebAuthn.
+email+senha, emissão e rotação de tokens, JWKS. Fase 2: API keys para
+autenticação máquina-a-máquina. Fase 3 (esta): login social via
+OAuth2/OIDC (Google, GitHub). Fase futura: passkeys via WebAuthn.
+
+Nota de escopo (relevante se no futuro este serviço também for atuar como
+*authorization server* para apps de terceiros pedirem autorização a um
+utilizador nosso): o que está aqui é o inverso disso -- nós somos o
+*client* OAuth, autenticando os nossos próprios utilizadores contra um
+provider externo. Ser authorization server é uma feature bem maior e
+diferente (registo de clients de terceiros, ecrã de consentimento, scopes
+por app externa) e ficaria numa fase própria, construída em cima do que já
+existe aqui (reaproveitando login, JWT, Postgres) sem precisar alterar o
+que já está pronto.
 
 ## Como funciona
 
@@ -27,14 +37,23 @@ OAuth2/OIDC, passkeys via WebAuthn.
   validadas por qualquer outro serviço via `/v1/api-keys/introspect` — o
   equivalente, para chamadas M2M, ao que a JWKS é para sessões de
   utilizador.
+- **Login social (Google/GitHub)**: o utilizador autentica-se no provider
+  externo, e este serviço liga essa identidade à conta com o mesmo e-mail
+  (ou cria uma nova, se não existir). A ligação a uma conta **já
+  existente** só acontece se o provider confirmar que o e-mail é
+  verificado -- senão, qualquer um poderia reivindicar um e-mail que não é
+  dele e assumir a conta de outra pessoa. Uma mesma conta pode ter senha
+  + Google + GitHub ao mesmo tempo (account linking).
 
 Todo o núcleo criptográfico (JWT, hashing, refresh tokens, API keys) foi
 construído com a stdlib do Go, sem biblioteca de terceiros — dá pra ler
 `internal/token`, `internal/password`, `internal/refresh` e
 `internal/apikey` de ponta a ponta e entender exatamente o que está a
-acontecer. As fases futuras (OAuth2/OIDC, WebAuthn) vão trazer bibliotecas
-estabelecidas para as partes onde reinventar é mais risco de segurança do
-que aprendizagem.
+acontecer. Login social é a exceção deliberada: usa
+`golang.org/x/oauth2` (mantido pela equipa do Go) para o protocolo OAuth2
+em si -- aqui reinventar não tem ganho educativo que compense o risco de
+um erro sutil no fluxo. A fase futura (WebAuthn) vai seguir o mesmo
+raciocínio.
 
 ## Endpoints
 
@@ -47,6 +66,8 @@ que aprendizagem.
 | POST | `/v1/api-keys` | *(Bearer access token)* `{scopes, ttl_seconds?}` → cria uma API key (`key` só vem nesta resposta) |
 | DELETE | `/v1/api-keys/{id}` | *(Bearer access token, precisa ser o dono)* revoga a chave |
 | POST | `/v1/api-keys/introspect` | `{key}` → `{active, owner?, scopes?}` — usado por OUTRO serviço para validar uma API key |
+| GET | `/v1/oauth/{provider}/start` | Redireciona (302) para o provider (`google` ou `github`) |
+| GET | `/v1/oauth/{provider}/callback` | Recebido do provider após login → `{access_token, refresh_token, ...}` |
 | GET | `/.well-known/jwks.json` | Chaves públicas para validar tokens |
 | GET | `/healthz` | Liveness |
 | GET | `/readyz` | Readiness (confere se a base de dados está alcançável) |
@@ -61,18 +82,20 @@ internal/
   keystore/            persiste a chave de assinatura entre restarts
   refresh/             refresh tokens: rotação + deteção de reuso
   apikey/              API keys: emissão/validação/revogação (M2M)
+  oauth/               login social: providers (Google/GitHub) + account linking
   opaquetoken/         segredo aleatório + hash, partilhado por refresh e apikey
   idgen/               UUIDs (usado por vários pacotes acima)
-  store/               Postgres: users, password_credentials, refresh_tokens, api_keys
+  store/               Postgres: users, password_credentials, refresh_tokens, api_keys, oauth_identities
   httpapi/             handlers HTTP, ligando tudo o resto
 ```
 
-Cada pacote depende só de interfaces pequenas dos que usa (`refresh` e
-`apikey` recebem uma interface `Store` cada, `httpapi` recebe interfaces
-de `UserStore`/`TokenIssuer`/`RefreshIssuer`/`APIKeyIssuer`/`Pinger`) — é
-isso que permite testar a lógica de negócio (rotação de token, validação
-HTTP) com fakes em memória, e só a camada `store` precisa de Postgres de
-verdade nos testes.
+Cada pacote depende só de interfaces pequenas dos que usa (`refresh`,
+`apikey` e `oauth` recebem uma interface `Store` cada, `httpapi` recebe
+interfaces de
+`UserStore`/`TokenIssuer`/`RefreshIssuer`/`APIKeyIssuer`/`OAuthLogin`/`Pinger`)
+— é isso que permite testar a lógica de negócio (rotação de token,
+validação HTTP, account linking) com fakes em memória, e só a camada
+`store` precisa de Postgres de verdade nos testes.
 
 ## Configuração (variáveis de ambiente)
 
@@ -86,6 +109,15 @@ verdade nos testes.
 | `AUTH_ACCESS_TOKEN_TTL_SECONDS` | `900` (15 min) | Validade do access token. |
 | `AUTH_REFRESH_TOKEN_TTL_SECONDS` | `1209600` (14 dias) | Validade do refresh token. |
 | `LOG_FORMAT` / `LOG_LEVEL` | `json` / `info` | Mesmo padrão do services/autoscaler. |
+| `AUTH_GOOGLE_CLIENT_ID` / `AUTH_GOOGLE_CLIENT_SECRET` / `AUTH_GOOGLE_REDIRECT_URL` | *(vazio = desabilitado)* | Habilita login via Google. As três precisam estar definidas. |
+| `AUTH_GITHUB_CLIENT_ID` / `AUTH_GITHUB_CLIENT_SECRET` / `AUTH_GITHUB_REDIRECT_URL` | *(vazio = desabilitado)* | Habilita login via GitHub. As três precisam estar definidas. Scope necessário: `user:email`. |
+
+Sem nenhum provider configurado, o serviço sobe normalmente -- os
+endpoints `/v1/oauth/*` só respondem "provider desconhecido" (404). Para
+habilitar, registe uma aplicação OAuth no [Google Cloud Console](https://console.cloud.google.com/apis/credentials)
+ou nas [OAuth Apps do GitHub](https://github.com/settings/developers),
+configurando o redirect URI como
+`https://<seu-domínio>/v1/oauth/google/callback` (ou `/github/callback`).
 
 ## Subir
 
@@ -124,11 +156,21 @@ export AUTH_TEST_DATABASE_URL="postgres://postgres:test@localhost:15432/auth_tes
 go test ./...
 ```
 
-Todos os outros pacotes (`password`, `token`, `refresh`, `idgen`,
-`keystore`, `httpapi`) são testados com fakes/em memória — cobrem
-inclusive os cenários de ataque mais importantes: assinatura adulterada,
-token expirado, chave errada, e reuso de refresh token (que precisa
-revogar a sessão inteira, não só o token usado).
+Todos os outros pacotes (`password`, `token`, `refresh`, `apikey`,
+`idgen`, `keystore`, `httpapi`) são testados com fakes/em memória —
+cobrem inclusive os cenários de ataque mais importantes: assinatura
+adulterada, token expirado, chave errada, reuso de refresh token (que
+precisa revogar a sessão inteira, não só o token usado), e ligação de
+conta via e-mail não verificado (`internal/oauth`).
+
+`internal/oauth` é testado de um jeito um pouco diferente: sobe um IdP
+falso de verdade via `httptest.Server` (não um mock/stub em memória) e
+exercita o protocolo OAuth2 real (`golang.org/x/oauth2`) contra ele —
+troca de código por token, busca de identidade, tudo via HTTP de verdade,
+só que contra um servidor de teste em vez do Google/GitHub reais. Isto NÃO
+substitui testar contra o Google/GitHub reais (exigiria credenciais de uma
+aplicação OAuth registada em cada um), mas cobre o código deste serviço de
+ponta a ponta.
 
 ## Limitações conhecidas
 
@@ -157,3 +199,10 @@ revogar a sessão inteira, não só o token usado).
 - Sem listagem ("minhas chaves") nem rotação de API keys — só
   criar/revogar. O índice por `owner` na tabela já existe para quando
   isso for adicionado.
+- Login social não foi testado contra o Google/GitHub reais (só contra um
+  IdP falso via `httptest`, ver seção Testes) — antes de usar em produção,
+  valide manualmente o fluxo completo com uma aplicação OAuth real
+  registada em cada provider.
+- Sem endpoint para "adicionar senha" a uma conta criada originalmente via
+  OAuth, nem para desligar um provider já ligado — hoje o login social só
+  cria/liga, nunca remove.

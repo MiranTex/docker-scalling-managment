@@ -20,6 +20,7 @@ import (
 	"auth/internal/apikey"
 	"auth/internal/httpapi"
 	"auth/internal/keystore"
+	"auth/internal/oauth"
 	"auth/internal/refresh"
 	"auth/internal/store"
 	"auth/internal/token"
@@ -45,7 +46,8 @@ func main() {
 	tokens := token.NewManager(cfg.issuer, cfg.audience, cfg.accessTokenTTL, signingKey)
 	refreshTokens := refresh.NewManager(db, cfg.refreshTokenTTL)
 	apiKeys := apikey.NewManager(db.APIKeyStore())
-	handler := httpapi.NewHandler(db, tokens, refreshTokens, apiKeys, db, cfg.accessTokenTTL)
+	oauthLogin := oauth.NewManager(db, oauthProviders(cfg, logger)...)
+	handler := httpapi.NewHandler(db, tokens, refreshTokens, apiKeys, oauthLogin, db, cfg.accessTokenTTL)
 
 	srv := &http.Server{
 		Addr:    cfg.listenAddr,
@@ -69,6 +71,25 @@ func main() {
 		logger.Warn("shutdown do servidor HTTP não terminou a tempo", "err", err)
 	}
 	logger.Info("authd encerrado")
+}
+
+// oauthProviders monta os providers de login social a partir da config --
+// só entra um provider se as suas três variáveis (client ID, secret,
+// redirect URL) estiverem todas definidas. Sem nenhuma, o serviço sobe
+// normalmente, só sem login social disponível.
+func oauthProviders(cfg config, logger *slog.Logger) []oauth.Provider {
+	var providers []oauth.Provider
+
+	if cfg.googleClientID != "" && cfg.googleClientSecret != "" && cfg.googleRedirectURL != "" {
+		providers = append(providers, oauth.NewGoogleProvider(cfg.googleClientID, cfg.googleClientSecret, cfg.googleRedirectURL))
+		logger.Info("login social habilitado", "provider", "google")
+	}
+	if cfg.githubClientID != "" && cfg.githubClientSecret != "" && cfg.githubRedirectURL != "" {
+		providers = append(providers, oauth.NewGitHubProvider(cfg.githubClientID, cfg.githubClientSecret, cfg.githubRedirectURL))
+		logger.Info("login social habilitado", "provider", "github")
+	}
+
+	return providers
 }
 
 // connectWithRetry tenta ligar ao Postgres algumas vezes antes de desistir

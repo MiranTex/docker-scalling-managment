@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"auth/internal/apikey"
+	"auth/internal/oauth"
+	"auth/internal/opaquetoken"
 	"auth/internal/password"
 	"auth/internal/refresh"
 	"auth/internal/store"
@@ -58,12 +60,20 @@ type Pinger interface {
 	Ping(ctx context.Context) error
 }
 
+// OAuthLogin gere login social (Google/GitHub/...) — implementado por
+// *oauth.Manager.
+type OAuthLogin interface {
+	AuthCodeURL(provider, state string) (string, error)
+	Login(ctx context.Context, provider, code string) (store.User, error)
+}
+
 // Handler agrupa as dependências de todos os endpoints.
 type Handler struct {
 	users     UserStore
 	tokens    TokenIssuer
 	refresh   RefreshIssuer
 	apiKeys   APIKeyIssuer
+	oauth     OAuthLogin
 	db        Pinger
 	accessTTL time.Duration
 }
@@ -71,8 +81,8 @@ type Handler struct {
 // NewHandler monta o Handler. accessTTL é usado só para reportar
 // "expires_in" nas respostas — a validade de verdade do token já está
 // embutida no próprio JWT (claim exp), calculada por quem assina.
-func NewHandler(users UserStore, tokens TokenIssuer, refreshTokens RefreshIssuer, apiKeys APIKeyIssuer, db Pinger, accessTTL time.Duration) *Handler {
-	return &Handler{users: users, tokens: tokens, refresh: refreshTokens, apiKeys: apiKeys, db: db, accessTTL: accessTTL}
+func NewHandler(users UserStore, tokens TokenIssuer, refreshTokens RefreshIssuer, apiKeys APIKeyIssuer, oauthLogin OAuthLogin, db Pinger, accessTTL time.Duration) *Handler {
+	return &Handler{users: users, tokens: tokens, refresh: refreshTokens, apiKeys: apiKeys, oauth: oauthLogin, db: db, accessTTL: accessTTL}
 }
 
 // Routes monta o mux com todos os endpoints deste serviço.
@@ -90,6 +100,8 @@ func (h *Handler) Routes() *http.ServeMux {
 	// chamador na rede consegue introspectar; restrinja isto à rede
 	// interna (o serviço que consome a API key), nunca exponha ao público.
 	mux.HandleFunc("POST /v1/api-keys/introspect", h.handleIntrospectAPIKey)
+	mux.HandleFunc("GET /v1/oauth/{provider}/start", h.handleOAuthStart)
+	mux.HandleFunc("GET /v1/oauth/{provider}/callback", h.handleOAuthCallback)
 	mux.HandleFunc("GET /.well-known/jwks.json", h.handleJWKS)
 	mux.HandleFunc("GET /healthz", h.handleHealthz)
 	mux.HandleFunc("GET /readyz", h.handleReadyz)
@@ -372,6 +384,111 @@ func (h *Handler) handleIntrospectAPIKey(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusOK, introspectResponse{Active: true, Owner: key.Owner, Scopes: key.Scopes})
+}
+
+// oauthStateCookie é o nome do cookie que carrega o state entre
+// handleOAuthStart e handleOAuthCallback -- a única forma de validar que
+// quem chega no callback é a mesma navegação que iniciamos (proteção
+// contra CSRF no fluxo OAuth2, RFC 6749 §10.12), já que este serviço não
+// mantém sessão/estado do lado do servidor em mais nenhum outro endpoint.
+const oauthStateCookie = "oauth_state"
+
+// oauthStateTTL é por quanto tempo o cookie de state vale -- tempo de
+// sobra pra alguém completar o login no provider (escolher conta, digitar
+// senha, 2FA), sem ficar vulnerável indefinidamente se o browser nunca
+// voltar.
+const oauthStateTTL = 5 * time.Minute
+
+// stateSecretBytes segue o mesmo raciocínio dos outros segredos opacos
+// deste serviço: bytes suficientes pra não ser adivinhável.
+const stateSecretBytes = 16
+
+func (h *Handler) handleOAuthStart(w http.ResponseWriter, r *http.Request) {
+	provider := r.PathValue("provider")
+
+	state, err := opaquetoken.New(stateSecretBytes)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "erro gerando state")
+		return
+	}
+
+	authURL, err := h.oauth.AuthCodeURL(provider, state)
+	if errors.Is(err, oauth.ErrUnknownProvider) {
+		writeError(w, http.StatusNotFound, "unknown_provider", "provider desconhecido")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "erro montando URL de autorização")
+		return
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     oauthStateCookie,
+		Value:    state,
+		Path:     "/v1/oauth",
+		MaxAge:   int(oauthStateTTL.Seconds()),
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
+	http.Redirect(w, r, authURL, http.StatusFound)
+}
+
+func (h *Handler) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
+	// Limpa o cookie de state já na entrada, aconteça o que acontecer --
+	// é de uso único, não deve sobreviver a esta chamada. Precisa ser
+	// ANTES de qualquer resposta ser escrita (writeError/writeJSON chamam
+	// WriteHeader): um header só pode ser adicionado antes disso, senão o
+	// próprio net/http descarta silenciosamente -- um defer aqui correria
+	// tarde demais, depois do WriteHeader já ter sido chamado.
+	http.SetCookie(w, &http.Cookie{
+		Name:     oauthStateCookie,
+		Value:    "",
+		Path:     "/v1/oauth",
+		MaxAge:   -1,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
+
+	provider := r.PathValue("provider")
+	query := r.URL.Query()
+
+	if errParam := query.Get("error"); errParam != "" {
+		writeError(w, http.StatusBadRequest, "oauth_denied", "provider recusou a autorização: "+errParam)
+		return
+	}
+
+	code := query.Get("code")
+	if code == "" {
+		writeError(w, http.StatusBadRequest, "missing_code", "parâmetro code é obrigatório")
+		return
+	}
+
+	stateCookie, err := r.Cookie(oauthStateCookie)
+	if err != nil || stateCookie.Value == "" || stateCookie.Value != query.Get("state") {
+		writeError(w, http.StatusBadRequest, "invalid_state", "state inválido ou ausente")
+		return
+	}
+
+	user, err := h.oauth.Login(r.Context(), provider, code)
+	if errors.Is(err, oauth.ErrUnknownProvider) {
+		writeError(w, http.StatusNotFound, "unknown_provider", "provider desconhecido")
+		return
+	}
+	if errors.Is(err, oauth.ErrEmailNotVerified) {
+		writeError(w, http.StatusConflict, "email_not_verified", "já existe uma conta com este e-mail, mas o provider não confirma que ele é verificado")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "erro no login social")
+		return
+	}
+
+	pair, err := h.issueTokenPair(r.Context(), user.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "erro emitindo tokens")
+		return
+	}
+	writeJSON(w, http.StatusOK, pair)
 }
 
 func (h *Handler) handleJWKS(w http.ResponseWriter, r *http.Request) {

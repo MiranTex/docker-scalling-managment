@@ -26,6 +26,19 @@ type config struct {
 
 	accessTokenTTL  time.Duration
 	refreshTokenTTL time.Duration
+
+	// Credenciais de login social, por provider -- um provider só é
+	// registado (ver main.go) se as três variáveis dele estiverem
+	// definidas. Sem nenhuma configurada, o serviço funciona normalmente,
+	// só sem login social disponível (os endpoints /v1/oauth/* devolvem
+	// "provider desconhecido" pra qualquer provider pedido).
+	googleClientID     string
+	googleClientSecret string
+	googleRedirectURL  string
+
+	githubClientID     string
+	githubClientSecret string
+	githubRedirectURL  string
 }
 
 func loadConfig() config {
@@ -37,6 +50,14 @@ func loadConfig() config {
 		audience:        envString("AUTH_AUDIENCE", "base-stack"),
 		accessTokenTTL:  envSeconds("AUTH_ACCESS_TOKEN_TTL_SECONDS", 900),      // 15 min
 		refreshTokenTTL: envSeconds("AUTH_REFRESH_TOKEN_TTL_SECONDS", 1209600), // 14 dias
+
+		googleClientID:     os.Getenv("AUTH_GOOGLE_CLIENT_ID"),
+		googleClientSecret: os.Getenv("AUTH_GOOGLE_CLIENT_SECRET"),
+		googleRedirectURL:  os.Getenv("AUTH_GOOGLE_REDIRECT_URL"),
+
+		githubClientID:     os.Getenv("AUTH_GITHUB_CLIENT_ID"),
+		githubClientSecret: os.Getenv("AUTH_GITHUB_CLIENT_SECRET"),
+		githubRedirectURL:  os.Getenv("AUTH_GITHUB_REDIRECT_URL"),
 	}
 
 	if cfg.databaseURL == "" {

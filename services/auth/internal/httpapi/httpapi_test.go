@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"auth/internal/apikey"
+	"auth/internal/oauth"
 	"auth/internal/refresh"
 	"auth/internal/store"
 	"auth/internal/token"
@@ -182,10 +183,39 @@ type fakePinger struct{ err error }
 
 func (f fakePinger) Ping(context.Context) error { return f.err }
 
+// fakeOAuthLogin simula internal/oauth.Manager sem nenhum provider real
+// nem rede -- cada teste configura diretamente o resultado que
+// AuthCodeURL/Login devem devolver.
+type fakeOAuthLogin struct {
+	authCodeURLResult string
+	authCodeURLErr    error
+	loginResult       store.User
+	loginErr          error
+	lastLoginProvider string
+	lastLoginCode     string
+}
+
+func (f *fakeOAuthLogin) AuthCodeURL(provider, state string) (string, error) {
+	if f.authCodeURLErr != nil {
+		return "", f.authCodeURLErr
+	}
+	return f.authCodeURLResult, nil
+}
+
+func (f *fakeOAuthLogin) Login(_ context.Context, provider, code string) (store.User, error) {
+	f.lastLoginProvider = provider
+	f.lastLoginCode = code
+	if f.loginErr != nil {
+		return store.User{}, f.loginErr
+	}
+	return f.loginResult, nil
+}
+
 type testDeps struct {
 	users   *fakeUsers
 	refresh *fakeRefresh
 	apiKeys *fakeAPIKeys
+	oauth   *fakeOAuthLogin
 	pinger  *fakePinger
 	handler *Handler
 }
@@ -194,9 +224,10 @@ func newTestDeps() *testDeps {
 	users := newFakeUsers()
 	refreshMgr := newFakeRefresh()
 	apiKeys := newFakeAPIKeys()
+	oauthLogin := &fakeOAuthLogin{}
 	pinger := &fakePinger{}
-	h := NewHandler(users, fakeTokens{}, refreshMgr, apiKeys, pinger, 15*time.Minute)
-	return &testDeps{users: users, refresh: refreshMgr, apiKeys: apiKeys, pinger: pinger, handler: h}
+	h := NewHandler(users, fakeTokens{}, refreshMgr, apiKeys, oauthLogin, pinger, 15*time.Minute)
+	return &testDeps{users: users, refresh: refreshMgr, apiKeys: apiKeys, oauth: oauthLogin, pinger: pinger, handler: h}
 }
 
 // loginAndGetAccessToken registra e autentica um utilizador novo,
@@ -523,5 +554,138 @@ func TestRevokeAPIKeyOfAnotherUserFails(t *testing.T) {
 	revokeRec := doAuthedRequest(t, mux, http.MethodDelete, "/v1/api-keys/"+created.ID, otherToken, nil)
 	if revokeRec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404 ao tentar revogar chave de outro utilizador", revokeRec.Code)
+	}
+}
+
+func TestOAuthStartRedirectsWithStateCookie(t *testing.T) {
+	deps := newTestDeps()
+	deps.oauth.authCodeURLResult = "https://provider.example/authorize?client_id=x"
+
+	rec := doRequest(t, deps.handler.Routes(), http.MethodGet, "/v1/oauth/google/start", nil)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != deps.oauth.authCodeURLResult {
+		t.Fatalf("Location = %q, want %q", loc, deps.oauth.authCodeURLResult)
+	}
+
+	cookie := findCookie(t, rec, oauthStateCookie)
+	if cookie.Value == "" {
+		t.Fatal("cookie de state veio vazio")
+	}
+	if !cookie.HttpOnly {
+		t.Fatal("cookie de state devia ser HttpOnly")
+	}
+}
+
+func TestOAuthStartRejectsUnknownProvider(t *testing.T) {
+	deps := newTestDeps()
+	deps.oauth.authCodeURLErr = oauth.ErrUnknownProvider
+
+	rec := doRequest(t, deps.handler.Routes(), http.MethodGet, "/v1/oauth/nao-existe/start", nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+// doCallbackRequest monta a requisição de callback já com o cookie de
+// state que handleOAuthStart teria colocado -- simula o browser
+// devolvendo o mesmo cookie que recebeu.
+func doCallbackRequest(t *testing.T, mux http.Handler, query, stateCookieValue string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/v1/oauth/google/callback?"+query, nil)
+	if stateCookieValue != "" {
+		req.AddCookie(&http.Cookie{Name: oauthStateCookie, Value: stateCookieValue})
+	}
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
+func findCookie(t *testing.T, rec *httptest.ResponseRecorder, name string) *http.Cookie {
+	t.Helper()
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == name {
+			return c
+		}
+	}
+	t.Fatalf("cookie %q não encontrado na resposta", name)
+	return nil
+}
+
+func TestOAuthCallbackSuccess(t *testing.T) {
+	deps := newTestDeps()
+	deps.oauth.loginResult = store.User{ID: "user-1", Email: "ana@example.test"}
+	mux := deps.handler.Routes()
+
+	rec := doCallbackRequest(t, mux, "code=auth-code&state=opaque-state", "opaque-state")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body=%s", rec.Code, rec.Body.String())
+	}
+	pair := decodeBody[tokenPair](t, rec)
+	if pair.AccessToken == "" || pair.RefreshToken == "" {
+		t.Fatalf("tokenPair incompleto: %+v", pair)
+	}
+	if deps.oauth.lastLoginProvider != "google" || deps.oauth.lastLoginCode != "auth-code" {
+		t.Fatalf("Login chamado com argumentos errados: provider=%q code=%q", deps.oauth.lastLoginProvider, deps.oauth.lastLoginCode)
+	}
+
+	// O cookie de state tem que ser limpo na resposta do callback,
+	// aconteça o que acontecer -- é de uso único.
+	cleared := findCookie(t, rec, oauthStateCookie)
+	if cleared.MaxAge >= 0 {
+		t.Fatalf("cookie de state devia ser removido (MaxAge negativo), got %d", cleared.MaxAge)
+	}
+}
+
+func TestOAuthCallbackRejectsMismatchedState(t *testing.T) {
+	deps := newTestDeps()
+	rec := doCallbackRequest(t, deps.handler.Routes(), "code=auth-code&state=state-do-atacante", "state-legitimo")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestOAuthCallbackRejectsMissingCookie(t *testing.T) {
+	deps := newTestDeps()
+	rec := doCallbackRequest(t, deps.handler.Routes(), "code=auth-code&state=qualquer", "")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestOAuthCallbackRejectsMissingCode(t *testing.T) {
+	deps := newTestDeps()
+	rec := doCallbackRequest(t, deps.handler.Routes(), "state=opaque-state", "opaque-state")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestOAuthCallbackHandlesProviderDenied(t *testing.T) {
+	deps := newTestDeps()
+	rec := doCallbackRequest(t, deps.handler.Routes(), "error=access_denied", "")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestOAuthCallbackMapsEmailNotVerified(t *testing.T) {
+	deps := newTestDeps()
+	deps.oauth.loginErr = oauth.ErrEmailNotVerified
+
+	rec := doCallbackRequest(t, deps.handler.Routes(), "code=auth-code&state=opaque-state", "opaque-state")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", rec.Code)
+	}
+}
+
+func TestOAuthCallbackMapsUnknownProvider(t *testing.T) {
+	deps := newTestDeps()
+	deps.oauth.loginErr = oauth.ErrUnknownProvider
+
+	rec := doCallbackRequest(t, deps.handler.Routes(), "code=auth-code&state=opaque-state", "opaque-state")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
 	}
 }
