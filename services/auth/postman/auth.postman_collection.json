@@ -1,0 +1,273 @@
+{
+  "info": {
+    "name": "auth (base-stack)",
+    "description": "Coleção pra testar os endpoints do serviço services/auth. Sobe o serviço primeiro (ver README.md: docker build + docker compose up), depois corre os pedidos em ordem -- Register/Login guardam access_token/refresh_token automaticamente em variáveis da coleção, usados pelos pedidos seguintes.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:8081" },
+    { "key": "test_email", "value": "" },
+    { "key": "test_password", "value": "senha-super-forte" },
+    { "key": "access_token", "value": "" },
+    { "key": "refresh_token", "value": "" },
+    { "key": "api_key_id", "value": "" },
+    { "key": "api_key", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "GET /healthz",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/healthz"
+          }
+        },
+        {
+          "name": "GET /readyz",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/readyz"
+          }
+        },
+        {
+          "name": "GET /.well-known/jwks.json",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/.well-known/jwks.json"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "POST /v1/register",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "pm.collectionVariables.set('test_email', `user_${Date.now()}@example.test`);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{base_url}}/v1/register",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{test_email}}\",\n  \"password\": \"{{test_password}}\"\n}"
+            }
+          }
+        },
+        {
+          "name": "POST /v1/login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('access_token', body.access_token);",
+                  "pm.collectionVariables.set('refresh_token', body.refresh_token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{base_url}}/v1/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{test_email}}\",\n  \"password\": \"{{test_password}}\"\n}"
+            }
+          }
+        },
+        {
+          "name": "POST /v1/token/refresh",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('access_token', body.access_token);",
+                  "pm.collectionVariables.set('refresh_token', body.refresh_token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{base_url}}/v1/token/refresh",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh_token\": \"{{refresh_token}}\"\n}"
+            }
+          },
+          "description": "Roda o refresh token: o usado aqui fica inválido, o novo substitui a variável refresh_token. Reapresentar o antigo depois disto deve dar 401 (deteção de reuso)."
+        },
+        {
+          "name": "POST /v1/logout",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{base_url}}/v1/logout",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh_token\": \"{{refresh_token}}\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "API Keys",
+      "item": [
+        {
+          "name": "POST /v1/api-keys",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 201', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('api_key_id', body.id);",
+                  "pm.collectionVariables.set('api_key', body.key);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "url": "{{base_url}}/v1/api-keys",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"scopes\": [\"read:x\", \"write:x\"],\n  \"ttl_seconds\": 3600\n}"
+            }
+          },
+          "description": "Exige um access_token válido (ver POST /v1/login). \"key\" só vem nesta resposta -- guarda-o, não dá pra recuperar depois."
+        },
+        {
+          "name": "POST /v1/api-keys/introspect",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('active true', () => pm.expect(pm.response.json().active).to.eql(true));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{base_url}}/v1/api-keys/introspect",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"key\": \"{{api_key}}\"\n}"
+            }
+          },
+          "description": "Chamado normalmente por OUTRO serviço, não pelo dono da chave -- não exige Authorization."
+        },
+        {
+          "name": "DELETE /v1/api-keys/:id",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": "{{base_url}}/v1/api-keys/{{api_key_id}}"
+          },
+          "description": "Só o dono (mesmo access_token de quem criou) consegue revogar -- outro utilizador recebe 404."
+        },
+        {
+          "name": "POST /v1/api-keys/introspect (depois de revogar)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('active false', () => pm.expect(pm.response.json().active).to.eql(false));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{base_url}}/v1/api-keys/introspect",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"key\": \"{{api_key}}\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "OAuth (login social)",
+      "item": [
+        {
+          "name": "GET /v1/oauth/google/start",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/v1/oauth/google/start"
+          },
+          "description": "302 redirecionando pro Google, com cookie oauth_state -- só funciona se AUTH_GOOGLE_CLIENT_ID/SECRET/REDIRECT_URL estiverem configurados no serviço. Desative 'Automatically follow redirects' nas Settings do Postman se quiser ver o redirect em vez de segui-lo. Sem provider configurado, dá 404."
+        },
+        {
+          "name": "GET /v1/oauth/github/start",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/v1/oauth/github/start"
+          },
+          "description": "Mesma coisa que o do Google, com AUTH_GITHUB_*."
+        }
+      ]
+    }
+  ]
+}
