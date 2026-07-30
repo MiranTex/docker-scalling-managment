@@ -12,6 +12,7 @@ isolado dos demais e documentado no seu próprio README.
 services/
   autoscaler/    autoscaler + load balancer de containers Docker (Go)
   monitoring/    plataforma de observabilidade: Prometheus + Loki + Promtail + Grafana
+  auth/          autenticação: registo/login, JWT (RS256) + JWKS, refresh tokens
 demo/            compose de exemplo ligando autoscaler + monitoring, pra testar end-to-end
 ```
 
@@ -30,6 +31,10 @@ pra mostrar os dois funcionando juntos e servir de referência de integração.
   Loki, Promtail e Grafana, pensados pra subir uma vez e servir múltiplos
   projetos ao mesmo tempo (auto-descoberta via labels/socket Docker, sem
   precisar editar config a cada projeto novo).
+- **[services/auth](services/auth/README.md)** — registo/login por
+  email+senha, JWT RS256 com JWKS pra validação sem segredo partilhado, e
+  refresh tokens com rotação e deteção de reuso. Fase 1 de um serviço
+  pensado pra crescer com API keys, OAuth2/OIDC e WebAuthn/passkeys.
 
 ## Demo end-to-end
 

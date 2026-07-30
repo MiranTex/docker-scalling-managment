@@ -1,0 +1,54 @@
+# Serviço de autenticação: authd + um Postgres próprio, isolado num schema
+# "auth" dedicado. Por agora é só um Postgres básico só para este serviço --
+# quando o projeto tiver um serviço de base de dados compartilhado (um
+# servidor Postgres com um schema por serviço), isto migra pra lá; até
+# então, sobe aqui mesmo.
+#
+# Suba com: docker compose -f services/auth/docker-compose.yml up -d
+# Construa a imagem primeiro, se ainda não tiver: docker build -t auth-service:latest services/auth
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: auth
+      POSTGRES_USER: auth
+      # Senha de desenvolvimento -- troque isto (e o AUTH_DATABASE_URL
+      # abaixo) antes de rodar isto fora de uma máquina de dev.
+      POSTGRES_PASSWORD: auth
+    volumes:
+      - auth-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U auth"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    mem_limit: 256m
+    cpus: 0.5
+
+  authd:
+    image: auth-service:latest
+    environment:
+      AUTH_DATABASE_URL: "postgres://auth:auth@postgres:5432/auth?sslmode=disable"
+      # iss/aud vão em todo JWT emitido -- qualquer serviço que valide
+      # tokens deste auth service precisa saber estes dois valores (além
+      # da chave pública, servida em /.well-known/jwks.json).
+      AUTH_ISSUER: "auth.base-stack.local"
+      AUTH_AUDIENCE: "base-stack"
+      LOG_FORMAT: "json"
+      LOG_LEVEL: "info"
+    volumes:
+      # Onde a chave RSA de assinatura é persistida entre restarts (ver
+      # internal/keystore) -- sem isto, cada restart geraria uma chave
+      # nova e invalidaria todo token/JWKS já emitido.
+      - auth-signing-key:/var/lib/auth
+    ports:
+      - "8081:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    mem_limit: 128m
+    cpus: 0.5
+
+volumes:
+  auth-postgres-data:
+  auth-signing-key:
