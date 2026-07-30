@@ -1,12 +1,14 @@
-# O projeto em si (autoscaler): só o group -- ele mesmo cria o(s) backend(s)
-# do serviço "demo" a partir de monitoring-demo/launch-template.json,
-# inclusive o primeiro (sem bootstrap manual). Desacoplado da plataforma de
-# observabilidade (docker-compose.observability.yml).
+# Demo end-to-end: liga o autoscaler (services/autoscaler) à plataforma de
+# observabilidade (services/monitoring). Só o group -- ele mesmo cria o(s)
+# backend(s) do serviço "demo" a partir de launch-template.json (neste
+# diretório), inclusive o primeiro (sem bootstrap manual).
 #
-# Pré-requisito: suba a plataforma primeiro --
-#   docker compose -f docker-compose.observability.yml up -d
+# Pré-requisito: suba a plataforma de observabilidade primeiro --
+#   docker compose -f services/monitoring/docker-compose.yml up -d
+# Construa a imagem do autoscaler, se ainda não tiver --
+#   docker build -t autoscaler-group:latest services/autoscaler
 # Depois suba isto:
-#   docker compose -f docker-compose.monitoring-demo.yml up -d
+#   docker compose -f demo/docker-compose.yml up -d
 #
 # group-demo se conecta à rede externa "observability-net" (criada pelo
 # compose da plataforma) e carrega as labels prometheus.scrape/port --
@@ -47,6 +49,6 @@ services:
       - "9095:9090"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./monitoring-demo/launch-template.json:/etc/autoscaler/launch-template.json:ro
+      - ./launch-template.json:/etc/autoscaler/launch-template.json:ro
     networks:
       - observability-net

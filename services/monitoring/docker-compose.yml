@@ -2,7 +2,8 @@
 # desacoplados de qualquer projeto específico. Pensado pra subir UMA VEZ e
 # ficar de pé, servindo múltiplos projetos ao mesmo tempo.
 #
-# Suba com: docker compose -f docker-compose.observability.yml up -d
+# Suba com: docker compose -f services/monitoring/docker-compose.yml up -d
+# (ou, dentro de services/monitoring/: docker compose up -d)
 #
 # Qualquer projeto que queira métricas coletadas aqui só precisa:
 #   1. Se conectar à rede "observability-net" (externa, criada por este compose)
@@ -12,7 +13,7 @@
 #      sem precisar editar prometheus.yml a cada projeto novo.
 # Logs (via Loki/Promtail) já funcionam pra QUALQUER container do host,
 # nem precisam estar nesta rede -- o Promtail descobre via socket Docker,
-# não via rede (ver monitoring-demo/promtail/promtail-config.yml).
+# não via rede (ver promtail/promtail-config.yml).
 networks:
   observability-net:
     name: observability-net
@@ -24,7 +25,7 @@ services:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.retention.time=6h
     volumes:
-      - ./monitoring-demo/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       # Socket Docker: pra auto-descobrir containers via docker_sd_configs,
       # igual ao que o Promtail já faz pra logs.
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -45,7 +46,7 @@ services:
     image: grafana/loki:latest
     command: -config.file=/etc/loki/loki-config.yml
     volumes:
-      - ./monitoring-demo/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - ./loki/loki-config.yml:/etc/loki/loki-config.yml:ro
     ports:
       - "3100:3100"
     networks:
@@ -57,7 +58,7 @@ services:
     image: grafana/promtail:latest
     command: -config.file=/etc/promtail/promtail-config.yml
     volumes:
-      - ./monitoring-demo/promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+      - ./promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
     networks:
@@ -74,8 +75,8 @@ services:
       GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
       GF_AUTH_DISABLE_LOGIN_FORM: "true"
     volumes:
-      - ./monitoring-demo/grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./monitoring-demo/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
     ports:
       - "3000:3000"
     networks:

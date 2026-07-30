@@ -1,6 +1,6 @@
 # Diz ao Grafana pra carregar qualquer dashboard JSON encontrado na pasta
 # /var/lib/grafana/dashboards dentro do container -- é lá que montamos
-# monitoring-demo/grafana/dashboards.
+# grafana/dashboards (ver docker-compose.yml deste serviço).
 apiVersion: 1
 
 providers:
