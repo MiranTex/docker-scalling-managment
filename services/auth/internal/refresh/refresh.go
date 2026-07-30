@@ -15,15 +15,12 @@ package refresh
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
 
 	"auth/internal/idgen"
+	"auth/internal/opaquetoken"
 )
 
 // Token é um refresh token tal como persistido — nunca guarda o segredo em
@@ -163,14 +160,9 @@ func (m *Manager) Revoke(ctx context.Context, presented string) error {
 const randomSecretBytes = 32
 
 func randomSecret() (string, error) {
-	b := make([]byte, randomSecretBytes)
-	if _, err := rand.Read(b); err != nil {
-		return "", fmt.Errorf("refresh: gerando segredo: %w", err)
-	}
-	return base64.RawURLEncoding.EncodeToString(b), nil
+	return opaquetoken.New(randomSecretBytes)
 }
 
 func hashToken(secret string) string {
-	sum := sha256.Sum256([]byte(secret))
-	return hex.EncodeToString(sum[:])
+	return opaquetoken.Hash(secret)
 }

@@ -17,6 +17,7 @@ import (
 
 	"github.com/joho/godotenv"
 
+	"auth/internal/apikey"
 	"auth/internal/httpapi"
 	"auth/internal/keystore"
 	"auth/internal/refresh"
@@ -43,7 +44,8 @@ func main() {
 
 	tokens := token.NewManager(cfg.issuer, cfg.audience, cfg.accessTokenTTL, signingKey)
 	refreshTokens := refresh.NewManager(db, cfg.refreshTokenTTL)
-	handler := httpapi.NewHandler(db, tokens, refreshTokens, db, cfg.accessTokenTTL)
+	apiKeys := apikey.NewManager(db.APIKeyStore())
+	handler := httpapi.NewHandler(db, tokens, refreshTokens, apiKeys, db, cfg.accessTokenTTL)
 
 	srv := &http.Server{
 		Addr:    cfg.listenAddr,

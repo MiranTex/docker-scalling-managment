@@ -11,8 +11,10 @@ import (
 	"errors"
 	"net/http"
 	"net/mail"
+	"strings"
 	"time"
 
+	"auth/internal/apikey"
 	"auth/internal/password"
 	"auth/internal/refresh"
 	"auth/internal/store"
@@ -26,11 +28,20 @@ type UserStore interface {
 	FindUserByEmailWithPassword(ctx context.Context, email string) (store.User, string, error)
 }
 
-// TokenIssuer emite e expõe as chaves de access tokens (JWT) —
+// TokenIssuer emite, valida e expõe as chaves de access tokens (JWT) —
 // implementado por *token.Manager.
 type TokenIssuer interface {
 	Sign(subject string) (string, error)
+	Verify(tokenString string) (token.Claims, error)
 	JWKS() token.JWKSDocument
+}
+
+// APIKeyIssuer gere o ciclo de vida das API keys (autenticação
+// máquina-a-máquina) — implementado por *apikey.Manager.
+type APIKeyIssuer interface {
+	Issue(ctx context.Context, owner string, scopes []string, ttl *time.Duration) (plaintext string, key apikey.Key, err error)
+	Verify(ctx context.Context, presented string) (apikey.Key, error)
+	Revoke(ctx context.Context, id, owner string) error
 }
 
 // RefreshIssuer gere o ciclo de vida dos refresh tokens — implementado por
@@ -52,6 +63,7 @@ type Handler struct {
 	users     UserStore
 	tokens    TokenIssuer
 	refresh   RefreshIssuer
+	apiKeys   APIKeyIssuer
 	db        Pinger
 	accessTTL time.Duration
 }
@@ -59,8 +71,8 @@ type Handler struct {
 // NewHandler monta o Handler. accessTTL é usado só para reportar
 // "expires_in" nas respostas — a validade de verdade do token já está
 // embutida no próprio JWT (claim exp), calculada por quem assina.
-func NewHandler(users UserStore, tokens TokenIssuer, refreshTokens RefreshIssuer, db Pinger, accessTTL time.Duration) *Handler {
-	return &Handler{users: users, tokens: tokens, refresh: refreshTokens, db: db, accessTTL: accessTTL}
+func NewHandler(users UserStore, tokens TokenIssuer, refreshTokens RefreshIssuer, apiKeys APIKeyIssuer, db Pinger, accessTTL time.Duration) *Handler {
+	return &Handler{users: users, tokens: tokens, refresh: refreshTokens, apiKeys: apiKeys, db: db, accessTTL: accessTTL}
 }
 
 // Routes monta o mux com todos os endpoints deste serviço.
@@ -70,10 +82,40 @@ func (h *Handler) Routes() *http.ServeMux {
 	mux.HandleFunc("POST /v1/login", h.handleLogin)
 	mux.HandleFunc("POST /v1/token/refresh", h.handleRefresh)
 	mux.HandleFunc("POST /v1/logout", h.handleLogout)
+	mux.HandleFunc("POST /v1/api-keys", h.requireAuth(h.handleCreateAPIKey))
+	mux.HandleFunc("DELETE /v1/api-keys/{id}", h.requireAuth(h.handleRevokeAPIKey))
+	// Introspecção não exige um access token do chamador -- é chamado por
+	// OUTRO serviço, de posse só da API key que quer validar, não de uma
+	// sessão de utilizador. Ver limitação na documentação: hoje qualquer
+	// chamador na rede consegue introspectar; restrinja isto à rede
+	// interna (o serviço que consome a API key), nunca exponha ao público.
+	mux.HandleFunc("POST /v1/api-keys/introspect", h.handleIntrospectAPIKey)
 	mux.HandleFunc("GET /.well-known/jwks.json", h.handleJWKS)
 	mux.HandleFunc("GET /healthz", h.handleHealthz)
 	mux.HandleFunc("GET /readyz", h.handleReadyz)
 	return mux
+}
+
+// requireAuth envolve um handler que precisa saber QUEM está a chamar:
+// exige um access token válido no cabeçalho Authorization e passa o
+// "sub" (user ID) do token adiante -- é assim que uma API key criada em
+// POST /v1/api-keys fica associada a quem a criou.
+func (h *Handler) requireAuth(next func(w http.ResponseWriter, r *http.Request, userID string)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		const prefix = "Bearer "
+		authHeader := r.Header.Get("Authorization")
+		if !strings.HasPrefix(authHeader, prefix) {
+			writeError(w, http.StatusUnauthorized, "missing_token", "cabeçalho Authorization: Bearer <token> é obrigatório")
+			return
+		}
+
+		claims, err := h.tokens.Verify(strings.TrimPrefix(authHeader, prefix))
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, "invalid_token", "access token inválido ou expirado")
+			return
+		}
+		next(w, r, claims.Subject)
+	}
 }
 
 type tokenPair struct {
@@ -249,6 +291,87 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type createAPIKeyRequest struct {
+	Scopes     []string `json:"scopes"`
+	TTLSeconds *int     `json:"ttl_seconds,omitempty"`
+}
+
+type apiKeyResponse struct {
+	ID        string     `json:"id"`
+	Key       string     `json:"key,omitempty"` // só vem preenchido na criação -- nunca mais dá pra recuperar depois
+	Scopes    []string   `json:"scopes"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+}
+
+func (h *Handler) handleCreateAPIKey(w http.ResponseWriter, r *http.Request, userID string) {
+	var req createAPIKeyRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	var ttl *time.Duration
+	if req.TTLSeconds != nil {
+		d := time.Duration(*req.TTLSeconds) * time.Second
+		ttl = &d
+	}
+
+	plaintext, key, err := h.apiKeys.Issue(r.Context(), userID, req.Scopes, ttl)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "erro criando API key")
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, apiKeyResponse{ID: key.ID, Key: plaintext, Scopes: key.Scopes, ExpiresAt: key.ExpiresAt})
+}
+
+func (h *Handler) handleRevokeAPIKey(w http.ResponseWriter, r *http.Request, userID string) {
+	id := r.PathValue("id")
+	err := h.apiKeys.Revoke(r.Context(), id, userID)
+	if errors.Is(err, apikey.ErrNotFound) {
+		// Mesma resposta tanto para "não existe" quanto para "existe mas é
+		// de outro dono" -- não confirmamos a um chamador que um ID de
+		// chave alheio existe.
+		writeError(w, http.StatusNotFound, "not_found", "API key não encontrada")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "erro revogando API key")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type introspectRequest struct {
+	Key string `json:"key"`
+}
+
+type introspectResponse struct {
+	Active bool     `json:"active"`
+	Owner  string   `json:"owner,omitempty"`
+	Scopes []string `json:"scopes,omitempty"`
+}
+
+// handleIntrospectAPIKey é chamado por OUTRO serviço, de posse de uma API
+// key, pra confirmar que ela é válida e descobrir o dono/scopes -- o
+// equivalente, pra API keys, ao que a JWKS é para JWT: a forma de um
+// terceiro validar uma credencial emitida por este serviço.
+func (h *Handler) handleIntrospectAPIKey(w http.ResponseWriter, r *http.Request) {
+	var req introspectRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	key, err := h.apiKeys.Verify(r.Context(), req.Key)
+	if err != nil {
+		// "active: false" em vez de 401/404 -- introspecção sempre
+		// responde 200; é o campo "active" que carrega o resultado (mesmo
+		// espírito do RFC 7662, ainda que sem seguir o formato à risca).
+		writeJSON(w, http.StatusOK, introspectResponse{Active: false})
+		return
+	}
+	writeJSON(w, http.StatusOK, introspectResponse{Active: true, Owner: key.Owner, Scopes: key.Scopes})
 }
 
 func (h *Handler) handleJWKS(w http.ResponseWriter, r *http.Request) {

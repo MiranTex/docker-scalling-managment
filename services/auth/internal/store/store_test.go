@@ -38,7 +38,7 @@ func openTestDB(t *testing.T) *DB {
 	// Isola cada teste dos demais (e de execuções anteriores) sem exigir
 	// um Postgres descartável por teste -- mais simples que subir/derrubar
 	// containers a cada execução.
-	if _, err := db.sql.ExecContext(ctx, `TRUNCATE auth.refresh_tokens, auth.password_credentials, auth.users CASCADE`); err != nil {
+	if _, err := db.sql.ExecContext(ctx, `TRUNCATE auth.refresh_tokens, auth.password_credentials, auth.api_keys, auth.users CASCADE`); err != nil {
 		t.Fatalf("limpando tabelas antes do teste: %v", err)
 	}
 	return db

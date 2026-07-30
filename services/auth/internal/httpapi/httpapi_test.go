@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"auth/internal/apikey"
 	"auth/internal/refresh"
 	"auth/internal/store"
 	"auth/internal/token"
@@ -66,6 +68,71 @@ func (fakeTokens) JWKS() token.JWKSDocument {
 	return token.JWKSDocument{Keys: []token.JWK{{Kty: "RSA", Use: "sig", Alg: "RS256", Kid: "fake", N: "n", E: "e"}}}
 }
 
+// Verify é o inverso de Sign: só sabe desfazer o formato "access-for-<sub>"
+// que este fake usa -- suficiente pra exercitar requireAuth nos testes
+// sem precisar de um Manager de JWT real.
+func (fakeTokens) Verify(tokenString string) (token.Claims, error) {
+	const prefix = "access-for-"
+	if !strings.HasPrefix(tokenString, prefix) {
+		return token.Claims{}, token.ErrInvalidToken
+	}
+	return token.Claims{Subject: strings.TrimPrefix(tokenString, prefix)}, nil
+}
+
+type fakeAPIKeys struct {
+	mu     sync.Mutex
+	next   int
+	byHash map[string]apikey.Key // por plaintext (não é um hash de verdade, é só o fake)
+}
+
+func newFakeAPIKeys() *fakeAPIKeys {
+	return &fakeAPIKeys{byHash: map[string]apikey.Key{}}
+}
+
+func (f *fakeAPIKeys) Issue(_ context.Context, owner string, scopes []string, ttl *time.Duration) (string, apikey.Key, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.next++
+	plaintext := fmt.Sprintf("ak_fake_%d", f.next)
+	k := apikey.Key{ID: fmt.Sprintf("key-%d", f.next), Owner: owner, Scopes: scopes, CreatedAt: time.Now()}
+	if ttl != nil {
+		exp := k.CreatedAt.Add(*ttl)
+		k.ExpiresAt = &exp
+	}
+	f.byHash[plaintext] = k
+	return plaintext, k, nil
+}
+
+func (f *fakeAPIKeys) Verify(_ context.Context, presented string) (apikey.Key, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	k, ok := f.byHash[presented]
+	if !ok || k.RevokedAt != nil {
+		return apikey.Key{}, apikey.ErrInvalid
+	}
+	if k.ExpiresAt != nil && time.Now().After(*k.ExpiresAt) {
+		return apikey.Key{}, apikey.ErrInvalid
+	}
+	return k, nil
+}
+
+func (f *fakeAPIKeys) Revoke(_ context.Context, id, owner string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for plaintext, k := range f.byHash {
+		if k.ID == id {
+			if k.Owner != owner {
+				return apikey.ErrNotFound
+			}
+			now := time.Now()
+			k.RevokedAt = &now
+			f.byHash[plaintext] = k
+			return nil
+		}
+	}
+	return apikey.ErrNotFound
+}
+
 type fakeRefresh struct {
 	mu      sync.Mutex
 	next    int
@@ -118,6 +185,7 @@ func (f fakePinger) Ping(context.Context) error { return f.err }
 type testDeps struct {
 	users   *fakeUsers
 	refresh *fakeRefresh
+	apiKeys *fakeAPIKeys
 	pinger  *fakePinger
 	handler *Handler
 }
@@ -125,9 +193,43 @@ type testDeps struct {
 func newTestDeps() *testDeps {
 	users := newFakeUsers()
 	refreshMgr := newFakeRefresh()
+	apiKeys := newFakeAPIKeys()
 	pinger := &fakePinger{}
-	h := NewHandler(users, fakeTokens{}, refreshMgr, pinger, 15*time.Minute)
-	return &testDeps{users: users, refresh: refreshMgr, pinger: pinger, handler: h}
+	h := NewHandler(users, fakeTokens{}, refreshMgr, apiKeys, pinger, 15*time.Minute)
+	return &testDeps{users: users, refresh: refreshMgr, apiKeys: apiKeys, pinger: pinger, handler: h}
+}
+
+// loginAndGetAccessToken registra e autentica um utilizador novo,
+// devolvendo o access token -- usado pelos testes de API keys, que
+// exigem um Bearer token válido (ver requireAuth).
+func loginAndGetAccessToken(t *testing.T, mux http.Handler, email string) string {
+	t.Helper()
+	doRequest(t, mux, http.MethodPost, "/v1/register", registerRequest{Email: email, Password: "senha-forte"})
+	rec := doRequest(t, mux, http.MethodPost, "/v1/login", loginRequest{Email: email, Password: "senha-forte"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("login: status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	return decodeBody[tokenPair](t, rec).AccessToken
+}
+
+func doAuthedRequest(t *testing.T, mux http.Handler, method, path, accessToken string, body any) *httptest.ResponseRecorder {
+	t.Helper()
+	var reader *bytes.Reader
+	if body != nil {
+		raw, err := json.Marshal(body)
+		if err != nil {
+			t.Fatalf("marshal body: %v", err)
+		}
+		reader = bytes.NewReader(raw)
+	} else {
+		reader = bytes.NewReader(nil)
+	}
+	req := httptest.NewRequest(method, path, reader)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
 }
 
 func doRequest(t *testing.T, mux http.Handler, method, path string, body any) *httptest.ResponseRecorder {
@@ -336,5 +438,90 @@ func TestReadyzReflectsDBPing(t *testing.T) {
 	down := doRequest(t, deps.handler.Routes(), http.MethodGet, "/readyz", nil)
 	if down.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503 com BD indisponível", down.Code)
+	}
+}
+
+func TestCreateAPIKeyRequiresAuth(t *testing.T) {
+	deps := newTestDeps()
+	rec := doRequest(t, deps.handler.Routes(), http.MethodPost, "/v1/api-keys", createAPIKeyRequest{Scopes: []string{"read:x"}})
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401 sem Authorization", rec.Code)
+	}
+}
+
+func TestCreateAPIKeyRejectsInvalidToken(t *testing.T) {
+	deps := newTestDeps()
+	rec := doAuthedRequest(t, deps.handler.Routes(), http.MethodPost, "/v1/api-keys", "token-invalido", createAPIKeyRequest{})
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401 com token inválido", rec.Code)
+	}
+}
+
+func TestCreateAndIntrospectAPIKey(t *testing.T) {
+	deps := newTestDeps()
+	mux := deps.handler.Routes()
+	access := loginAndGetAccessToken(t, mux, "ana@example.test")
+
+	rec := doAuthedRequest(t, mux, http.MethodPost, "/v1/api-keys", access, createAPIKeyRequest{Scopes: []string{"read:x", "write:x"}})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201, body=%s", rec.Code, rec.Body.String())
+	}
+	created := decodeBody[apiKeyResponse](t, rec)
+	if created.Key == "" || created.ID == "" {
+		t.Fatalf("resposta de criação incompleta: %+v", created)
+	}
+
+	introspectRec := doRequest(t, mux, http.MethodPost, "/v1/api-keys/introspect", introspectRequest{Key: created.Key})
+	if introspectRec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", introspectRec.Code)
+	}
+	introspected := decodeBody[introspectResponse](t, introspectRec)
+	if !introspected.Active || len(introspected.Scopes) != 2 {
+		t.Fatalf("introspecção inesperada: %+v", introspected)
+	}
+}
+
+func TestIntrospectUnknownKeyIsInactive(t *testing.T) {
+	deps := newTestDeps()
+	rec := doRequest(t, deps.handler.Routes(), http.MethodPost, "/v1/api-keys/introspect", introspectRequest{Key: "ak_nao-existe"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (introspecção sempre responde 200)", rec.Code)
+	}
+	if decodeBody[introspectResponse](t, rec).Active {
+		t.Fatal("chave desconhecida não devia introspectar como ativa")
+	}
+}
+
+func TestRevokeAPIKeyThenIntrospectIsInactive(t *testing.T) {
+	deps := newTestDeps()
+	mux := deps.handler.Routes()
+	access := loginAndGetAccessToken(t, mux, "ana@example.test")
+
+	createRec := doAuthedRequest(t, mux, http.MethodPost, "/v1/api-keys", access, createAPIKeyRequest{})
+	created := decodeBody[apiKeyResponse](t, createRec)
+
+	revokeRec := doAuthedRequest(t, mux, http.MethodDelete, "/v1/api-keys/"+created.ID, access, nil)
+	if revokeRec.Code != http.StatusNoContent {
+		t.Fatalf("status da revogação = %d, want 204, body=%s", revokeRec.Code, revokeRec.Body.String())
+	}
+
+	introspectRec := doRequest(t, mux, http.MethodPost, "/v1/api-keys/introspect", introspectRequest{Key: created.Key})
+	if decodeBody[introspectResponse](t, introspectRec).Active {
+		t.Fatal("chave revogada não devia introspectar como ativa")
+	}
+}
+
+func TestRevokeAPIKeyOfAnotherUserFails(t *testing.T) {
+	deps := newTestDeps()
+	mux := deps.handler.Routes()
+	ownerToken := loginAndGetAccessToken(t, mux, "dono@example.test")
+	otherToken := loginAndGetAccessToken(t, mux, "outro@example.test")
+
+	createRec := doAuthedRequest(t, mux, http.MethodPost, "/v1/api-keys", ownerToken, createAPIKeyRequest{})
+	created := decodeBody[apiKeyResponse](t, createRec)
+
+	revokeRec := doAuthedRequest(t, mux, http.MethodDelete, "/v1/api-keys/"+created.ID, otherToken, nil)
+	if revokeRec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 ao tentar revogar chave de outro utilizador", revokeRec.Code)
 	}
 }
