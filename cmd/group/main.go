@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -82,7 +83,50 @@ func main() {
 	if err := adminSrv.Shutdown(shutdownCtx); err != nil {
 		logger.Warn("shutdown do servidor de métricas/health não terminou a tempo", "err", err)
 	}
+
+	// O group é dono do ciclo de vida das réplicas que ele mesmo cria a
+	// partir do launch template -- nenhuma delas está no docker-compose.yml,
+	// então um `docker compose down` só derrubaria este container, deixando
+	// as réplicas órfãs (mesmo problema de bootstrap, ao contrário: agora é
+	// teardown). Igual apagar um Auto Scaling Group na AWS termina as
+	// instâncias, encerrar o group aqui remove tudo que ele gerencia.
+	terminateAllReplicas(shutdownCtx, cfg, client, logger)
 	logger.Info("group encerrado")
+}
+
+// terminateAllReplicas para e remove todos os containers do serviço
+// gerenciado por este group (identificados pela label de serviço),
+// paralelamente e de melhor esforço -- erro num container não impede a
+// tentativa nos demais. Usa shutdownCtx (com timeout), não o ctx principal
+// (já cancelado neste ponto), senão nenhuma chamada à API do Docker sairia
+// do lugar.
+func terminateAllReplicas(ctx context.Context, cfg config, client *dockerclient.Client, logger *slog.Logger) {
+	filters := map[string][]string{
+		"label": {fmt.Sprintf("%s=%s", cfg.serviceLabel, cfg.targetService)},
+	}
+	containers, err := client.ListContainers(ctx, true, filters)
+	if err != nil {
+		logger.Error("erro listando réplicas para encerrar o grupo", "err", err)
+		return
+	}
+	if len(containers) == 0 {
+		return
+	}
+
+	logger.Info("encerrando grupo: removendo réplicas geridas por este group", "count", len(containers))
+	var wg sync.WaitGroup
+	for _, c := range containers {
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			if err := executor.Remove(ctx, client, id); err != nil {
+				logger.Error("erro removendo réplica no encerramento do grupo", "container_id", id[:12], "err", err)
+				return
+			}
+			logger.Info("réplica removida no encerramento do grupo", "container_id", id[:12])
+		}(c.ID)
+	}
+	wg.Wait()
 }
 
 // validateLaunchTemplateImage confirma, já no arranque, que a imagem do
