@@ -41,6 +41,8 @@ func main() {
 	defer stop()
 
 	client := dockerclient.New(cfg.dockerSocket)
+	validateLaunchTemplateImage(ctx, client, logger, cfg.launchTemplate.Image)
+
 	balancer := loadbalancer.NewRoundRobin()
 	evaluator := scaler.NewEvaluator(cfg.policy)
 	draining := newDrainSet()
@@ -83,6 +85,25 @@ func main() {
 	logger.Info("group encerrado")
 }
 
+// validateLaunchTemplateImage confirma, já no arranque, que a imagem do
+// launch template está pronta pra uso (existe localmente, ou consegue ser
+// baixada agora). Sem isso, um launch template com a imagem errada só
+// falharia no primeiro scale up de verdade -- possivelmente dias depois,
+// bem na hora em que mais precisamos que funcione. Encerra o processo se
+// a imagem não puder ser garantida.
+func validateLaunchTemplateImage(ctx context.Context, client *dockerclient.Client, logger *slog.Logger, image string) {
+	if _, err := client.InspectImage(ctx, image); err == nil {
+		return
+	}
+
+	logger.Info("imagem do launch template não encontrada localmente, baixando", "image", image)
+	if err := client.PullImage(ctx, image); err != nil {
+		logger.Error("launch template inválido: não foi possível obter a imagem", "image", image, "err", err)
+		os.Exit(1)
+	}
+	logger.Info("imagem do launch template pronta", "image", image)
+}
+
 // reconcileLoop é o coração do grupo: a cada tick, lê o estado atual dos
 // containers do serviço UMA vez e usa essa mesma leitura tanto pra decidir
 // se escala quanto para atualizar a lista de backends do load balancer.
@@ -113,16 +134,20 @@ func reconcile(ctx context.Context, cfg config, client *dockerclient.Client, log
 		return
 	}
 
-	if len(containers) == 0 {
-		logger.Warn("nenhum container encontrado para o serviço, load balancer sem backends")
-		balancer.SetBackends(nil)
-		metrics.replicas.WithLabelValues(cfg.targetService).Set(0)
-		metrics.healthyBackends.WithLabelValues(cfg.targetService).Set(0)
-		return
+	// Sem containers: ainda assim precisa passar pelo scaler, não só
+	// atualizar o load balancer. Réplicas=0 é o próprio gatilho que faz o
+	// scaler decidir ScaleUp quando MinReplicas > 0 (inclusive no
+	// bootstrap, quando nunca existiu nenhum container deste serviço) --
+	// só não há stats de CPU/memória/rede/disco de ninguém pra reportar.
+	svcMetrics := scaler.ServiceMetrics{Name: cfg.targetService, Replicas: 0, AvgCPUPercent: 0}
+	var containerStats []discovery.ContainerStats
+	var metricsErr error
+	if len(containers) > 0 {
+		svcMetrics, containerStats, metricsErr = discovery.AggregateMetrics(ctx, client, cfg.targetService, containers)
 	}
 
-	if svcMetrics, containerStats, err := discovery.AggregateMetrics(ctx, client, cfg.targetService, containers); err != nil {
-		logger.Error("erro coletando métricas", "err", err)
+	if metricsErr != nil {
+		logger.Error("erro coletando métricas", "err", metricsErr)
 	} else {
 		decision := evaluator.Evaluate(svcMetrics, time.Now())
 		level := slog.LevelDebug
@@ -142,7 +167,7 @@ func reconcile(ctx context.Context, cfg config, client *dockerclient.Client, log
 
 		switch decision.Action {
 		case scaler.ScaleUp:
-			if err := executor.Apply(ctx, client, decision, containers); err != nil {
+			if err := executor.ApplyWithTemplate(ctx, client, decision, cfg.launchTemplate, containers); err != nil {
 				logger.Error("erro aplicando scale up", "err", err)
 			} else {
 				metrics.scaleActions.WithLabelValues(cfg.targetService, "scale_up").Inc()
@@ -150,6 +175,14 @@ func reconcile(ctx context.Context, cfg config, client *dockerclient.Client, log
 		case scaler.ScaleDown:
 			startDrain(ctx, cfg, client, logger, draining, containers, metrics)
 		}
+	}
+
+	if len(containers) == 0 {
+		// Não há nada mais a atualizar no load balancer, mas o scaler já
+		// foi avaliado acima -- não retornamos mais cedo do que isso.
+		balancer.SetBackends(nil)
+		metrics.healthyBackends.WithLabelValues(cfg.targetService).Set(0)
+		return
 	}
 
 	// Containers em drenagem já saíram (ou estão saindo) do serviço: não

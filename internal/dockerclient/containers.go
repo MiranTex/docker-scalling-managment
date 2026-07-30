@@ -136,6 +136,11 @@ type CreateContainerRequest struct {
 type CreateHostConfig struct {
 	Binds       []string `json:"Binds,omitempty"`
 	NetworkMode string   `json:"NetworkMode,omitempty"`
+	// ExtraHosts adiciona entradas estáticas em /etc/hosts do container,
+	// formato "hostname:ip" (ex: "host.docker.internal:host-gateway") --
+	// não tem relação com publicação de porta, então não conflita entre
+	// réplicas do mesmo serviço.
+	ExtraHosts []string `json:"ExtraHosts,omitempty"`
 }
 
 // CreateContainer cria (mas não inicia) um novo container e devolve seu ID.

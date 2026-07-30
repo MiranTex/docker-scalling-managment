@@ -69,6 +69,13 @@ type Decision struct {
 	Action Action
 	Delta  int
 	Reason string
+	// Immediate é true quando a ação não deve esperar SustainedTicks no
+	// Evaluator com estado. Hoje só a correção de "abaixo do mínimo" usa
+	// isso: violar o piso de réplicas (inclusive chegar a zero) não é um
+	// sinal que possa estar oscilando como CPU perto de um limiar --
+	// esperar vários ticks "pra confirmar" só atrasaria desnecessariamente
+	// a correção de um estado que já sabemos que é inválido.
+	Immediate bool
 }
 
 // Evaluate aplica a policy às métricas atuais do serviço e decide se deve
@@ -76,27 +83,42 @@ type Decision struct {
 // forma mais simples de evitar oscilações bruscas; políticas mais espertas
 // (escalar proporcional à carga, cooldown entre decisões) podem vir depois.
 func Evaluate(policy Policy, metrics ServiceMetrics) Decision {
+	// MinReplicas como alvo ativo, não só piso de scale-down: se as
+	// réplicas atuais já estão abaixo do mínimo (inclusive zero, no
+	// bootstrap), sobe imediatamente, antes de olhar CPU. Isso cobre tanto
+	// "acabei de subir e ainda não atingi o mínimo" quanto "algo removeu
+	// réplicas demais" -- em ambos os casos é uma violação de invariante,
+	// não uma decisão sensível à carga.
+	if metrics.Replicas < policy.MinReplicas {
+		return Decision{
+			Action:    ScaleUp,
+			Delta:     1,
+			Reason:    fmt.Sprintf("replicas %d abaixo do mínimo de %d réplicas", metrics.Replicas, policy.MinReplicas),
+			Immediate: true,
+		}
+	}
+
 	if metrics.AvgCPUPercent >= policy.CPUScaleUpPercent {
 		if metrics.Replicas >= policy.MaxReplicas {
-			return Decision{NoAction, 0, fmt.Sprintf(
+			return Decision{Action: NoAction, Reason: fmt.Sprintf(
 				"cpu %.1f%% >= limite de scale up (%.1f%%), mas já está no máximo de %d réplicas",
 				metrics.AvgCPUPercent, policy.CPUScaleUpPercent, policy.MaxReplicas)}
 		}
-		return Decision{ScaleUp, 1, fmt.Sprintf(
+		return Decision{Action: ScaleUp, Delta: 1, Reason: fmt.Sprintf(
 			"cpu %.1f%% >= limite de scale up (%.1f%%)", metrics.AvgCPUPercent, policy.CPUScaleUpPercent)}
 	}
 
 	if metrics.AvgCPUPercent <= policy.CPUScaleDownPercent {
 		if metrics.Replicas <= policy.MinReplicas {
-			return Decision{NoAction, 0, fmt.Sprintf(
+			return Decision{Action: NoAction, Reason: fmt.Sprintf(
 				"cpu %.1f%% <= limite de scale down (%.1f%%), mas já está no mínimo de %d réplicas",
 				metrics.AvgCPUPercent, policy.CPUScaleDownPercent, policy.MinReplicas)}
 		}
-		return Decision{ScaleDown, -1, fmt.Sprintf(
+		return Decision{Action: ScaleDown, Delta: -1, Reason: fmt.Sprintf(
 			"cpu %.1f%% <= limite de scale down (%.1f%%)", metrics.AvgCPUPercent, policy.CPUScaleDownPercent)}
 	}
 
-	return Decision{NoAction, 0, fmt.Sprintf(
+	return Decision{Action: NoAction, Reason: fmt.Sprintf(
 		"cpu %.1f%% dentro dos limites (%.1f%% - %.1f%%)",
 		metrics.AvgCPUPercent, policy.CPUScaleDownPercent, policy.CPUScaleUpPercent)}
 }
@@ -133,6 +155,20 @@ func (e *Evaluator) Evaluate(metrics ServiceMetrics, now time.Time) Decision {
 		return raw
 	}
 
+	// Immediate (hoje só a correção de abaixo-do-mínimo) pula tanto ticks
+	// sustentados quanto cooldown: é reação a um piso de disponibilidade
+	// violado -- inclusive zero réplicas -- não a um sinal de carga que
+	// possa estar oscilando. Diferente de CPU perto de um limiar, não há
+	// ambiguidade sobre a ação ser necessária, e atrasá-la só prolonga um
+	// período com capacidade insuficiente. Também não mexe em lastAction:
+	// uma correção de bootstrap não deve fazer uma decisão CPU-driven
+	// legítima logo em seguida esperar cooldown por causa disso.
+	if raw.Immediate {
+		e.consecutiveUp = 0
+		e.consecutiveDown = 0
+		return raw
+	}
+
 	consecutive := &e.consecutiveUp
 	other := &e.consecutiveDown
 	if raw.Action == ScaleDown {
@@ -146,13 +182,13 @@ func (e *Evaluator) Evaluate(metrics ServiceMetrics, now time.Time) Decision {
 		sustained = 1
 	}
 	if *consecutive < sustained {
-		return Decision{NoAction, 0, fmt.Sprintf(
+		return Decision{Action: NoAction, Reason: fmt.Sprintf(
 			"%s pendente: %d/%d ticks consecutivos (%s)", raw.Action, *consecutive, sustained, raw.Reason)}
 	}
 
 	if e.policy.Cooldown > 0 && !e.lastAction.IsZero() {
 		if elapsed := now.Sub(e.lastAction); elapsed < e.policy.Cooldown {
-			return Decision{NoAction, 0, fmt.Sprintf(
+			return Decision{Action: NoAction, Reason: fmt.Sprintf(
 				"%s bloqueado por cooldown: faltam %s (%s)",
 				raw.Action, (e.policy.Cooldown - elapsed).Round(time.Second), raw.Reason)}
 		}

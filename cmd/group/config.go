@@ -1,11 +1,15 @@
 package main
 
 import (
+	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"strconv"
 	"time"
 
+	"autoscaler/internal/executor"
 	"autoscaler/internal/scaler"
 )
 
@@ -45,6 +49,11 @@ type config struct {
 	shutdownTimeout time.Duration
 
 	policy scaler.Policy
+
+	// launchTemplate descreve como criar uma réplica nova do zero (imagem,
+	// comando, env, labels, binds, rede). Carregado de um arquivo JSON —
+	// ver LAUNCH_TEMPLATE_FILE e loadLaunchTemplate.
+	launchTemplate executor.LaunchTemplate
 }
 
 // loadConfig lê a configuração das variáveis de ambiente, aplicando defaults
@@ -79,7 +88,48 @@ func loadConfig() config {
 		slog.Error("configuração inválida: TARGET_SERVICE é obrigatória (qual serviço este grupo gerencia)")
 		os.Exit(1)
 	}
+
+	templatePath := os.Getenv("LAUNCH_TEMPLATE_FILE")
+	if templatePath == "" {
+		slog.Error("configuração inválida: LAUNCH_TEMPLATE_FILE é obrigatória (de onde tirar imagem/config das réplicas novas)")
+		os.Exit(1)
+	}
+	template, err := loadLaunchTemplate(templatePath)
+	if err != nil {
+		slog.Error("erro carregando launch template", "file", templatePath, "err", err)
+		os.Exit(1)
+	}
+	// A label de serviço é injetada automaticamente (sobrepondo qualquer
+	// valor que o template já tivesse pra essa chave) -- sem isso, uma
+	// réplica criada a partir do template não seria contada no próximo
+	// reconcile, e o group ficaria escalando pra sempre sem nunca ver a
+	// réplica que acabou de criar.
+	if template.Labels == nil {
+		template.Labels = map[string]string{}
+	}
+	template.Labels[cfg.serviceLabel] = cfg.targetService
+	cfg.launchTemplate = template
+
 	return cfg
+}
+
+// loadLaunchTemplate lê e valida o JSON do launch template. Só confere a
+// forma (campo "image" presente); se a imagem existe/é alcançável de
+// verdade é responsabilidade de quem chama, validando contra o Docker.
+func loadLaunchTemplate(path string) (executor.LaunchTemplate, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return executor.LaunchTemplate{}, fmt.Errorf("lendo arquivo: %w", err)
+	}
+
+	var template executor.LaunchTemplate
+	if err := json.Unmarshal(raw, &template); err != nil {
+		return executor.LaunchTemplate{}, fmt.Errorf("parseando JSON: %w", err)
+	}
+	if template.Image == "" {
+		return executor.LaunchTemplate{}, errors.New(`campo "image" é obrigatório`)
+	}
+	return template, nil
 }
 
 func envString(key, def string) string {
@@ -148,5 +198,6 @@ func (c config) logAttrs() []any {
 		"drain_timeout", c.drainTimeout.String(),
 		"shutdown_timeout", c.shutdownTimeout.String(),
 		"health_check", healthCheck,
+		"launch_template_image", c.launchTemplate.Image,
 	}
 }

@@ -67,6 +67,69 @@ func scaleUp(ctx context.Context, client *dockerclient.Client, members []dockerc
 	return nil
 }
 
+// LaunchTemplate descreve como criar uma réplica nova do zero: imagem,
+// comando, env, labels e config de rede/volumes. Ao contrário de scaleUp
+// (que clona um container já rodando, escolhido meio arbitrariamente),
+// ApplyWithTemplate cria toda réplica nova a partir daqui -- inclusive a
+// primeira, quando ainda não existe nenhum container do serviço. Também
+// significa que mudar o template (ex: nova versão da imagem) só afeta as
+// PRÓXIMAS réplicas criadas, não substitui as que já estão rodando.
+type LaunchTemplate struct {
+	Image   string            `json:"image"`
+	Cmd     []string          `json:"cmd,omitempty"`
+	Env     []string          `json:"env,omitempty"`
+	Labels  map[string]string `json:"labels,omitempty"`
+	Binds   []string          `json:"binds,omitempty"`
+	Network string            `json:"network,omitempty"`
+	// ExtraHosts adiciona entradas estáticas em /etc/hosts de cada réplica,
+	// formato "hostname:ip" (ex: "host.docker.internal:host-gateway"). Sem
+	// relação com publicação de porta -- deliberadamente fora daqui, já que
+	// réplicas do mesmo serviço competiriam pela mesma porta no host; quem
+	// expõe o serviço é sempre o proxy do group, nunca porta publicada.
+	ExtraHosts []string `json:"extraHosts,omitempty"`
+}
+
+// ApplyWithTemplate é a versão de Apply usada pelo cmd/group: o scale up
+// cria sempre a partir do LaunchTemplate, nunca clonando um container já
+// existente -- isso é o que permite escalar a partir de zero réplicas.
+// O scale down continua igual (escolhe entre os containers existentes).
+func ApplyWithTemplate(ctx context.Context, client *dockerclient.Client, decision scaler.Decision, template LaunchTemplate, members []dockerclient.Container) error {
+	switch decision.Action {
+	case scaler.ScaleUp:
+		return scaleUpFromTemplate(ctx, client, template)
+	case scaler.ScaleDown:
+		return scaleDown(ctx, client, members)
+	default:
+		return nil
+	}
+}
+
+func scaleUpFromTemplate(ctx context.Context, client *dockerclient.Client, template LaunchTemplate) error {
+	if template.Image == "" {
+		return errors.New("executor: launch template sem \"image\" definida")
+	}
+
+	id, err := client.CreateContainer(ctx, "", dockerclient.CreateContainerRequest{
+		Image:  template.Image,
+		Cmd:    template.Cmd,
+		Env:    template.Env,
+		Labels: template.Labels,
+		HostConfig: &dockerclient.CreateHostConfig{
+			Binds:       template.Binds,
+			NetworkMode: template.Network,
+			ExtraHosts:  template.ExtraHosts,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("executor: criando container a partir do launch template: %w", err)
+	}
+
+	if err := client.StartContainer(ctx, id); err != nil {
+		return fmt.Errorf("executor: iniciando container %s: %w", id[:12], err)
+	}
+	return nil
+}
+
 // scaleDown escolhe e remove imediatamente um container do grupo. Usado
 // pelo fluxo simples (sem drain do load balancer); cmd/group usa
 // SelectScaleDownTarget + Remove separadamente para tirar o alvo dos

@@ -1,0 +1,9 @@
+{
+  "image": "nginx:alpine",
+  "cmd": [],
+  "env": [],
+  "labels": {},
+  "binds": [],
+  "network": "",
+  "extraHosts": []
+}
