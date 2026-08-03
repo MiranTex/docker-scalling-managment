@@ -164,6 +164,18 @@ func (f *fakeAPIKeys) Verify(_ context.Context, presented string) (apikey.Key, e
 	return k, nil
 }
 
+func (f *fakeAPIKeys) List(_ context.Context, owner string) ([]apikey.Key, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var keys []apikey.Key
+	for _, k := range f.byHash {
+		if k.Owner == owner {
+			keys = append(keys, k)
+		}
+	}
+	return keys, nil
+}
+
 func (f *fakeAPIKeys) Revoke(_ context.Context, id, owner string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -571,6 +583,52 @@ func TestCreateAndIntrospectAPIKey(t *testing.T) {
 	introspected := decodeBody[introspectResponse](t, introspectRec)
 	if !introspected.Active || len(introspected.Scopes) != 2 {
 		t.Fatalf("introspecção inesperada: %+v", introspected)
+	}
+}
+
+func TestListAPIKeysRequiresAuth(t *testing.T) {
+	deps := newTestDeps()
+	rec := doRequest(t, deps.handler.Routes(), http.MethodGet, "/v1/api-keys", nil)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+}
+
+func TestListAPIKeysReturnsOnlyOwnKeysWithoutSecret(t *testing.T) {
+	deps := newTestDeps()
+	mux := deps.handler.Routes()
+	ownerToken := loginAndGetAccessToken(t, mux, "dono@example.test")
+	otherToken := loginAndGetAccessToken(t, mux, "outro@example.test")
+
+	doAuthedRequest(t, mux, http.MethodPost, "/v1/api-keys", ownerToken, createAPIKeyRequest{Scopes: []string{"read:x"}})
+	doAuthedRequest(t, mux, http.MethodPost, "/v1/api-keys", otherToken, createAPIKeyRequest{Scopes: []string{"read:y"}})
+
+	rec := doAuthedRequest(t, mux, http.MethodGet, "/v1/api-keys", ownerToken, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body=%s", rec.Code, rec.Body.String())
+	}
+	keys := decodeBody[[]apiKeyListItem](t, rec)
+	if len(keys) != 1 {
+		t.Fatalf("esperava 1 chave do dono, veio %d: %+v", len(keys), keys)
+	}
+	if keys[0].Status != "active" {
+		t.Fatalf("status = %q, want active", keys[0].Status)
+	}
+}
+
+func TestListAPIKeysMarksRevokedStatus(t *testing.T) {
+	deps := newTestDeps()
+	mux := deps.handler.Routes()
+	access := loginAndGetAccessToken(t, mux, "ana@example.test")
+
+	createRec := doAuthedRequest(t, mux, http.MethodPost, "/v1/api-keys", access, createAPIKeyRequest{})
+	created := decodeBody[apiKeyResponse](t, createRec)
+	doAuthedRequest(t, mux, http.MethodDelete, "/v1/api-keys/"+created.ID, access, nil)
+
+	rec := doAuthedRequest(t, mux, http.MethodGet, "/v1/api-keys", access, nil)
+	keys := decodeBody[[]apiKeyListItem](t, rec)
+	if len(keys) != 1 || keys[0].Status != "revoked" {
+		t.Fatalf("esperava 1 chave revogada, veio: %+v", keys)
 	}
 }
 

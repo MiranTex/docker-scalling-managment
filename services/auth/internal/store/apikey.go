@@ -35,6 +35,10 @@ func (s apiKeyStore) Revoke(ctx context.Context, id, owner string, revokedAt tim
 	return s.db.RevokeAPIKey(ctx, id, owner, revokedAt)
 }
 
+func (s apiKeyStore) ListByOwner(ctx context.Context, owner string) ([]apikey.Key, error) {
+	return s.db.ListAPIKeysByOwner(ctx, owner)
+}
+
 // CreateAPIKey persiste uma API key nova.
 func (db *DB) CreateAPIKey(ctx context.Context, k apikey.Key) error {
 	_, err := db.sql.ExecContext(ctx, `
@@ -89,6 +93,44 @@ func (db *DB) RevokeAPIKey(ctx context.Context, id, owner string, revokedAt time
 		return false, fmt.Errorf("store: confirmando revogação de API key: %w", err)
 	}
 	return n > 0, nil
+}
+
+// ListAPIKeysByOwner implementa apikey.Store — devolve todas as chaves de
+// owner, mais recentes primeiro.
+func (db *DB) ListAPIKeysByOwner(ctx context.Context, owner string) ([]apikey.Key, error) {
+	rows, err := db.sql.QueryContext(ctx, `
+		SELECT id, owner, key_hash, scopes, created_at, expires_at, revoked_at
+		FROM auth.api_keys
+		WHERE owner = $1
+		ORDER BY created_at DESC`,
+		owner,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("store: listando API keys: %w", err)
+	}
+	defer rows.Close()
+
+	var keys []apikey.Key
+	for rows.Next() {
+		var k apikey.Key
+		var scopes string
+		var expiresAt, revokedAt sql.NullTime
+		if err := rows.Scan(&k.ID, &k.Owner, &k.KeyHash, &scopes, &k.CreatedAt, &expiresAt, &revokedAt); err != nil {
+			return nil, fmt.Errorf("store: lendo API key: %w", err)
+		}
+		k.Scopes = splitScopes(scopes)
+		if expiresAt.Valid {
+			k.ExpiresAt = &expiresAt.Time
+		}
+		if revokedAt.Valid {
+			k.RevokedAt = &revokedAt.Time
+		}
+		keys = append(keys, k)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: iterando API keys: %w", err)
+	}
+	return keys, nil
 }
 
 func joinScopes(scopes []string) string {

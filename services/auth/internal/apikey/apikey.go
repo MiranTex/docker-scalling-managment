@@ -52,6 +52,10 @@ type Store interface {
 	// conseguir distinguir os dois casos (evita confirmar pra um atacante
 	// que um ID de chave alheio existe).
 	Revoke(ctx context.Context, id, owner string, revokedAt time.Time) (found bool, err error)
+	// ListByOwner devolve todas as chaves (ativas ou não) pertencentes a
+	// owner, mais recentes primeiro -- nunca inclui o segredo em si (só o
+	// hash é persistido, e nem esse é devolvido por aqui).
+	ListByOwner(ctx context.Context, owner string) ([]Key, error)
 }
 
 // ErrInvalid é devolvido por Verify quando a chave apresentada não existe,
@@ -140,4 +144,15 @@ func (m *Manager) Revoke(ctx context.Context, id, owner string) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// List devolve as chaves de owner ("as minhas chaves") -- inclui
+// revogadas e expiradas, deixando quem chama decidir o que mostrar (o
+// endpoint HTTP marca cada uma como active/revoked/expired).
+func (m *Manager) List(ctx context.Context, owner string) ([]Key, error) {
+	keys, err := m.store.ListByOwner(ctx, owner)
+	if err != nil {
+		return nil, fmt.Errorf("apikey: listando chaves: %w", err)
+	}
+	return keys, nil
 }

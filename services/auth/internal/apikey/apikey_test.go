@@ -44,6 +44,18 @@ func (s *memStore) Revoke(_ context.Context, id, owner string, revokedAt time.Ti
 	return false, nil
 }
 
+func (s *memStore) ListByOwner(_ context.Context, owner string) ([]Key, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var keys []Key
+	for _, k := range s.keys {
+		if k.Owner == owner {
+			keys = append(keys, k)
+		}
+	}
+	return keys, nil
+}
+
 func TestIssueAndVerify(t *testing.T) {
 	ctx := context.Background()
 	m := NewManager(newMemStore())
@@ -128,6 +140,28 @@ func TestRevokeThenVerifyFails(t *testing.T) {
 	}
 	if _, err := m.Verify(ctx, plaintext); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("esperava ErrInvalid após revogação, got %v", err)
+	}
+}
+
+func TestListReturnsOnlyOwnerKeys(t *testing.T) {
+	ctx := context.Background()
+	m := NewManager(newMemStore())
+	if _, _, err := m.Issue(ctx, "user-1", []string{"read:x"}, nil); err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	if _, _, err := m.Issue(ctx, "user-1", []string{"write:x"}, nil); err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	if _, _, err := m.Issue(ctx, "user-2", nil, nil); err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+
+	keys, err := m.List(ctx, "user-1")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(keys) != 2 {
+		t.Fatalf("esperava 2 chaves de user-1, veio %d: %+v", len(keys), keys)
 	}
 }
 

@@ -53,6 +53,7 @@ type APIKeyIssuer interface {
 	Issue(ctx context.Context, owner string, scopes []string, ttl *time.Duration) (plaintext string, key apikey.Key, err error)
 	Verify(ctx context.Context, presented string) (apikey.Key, error)
 	Revoke(ctx context.Context, id, owner string) error
+	List(ctx context.Context, owner string) ([]apikey.Key, error)
 }
 
 // RefreshIssuer gere o ciclo de vida dos refresh tokens — implementado por
@@ -112,6 +113,7 @@ func (h *Handler) Routes() *http.ServeMux {
 	mux.HandleFunc("POST /v1/verify-email", h.handleVerifyEmail)
 	mux.HandleFunc("POST /v1/verify-email/resend", h.handleResendVerification)
 	mux.HandleFunc("POST /v1/api-keys", h.requireAuth(h.handleCreateAPIKey))
+	mux.HandleFunc("GET /v1/api-keys", h.requireAuth(h.handleListAPIKeys))
 	mux.HandleFunc("DELETE /v1/api-keys/{id}", h.requireAuth(h.handleRevokeAPIKey))
 	// Introspecção não exige um access token do chamador -- é chamado por
 	// OUTRO serviço, de posse só da API key que quer validar, não de uma
@@ -398,6 +400,18 @@ type apiKeyResponse struct {
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 }
 
+// apiKeyListItem é o que devolvemos em GET /v1/api-keys -- nunca inclui o
+// segredo (nem sequer o hash), só o suficiente para o dono reconhecer cada
+// chave e decidir se revoga.
+type apiKeyListItem struct {
+	ID        string     `json:"id"`
+	Scopes    []string   `json:"scopes"`
+	CreatedAt time.Time  `json:"created_at"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	RevokedAt *time.Time `json:"revoked_at,omitempty"`
+	Status    string     `json:"status"` // "active" | "revoked" | "expired"
+}
+
 func (h *Handler) handleCreateAPIKey(w http.ResponseWriter, r *http.Request, userID string) {
 	var req createAPIKeyRequest
 	if !decodeJSON(w, r, &req) {
@@ -417,6 +431,38 @@ func (h *Handler) handleCreateAPIKey(w http.ResponseWriter, r *http.Request, use
 	}
 
 	writeJSON(w, http.StatusCreated, apiKeyResponse{ID: key.ID, Key: plaintext, Scopes: key.Scopes, ExpiresAt: key.ExpiresAt})
+}
+
+// handleListAPIKeys devolve as chaves do utilizador autenticado ("as
+// minhas chaves") -- nunca o segredo em si, só o suficiente para
+// reconhecer e revogar cada uma.
+func (h *Handler) handleListAPIKeys(w http.ResponseWriter, r *http.Request, userID string) {
+	keys, err := h.apiKeys.List(r.Context(), userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "erro listando API keys")
+		return
+	}
+
+	now := time.Now()
+	items := make([]apiKeyListItem, 0, len(keys))
+	for _, k := range keys {
+		status := "active"
+		switch {
+		case k.RevokedAt != nil:
+			status = "revoked"
+		case k.ExpiresAt != nil && now.After(*k.ExpiresAt):
+			status = "expired"
+		}
+		items = append(items, apiKeyListItem{
+			ID:        k.ID,
+			Scopes:    k.Scopes,
+			CreatedAt: k.CreatedAt,
+			ExpiresAt: k.ExpiresAt,
+			RevokedAt: k.RevokedAt,
+			Status:    status,
+		})
+	}
+	writeJSON(w, http.StatusOK, items)
 }
 
 func (h *Handler) handleRevokeAPIKey(w http.ResponseWriter, r *http.Request, userID string) {

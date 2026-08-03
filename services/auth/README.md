@@ -95,6 +95,7 @@ raciocínio.
 | POST | `/v1/verify-email` | `{token}` → confirma o e-mail da conta |
 | POST | `/v1/verify-email/resend` | `{email}` → reemite o token (sempre 202, exista ou não a conta) |
 | POST | `/v1/api-keys` | *(Bearer access token)* `{scopes, ttl_seconds?}` → cria uma API key (`key` só vem nesta resposta) |
+| GET | `/v1/api-keys` | *(Bearer access token)* lista as chaves do utilizador autenticado (nunca inclui o segredo) |
 | DELETE | `/v1/api-keys/{id}` | *(Bearer access token, precisa ser o dono)* revoga a chave |
 | POST | `/v1/api-keys/introspect` | `{key}` → `{active, owner?, scopes?}` — usado por OUTRO serviço para validar uma API key |
 | GET | `/v1/oauth/{provider}/start` | Redireciona (302) para o provider (`google` ou `github`) |
@@ -233,9 +234,7 @@ ponta a ponta.
   exposto publicamente — o mesmo raciocínio de "rede interna apenas" que
   já vale para `/readyz`. Uma fase futura pode adicionar autenticação de
   serviço-a-serviço aqui também.
-- Sem listagem ("minhas chaves") nem rotação de API keys — só
-  criar/revogar. O índice por `owner` na tabela já existe para quando
-  isso for adicionado.
+- Sem rotação de API keys — só criar/revogar/listar.
 - Login social não foi testado contra o Google/GitHub reais (só contra um
   IdP falso via `httptest`, ver seção Testes) — antes de usar em produção,
   valide manualmente o fluxo completo com uma aplicação OAuth real
