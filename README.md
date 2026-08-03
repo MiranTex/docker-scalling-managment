@@ -13,6 +13,7 @@ services/
   autoscaler/    autoscaler + load balancer de containers Docker (Go)
   monitoring/    plataforma de observabilidade: Prometheus + Loki + Promtail + Grafana
   auth/          autenticação: registo/login, JWT (RS256) + JWKS, refresh tokens
+  portal/        frontend: login, controlo de sessão, API tokens pessoais (Next.js)
 demo/            compose de exemplo ligando autoscaler + monitoring, pra testar end-to-end
 ```
 
@@ -35,6 +36,11 @@ pra mostrar os dois funcionando juntos e servir de referência de integração.
   email+senha, JWT RS256 com JWKS pra validação sem segredo partilhado, e
   refresh tokens com rotação e deteção de reuso. Fase 1 de um serviço
   pensado pra crescer com API keys, OAuth2/OIDC e WebAuthn/passkeys.
+- **[services/portal](services/portal/README.md)** — frontend (Next.js)
+  em cima do `auth`: login/registo, sessão em cookies `httpOnly` com
+  renovação automática, e criação/listagem/revogação de API tokens
+  pessoais. Serviço piloto que integra os demais consumidos por uma
+  aplicação real, não só por `curl`.
 
 ## Demo end-to-end
 

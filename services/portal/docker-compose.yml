@@ -1,0 +1,23 @@
+# Frontend do portal: login, controlo de sessão e criação de API tokens
+# pessoais. Não tem base de dados própria -- é só uma camada fina em cima
+# do services/auth (ver README.md).
+#
+# Suba primeiro o services/auth (precisa estar alcançável em
+# AUTH_SERVICE_URL). Depois construa e suba isto:
+#   docker build -t portal:latest services/portal
+#   docker compose -f services/portal/docker-compose.yml up -d
+services:
+  portal:
+    image: portal:latest
+    environment:
+      # Aponte para o auth service. Se subiu com o docker-compose.yml
+      # próprio do auth na rede default dele, use o IP/hostname alcançável
+      # daqui -- ou ligue os dois numa rede Docker partilhada (ver
+      # demo/docker-compose.yml para um exemplo desse padrão).
+      AUTH_SERVICE_URL: "http://localhost:8081"
+    ports:
+      # 3100 no host, não 3000 -- o Grafana de services/monitoring já usa
+      # 3000 (ver demo/README.md). Dentro do container continua 3000.
+      - "3100:3000"
+    mem_limit: 256m
+    cpus: 0.5
