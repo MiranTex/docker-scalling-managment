@@ -11,7 +11,8 @@
     { "key": "access_token", "value": "" },
     { "key": "refresh_token", "value": "" },
     { "key": "api_key_id", "value": "" },
-    { "key": "api_key", "value": "" }
+    { "key": "api_key", "value": "" },
+    { "key": "verification_token", "value": "" }
   ],
   "item": [
     {
@@ -145,6 +146,47 @@
               "raw": "{\n  \"refresh_token\": \"{{refresh_token}}\"\n}"
             }
           }
+        }
+      ]
+    },
+    {
+      "name": "Verificação de e-mail",
+      "item": [
+        {
+          "name": "POST /v1/verify-email/resend",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{base_url}}/v1/verify-email/resend",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{test_email}}\"\n}"
+            }
+          },
+          "description": "Sempre responde 202, exista ou não a conta -- não emite sinal diferente pros dois casos. Sem provedor de e-mail configurado, o token é só registado no log do processo (docker logs auth-demo-authd-1 ou equivalente); copia-o manualmente para a variável verification_token pra testar o próximo pedido."
+        },
+        {
+          "name": "POST /v1/verify-email",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{base_url}}/v1/verify-email",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"{{verification_token}}\"\n}"
+            }
+          },
+          "description": "Preenche a variável verification_token com o token que apareceu no log do serviço (ver descrição de /v1/verify-email/resend, ou o log emitido no momento do POST /v1/register)."
         }
       ]
     },

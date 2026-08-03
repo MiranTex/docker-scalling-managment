@@ -59,6 +59,11 @@ type User struct {
 	ID        string
 	Email     string
 	CreatedAt time.Time
+	// EmailVerifiedAt é nil até o dono provar que tem acesso a este
+	// e-mail (ver internal/verification) -- usado por oauth.Manager.Login
+	// pra decidir se uma conta encontrada por e-mail pode ser confiada
+	// como está, ou se precisa ser "reclamada" (ver ReclaimUnverifiedAccount).
+	EmailVerifiedAt *time.Time
 }
 
 // ErrEmailTaken é devolvido por CreateUserWithPassword quando o e-mail já
@@ -89,6 +94,9 @@ func (db *DB) CreateUserWithPassword(ctx context.Context, email, passwordHash st
 		`INSERT INTO auth.users (id, email) VALUES ($1, $2) RETURNING created_at`,
 		id, email,
 	).Scan(&createdAt)
+	// Note: email_verified_at fica NULL aqui de propósito -- uma conta
+	// criada por senha só fica "verificada" depois de confirmar o e-mail
+	// (ver internal/verification e POST /v1/verify-email).
 	if isUniqueViolation(err) {
 		return User{}, ErrEmailTaken
 	}
@@ -116,20 +124,66 @@ func (db *DB) CreateUserWithPassword(ctx context.Context, email, passwordHash st
 func (db *DB) FindUserByEmailWithPassword(ctx context.Context, email string) (User, string, error) {
 	var u User
 	var passwordHash string
+	var emailVerifiedAt sql.NullTime
 	err := db.sql.QueryRowContext(ctx, `
-		SELECT u.id, u.email, u.created_at, p.password_hash
+		SELECT u.id, u.email, u.created_at, u.email_verified_at, p.password_hash
 		FROM auth.users u
 		JOIN auth.password_credentials p ON p.user_id = u.id
 		WHERE u.email = $1`,
 		email,
-	).Scan(&u.ID, &u.Email, &u.CreatedAt, &passwordHash)
+	).Scan(&u.ID, &u.Email, &u.CreatedAt, &emailVerifiedAt, &passwordHash)
 	if errors.Is(err, sql.ErrNoRows) {
 		return User{}, "", ErrUserNotFound
 	}
 	if err != nil {
 		return User{}, "", fmt.Errorf("store: buscando utilizador por e-mail: %w", err)
 	}
+	if emailVerifiedAt.Valid {
+		u.EmailVerifiedAt = &emailVerifiedAt.Time
+	}
 	return u, passwordHash, nil
+}
+
+// ReclaimUnverifiedAccount é chamado quando um login social prova, via um
+// provider que confirma o e-mail, que quem está a autenticar agora É o
+// dono legítimo de um e-mail cuja conta aqui NUNCA foi verificada -- ou
+// seja, essa conta pode ter sido criada por outra pessoa que só sabia o
+// e-mail (registo por senha não exige prova nenhuma). Em vez de confiar
+// cegamente e só ligar a identidade a essa conta, tratamos isto como
+// reivindicação legítima: marcamos o e-mail como verificado agora,
+// removemos qualquer credencial de senha que já existisse (quem a
+// registou não é o dono, não devia continuar a conseguir entrar), e
+// revogamos as sessões (refresh tokens) já ativas -- fecha a janela de
+// account takeover sem duplicar a conta.
+//
+// Limitação aceite: um access token (JWT) já emitido para a conta antes
+// disto continua válido até expirar (15 min por default) -- JWT não é
+// revogável antes do tempo, só o refresh token é.
+func (db *DB) ReclaimUnverifiedAccount(ctx context.Context, userID string) error {
+	tx, err := db.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: iniciando transação: %w", err)
+	}
+	defer tx.Rollback()
+
+	now := time.Now()
+	if _, err := tx.ExecContext(ctx, `UPDATE auth.users SET email_verified_at = $2 WHERE id = $1`, userID, now); err != nil {
+		return fmt.Errorf("store: marcando e-mail como verificado: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM auth.password_credentials WHERE user_id = $1`, userID); err != nil {
+		return fmt.Errorf("store: removendo credencial de senha: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE auth.refresh_tokens SET revoked_at = $2 WHERE user_id = $1 AND revoked_at IS NULL`,
+		userID, now,
+	); err != nil {
+		return fmt.Errorf("store: revogando sessões ativas: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: confirmando reclamação de conta: %w", err)
+	}
+	return nil
 }
 
 // Create implementa refresh.Store.

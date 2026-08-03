@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -57,6 +59,51 @@ func (f *fakeUsers) FindUserByEmailWithPassword(_ context.Context, email string)
 		return store.User{}, "", store.ErrUserNotFound
 	}
 	return u, f.hashes[u.ID], nil
+}
+
+func (f *fakeUsers) FindUserByEmail(_ context.Context, email string) (store.User, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	u, ok := f.byEmail[email]
+	return u, ok, nil
+}
+
+// fakeEmailVerifier simula internal/verification.Manager -- cada teste
+// pode espiar o último token emitido (lastIssuedToken) ou forçar Verify a
+// falhar/suceder.
+type fakeEmailVerifier struct {
+	mu              sync.Mutex
+	next            int
+	lastIssuedToken string
+	lastIssuedUser  string
+	verifyErr       error
+	verifyUserID    string
+}
+
+func newFakeEmailVerifier() *fakeEmailVerifier {
+	return &fakeEmailVerifier{}
+}
+
+func (f *fakeEmailVerifier) Issue(_ context.Context, userID string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.next++
+	tok := fmt.Sprintf("verify-token-%d", f.next)
+	f.lastIssuedToken = tok
+	f.lastIssuedUser = userID
+	return tok, nil
+}
+
+func (f *fakeEmailVerifier) Verify(_ context.Context, presented string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.verifyErr != nil {
+		return "", f.verifyErr
+	}
+	if presented != f.lastIssuedToken {
+		return "", errors.New("token desconhecido")
+	}
+	return f.verifyUserID, nil
 }
 
 type fakeTokens struct{}
@@ -212,12 +259,13 @@ func (f *fakeOAuthLogin) Login(_ context.Context, provider, code string) (store.
 }
 
 type testDeps struct {
-	users   *fakeUsers
-	refresh *fakeRefresh
-	apiKeys *fakeAPIKeys
-	oauth   *fakeOAuthLogin
-	pinger  *fakePinger
-	handler *Handler
+	users        *fakeUsers
+	refresh      *fakeRefresh
+	apiKeys      *fakeAPIKeys
+	oauth        *fakeOAuthLogin
+	verification *fakeEmailVerifier
+	pinger       *fakePinger
+	handler      *Handler
 }
 
 func newTestDeps() *testDeps {
@@ -225,9 +273,14 @@ func newTestDeps() *testDeps {
 	refreshMgr := newFakeRefresh()
 	apiKeys := newFakeAPIKeys()
 	oauthLogin := &fakeOAuthLogin{}
+	emailVerifier := newFakeEmailVerifier()
 	pinger := &fakePinger{}
-	h := NewHandler(users, fakeTokens{}, refreshMgr, apiKeys, oauthLogin, pinger, 15*time.Minute)
-	return &testDeps{users: users, refresh: refreshMgr, apiKeys: apiKeys, oauth: oauthLogin, pinger: pinger, handler: h}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	h := NewHandler(users, fakeTokens{}, refreshMgr, apiKeys, oauthLogin, emailVerifier, pinger, 15*time.Minute, logger)
+	return &testDeps{
+		users: users, refresh: refreshMgr, apiKeys: apiKeys, oauth: oauthLogin,
+		verification: emailVerifier, pinger: pinger, handler: h,
+	}
 }
 
 // loginAndGetAccessToken registra e autentica um utilizador novo,
@@ -302,6 +355,15 @@ func TestRegisterSuccess(t *testing.T) {
 	resp := decodeBody[registerResponse](t, rec)
 	if resp.Email != "ana@example.test" || resp.UserID == "" {
 		t.Fatalf("resposta inesperada: %+v", resp)
+	}
+
+	// O registo tem de emitir um token de verificação -- e ele NUNCA pode
+	// vir na resposta HTTP (só "chega" por e-mail, fora deste teste).
+	if deps.verification.lastIssuedUser != resp.UserID {
+		t.Fatalf("esperava token de verificação emitido para %q, foi para %q", resp.UserID, deps.verification.lastIssuedUser)
+	}
+	if strings.Contains(rec.Body.String(), deps.verification.lastIssuedToken) {
+		t.Fatal("o token de verificação NUNCA deve aparecer na resposta HTTP de registo")
 	}
 }
 
@@ -687,5 +749,67 @@ func TestOAuthCallbackMapsUnknownProvider(t *testing.T) {
 	rec := doCallbackRequest(t, deps.handler.Routes(), "code=auth-code&state=opaque-state", "opaque-state")
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+func TestVerifyEmailSuccess(t *testing.T) {
+	deps := newTestDeps()
+	mux := deps.handler.Routes()
+
+	registerRec := doRequest(t, mux, http.MethodPost, "/v1/register", registerRequest{Email: "ana@example.test", Password: "senha-forte"})
+	created := decodeBody[registerResponse](t, registerRec)
+	deps.verification.verifyUserID = created.UserID
+
+	rec := doRequest(t, mux, http.MethodPost, "/v1/verify-email", verifyEmailRequest{Token: deps.verification.lastIssuedToken})
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestVerifyEmailRejectsInvalidToken(t *testing.T) {
+	deps := newTestDeps()
+	rec := doRequest(t, deps.handler.Routes(), http.MethodPost, "/v1/verify-email", verifyEmailRequest{Token: "token-que-nao-existe"})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestVerifyEmailRejectsMissingToken(t *testing.T) {
+	deps := newTestDeps()
+	rec := doRequest(t, deps.handler.Routes(), http.MethodPost, "/v1/verify-email", verifyEmailRequest{Token: ""})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestResendVerificationAlwaysAccepted(t *testing.T) {
+	deps := newTestDeps()
+	mux := deps.handler.Routes()
+	doRequest(t, mux, http.MethodPost, "/v1/register", registerRequest{Email: "ana@example.test", Password: "senha-forte"})
+
+	knownEmail := doRequest(t, mux, http.MethodPost, "/v1/verify-email/resend", resendVerificationRequest{Email: "ana@example.test"})
+	unknownEmail := doRequest(t, mux, http.MethodPost, "/v1/verify-email/resend", resendVerificationRequest{Email: "ninguem@example.test"})
+
+	// Mesma resposta pros dois casos -- não dá pra saber, por este
+	// endpoint, se um e-mail está registado ou não.
+	if knownEmail.Code != http.StatusAccepted || unknownEmail.Code != http.StatusAccepted {
+		t.Fatalf("status codes = %d, %d, want 202, 202", knownEmail.Code, unknownEmail.Code)
+	}
+}
+
+func TestResendVerificationIssuesNewTokenForUnverifiedAccount(t *testing.T) {
+	deps := newTestDeps()
+	mux := deps.handler.Routes()
+	registerRec := doRequest(t, mux, http.MethodPost, "/v1/register", registerRequest{Email: "ana@example.test", Password: "senha-forte"})
+	created := decodeBody[registerResponse](t, registerRec)
+
+	firstToken := deps.verification.lastIssuedToken
+	doRequest(t, mux, http.MethodPost, "/v1/verify-email/resend", resendVerificationRequest{Email: "ana@example.test"})
+
+	if deps.verification.lastIssuedUser != created.UserID {
+		t.Fatalf("resend não emitiu token para o utilizador certo: got %q", deps.verification.lastIssuedUser)
+	}
+	if deps.verification.lastIssuedToken == firstToken {
+		t.Fatal("resend devia ter emitido um token novo")
 	}
 }

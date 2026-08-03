@@ -24,8 +24,9 @@ type config struct {
 	issuer   string
 	audience string
 
-	accessTokenTTL  time.Duration
-	refreshTokenTTL time.Duration
+	accessTokenTTL       time.Duration
+	refreshTokenTTL      time.Duration
+	emailVerificationTTL time.Duration
 
 	// Credenciais de login social, por provider -- um provider só é
 	// registado (ver main.go) se as três variáveis dele estiverem
@@ -43,13 +44,14 @@ type config struct {
 
 func loadConfig() config {
 	cfg := config{
-		databaseURL:     os.Getenv("AUTH_DATABASE_URL"),
-		listenAddr:      envString("AUTH_LISTEN_ADDR", ":8080"),
-		signingKeyFile:  envString("AUTH_SIGNING_KEY_FILE", "/var/lib/auth/signing-key.json"),
-		issuer:          envString("AUTH_ISSUER", "auth-service"),
-		audience:        envString("AUTH_AUDIENCE", "base-stack"),
-		accessTokenTTL:  envSeconds("AUTH_ACCESS_TOKEN_TTL_SECONDS", 900),      // 15 min
-		refreshTokenTTL: envSeconds("AUTH_REFRESH_TOKEN_TTL_SECONDS", 1209600), // 14 dias
+		databaseURL:          os.Getenv("AUTH_DATABASE_URL"),
+		listenAddr:           envString("AUTH_LISTEN_ADDR", ":8080"),
+		signingKeyFile:       envString("AUTH_SIGNING_KEY_FILE", "/var/lib/auth/signing-key.json"),
+		issuer:               envString("AUTH_ISSUER", "auth-service"),
+		audience:             envString("AUTH_AUDIENCE", "base-stack"),
+		accessTokenTTL:       envSeconds("AUTH_ACCESS_TOKEN_TTL_SECONDS", 900),         // 15 min
+		refreshTokenTTL:      envSeconds("AUTH_REFRESH_TOKEN_TTL_SECONDS", 1209600),    // 14 dias
+		emailVerificationTTL: envSeconds("AUTH_EMAIL_VERIFICATION_TTL_SECONDS", 86400), // 24h
 
 		googleClientID:     os.Getenv("AUTH_GOOGLE_CLIENT_ID"),
 		googleClientSecret: os.Getenv("AUTH_GOOGLE_CLIENT_SECRET"),
@@ -95,6 +97,7 @@ func (c config) logAttrs() []any {
 		"audience", c.audience,
 		"access_token_ttl", c.accessTokenTTL.String(),
 		"refresh_token_ttl", c.refreshTokenTTL.String(),
+		"email_verification_ttl", c.emailVerificationTTL.String(),
 		"signing_key_file", c.signingKeyFile,
 	}
 }

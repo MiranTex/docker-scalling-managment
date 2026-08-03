@@ -44,6 +44,35 @@ que já está pronto.
   verificado -- senão, qualquer um poderia reivindicar um e-mail que não é
   dele e assumir a conta de outra pessoa. Uma mesma conta pode ter senha
   + Google + GitHub ao mesmo tempo (account linking).
+- **Verificação de e-mail**: uma conta criada por senha nasce com
+  `email_verified_at` nulo -- ninguém provou ainda que é dona daquele
+  e-mail. `POST /v1/register` emite um token de verificação de uso único
+  (`internal/verification`); `POST /v1/verify-email` confirma. O login
+  por senha **não** exige verificação prévia (não bloqueia o uso
+  imediato da conta), mas o login social exige, indiretamente: ver a
+  próxima secção sobre o porquê disto ser mais que uma formalidade.
+
+### A vulnerabilidade que a verificação de e-mail fecha
+
+Sem verificação de e-mail, o account linking do login social tinha um
+problema real: um atacante regista `vitima@empresa.com` por senha (o
+registo aceita qualquer e-mail, sem prova nenhuma de posse). Meses depois,
+a vítima de verdade tenta "Entrar com Google" com o seu e-mail real
+(verificado pelo Google) -- o sistema encontra a conta já existente
+(criada pelo atacante) e, como o Google confirma o e-mail, **ligava** a
+identidade Google a essa conta. O atacante continuava a saber a senha:
+acesso total a uma conta que a vítima acha que é dela.
+
+A correção (`store.ReclaimUnverifiedAccount`, chamada por
+`oauth.Manager.Login` sempre que a conta encontrada por e-mail nunca foi
+verificada do nosso lado): em vez de só ligar a identidade cegamente,
+tratamos o login social como prova de posse legítima e **reclamamos** a
+conta -- marcamos o e-mail como verificado, removemos a credencial de
+senha que já existisse (o atacante perde o acesso na hora) e revogamos
+todas as sessões (refresh tokens) ativas. Limitação aceite: um access
+token (JWT) já emitido para essa conta antes disto continua válido até
+expirar (15 min por default) -- JWT não é revogável antes do tempo, só o
+refresh token é.
 
 Todo o núcleo criptográfico (JWT, hashing, refresh tokens, API keys) foi
 construído com a stdlib do Go, sem biblioteca de terceiros — dá pra ler
@@ -63,6 +92,8 @@ raciocínio.
 | POST | `/v1/login` | `{email, password}` → `{access_token, refresh_token, ...}` |
 | POST | `/v1/token/refresh` | `{refresh_token}` → novo par de tokens (roda o refresh token) |
 | POST | `/v1/logout` | `{refresh_token}` → encerra a sessão |
+| POST | `/v1/verify-email` | `{token}` → confirma o e-mail da conta |
+| POST | `/v1/verify-email/resend` | `{email}` → reemite o token (sempre 202, exista ou não a conta) |
 | POST | `/v1/api-keys` | *(Bearer access token)* `{scopes, ttl_seconds?}` → cria uma API key (`key` só vem nesta resposta) |
 | DELETE | `/v1/api-keys/{id}` | *(Bearer access token, precisa ser o dono)* revoga a chave |
 | POST | `/v1/api-keys/introspect` | `{key}` → `{active, owner?, scopes?}` — usado por OUTRO serviço para validar uma API key |
@@ -83,16 +114,17 @@ internal/
   refresh/             refresh tokens: rotação + deteção de reuso
   apikey/              API keys: emissão/validação/revogação (M2M)
   oauth/               login social: providers (Google/GitHub) + account linking
-  opaquetoken/         segredo aleatório + hash, partilhado por refresh e apikey
+  verification/        verificação de e-mail: emissão/confirmação de token de uso único
+  opaquetoken/         segredo aleatório + hash, partilhado por refresh, apikey e verification
   idgen/               UUIDs (usado por vários pacotes acima)
-  store/               Postgres: users, password_credentials, refresh_tokens, api_keys, oauth_identities
+  store/               Postgres: users, password_credentials, refresh_tokens, api_keys, oauth_identities, email_verifications
   httpapi/             handlers HTTP, ligando tudo o resto
 ```
 
 Cada pacote depende só de interfaces pequenas dos que usa (`refresh`,
-`apikey` e `oauth` recebem uma interface `Store` cada, `httpapi` recebe
-interfaces de
-`UserStore`/`TokenIssuer`/`RefreshIssuer`/`APIKeyIssuer`/`OAuthLogin`/`Pinger`)
+`apikey`, `oauth` e `verification` recebem uma interface `Store` cada,
+`httpapi` recebe interfaces de
+`UserStore`/`TokenIssuer`/`RefreshIssuer`/`APIKeyIssuer`/`OAuthLogin`/`EmailVerifier`/`Pinger`)
 — é isso que permite testar a lógica de negócio (rotação de token,
 validação HTTP, account linking) com fakes em memória, e só a camada
 `store` precisa de Postgres de verdade nos testes.
@@ -108,6 +140,7 @@ validação HTTP, account linking) com fakes em memória, e só a camada
 | `AUTH_AUDIENCE` | `base-stack` | Claim `aud` emitido/validado nos JWT. |
 | `AUTH_ACCESS_TOKEN_TTL_SECONDS` | `900` (15 min) | Validade do access token. |
 | `AUTH_REFRESH_TOKEN_TTL_SECONDS` | `1209600` (14 dias) | Validade do refresh token. |
+| `AUTH_EMAIL_VERIFICATION_TTL_SECONDS` | `86400` (24h) | Validade do token de verificação de e-mail. |
 | `LOG_FORMAT` / `LOG_LEVEL` | `json` / `info` | Mesmo padrão do services/autoscaler. |
 | `AUTH_GOOGLE_CLIENT_ID` / `AUTH_GOOGLE_CLIENT_SECRET` / `AUTH_GOOGLE_REDIRECT_URL` | *(vazio = desabilitado)* | Habilita login via Google. As três precisam estar definidas. |
 | `AUTH_GITHUB_CLIENT_ID` / `AUTH_GITHUB_CLIENT_SECRET` / `AUTH_GITHUB_REDIRECT_URL` | *(vazio = desabilitado)* | Habilita login via GitHub. As três precisam estar definidas. Scope necessário: `user:email`. |
@@ -157,11 +190,15 @@ go test ./...
 ```
 
 Todos os outros pacotes (`password`, `token`, `refresh`, `apikey`,
-`idgen`, `keystore`, `httpapi`) são testados com fakes/em memória —
-cobrem inclusive os cenários de ataque mais importantes: assinatura
-adulterada, token expirado, chave errada, reuso de refresh token (que
-precisa revogar a sessão inteira, não só o token usado), e ligação de
-conta via e-mail não verificado (`internal/oauth`).
+`verification`, `idgen`, `keystore`, `httpapi`) são testados com
+fakes/em memória — cobrem inclusive os cenários de ataque mais
+importantes: assinatura adulterada, token expirado, chave errada, reuso
+de refresh token (que precisa revogar a sessão inteira, não só o token
+usado), ligação de conta via e-mail não verificado, e a reclamação de
+uma conta squatted (`TestLoginReclaimsUnverifiedSquattedAccount` em
+`internal/oauth`, e `TestReclaimUnverifiedAccount` em `internal/store`
+confirmando contra Postgres real que a credencial de senha é mesmo
+removida e as sessões são mesmo revogadas, não só um campo marcado).
 
 `internal/oauth` é testado de um jeito um pouco diferente: sobe um IdP
 falso de verdade via `httptest.Server` (não um mock/stub em memória) e
@@ -206,3 +243,13 @@ ponta a ponta.
 - Sem endpoint para "adicionar senha" a uma conta criada originalmente via
   OAuth, nem para desligar um provider já ligado — hoje o login social só
   cria/liga, nunca remove.
+- **Sem envio de e-mail de verdade** — `POST /v1/register` emite o token
+  de verificação e só o regista no log estruturado do processo
+  (`docker logs`), marcado claramente como placeholder. Antes de
+  produção, isto precisa de ser ligado a um provedor real (SMTP, SES,
+  Postmark, etc.) em `Handler.issueAndLogVerificationToken`
+  (`internal/httpapi`).
+- Zero logging de eventos de segurança fora da emissão do token de
+  verificação — login falhado, criação/revogação de API key, login
+  social bem-sucedido, nada disso é registado ainda. Falta pra ter rasto
+  de auditoria/deteção de intrusão.

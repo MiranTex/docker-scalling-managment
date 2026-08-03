@@ -24,6 +24,7 @@ import (
 	"auth/internal/refresh"
 	"auth/internal/store"
 	"auth/internal/token"
+	"auth/internal/verification"
 )
 
 func main() {
@@ -47,7 +48,8 @@ func main() {
 	refreshTokens := refresh.NewManager(db, cfg.refreshTokenTTL)
 	apiKeys := apikey.NewManager(db.APIKeyStore())
 	oauthLogin := oauth.NewManager(db, oauthProviders(cfg, logger)...)
-	handler := httpapi.NewHandler(db, tokens, refreshTokens, apiKeys, oauthLogin, db, cfg.accessTokenTTL)
+	emailVerifier := verification.NewManager(db.EmailVerificationStore(), cfg.emailVerificationTTL)
+	handler := httpapi.NewHandler(db, tokens, refreshTokens, apiKeys, oauthLogin, emailVerifier, db, cfg.accessTokenTTL, logger)
 
 	srv := &http.Server{
 		Addr:    cfg.listenAddr,

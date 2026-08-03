@@ -3,7 +3,20 @@ package store
 import (
 	"context"
 	"testing"
+	"time"
+
+	"auth/internal/idgen"
+	"auth/internal/refresh"
 )
+
+func mustNewID(t *testing.T) string {
+	t.Helper()
+	id, err := idgen.New()
+	if err != nil {
+		t.Fatalf("idgen.New: %v", err)
+	}
+	return id
+}
 
 // Este ficheiro testa que *DB implementa corretamente os métodos que
 // oauth.Store exige (FindUserByOAuthIdentity, FindUserByEmail,
@@ -16,7 +29,7 @@ func TestOAuthAccountLinkingLifecycle(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
 
-	created, err := db.CreateUserWithoutPassword(ctx, uniqueEmail(t))
+	created, err := db.CreateUserWithoutPassword(ctx, uniqueEmail(t), false)
 	if err != nil {
 		t.Fatalf("CreateUserWithoutPassword: %v", err)
 	}
@@ -58,11 +71,93 @@ func TestCreateUserWithoutPasswordThenFindByEmailWithPasswordFails(t *testing.T)
 	ctx := context.Background()
 	email := uniqueEmail(t)
 
-	if _, err := db.CreateUserWithoutPassword(ctx, email); err != nil {
+	if _, err := db.CreateUserWithoutPassword(ctx, email, false); err != nil {
 		t.Fatalf("CreateUserWithoutPassword: %v", err)
 	}
 
 	if _, _, err := db.FindUserByEmailWithPassword(ctx, email); err != ErrUserNotFound {
 		t.Fatalf("esperava ErrUserNotFound para conta sem senha, got %v", err)
+	}
+}
+
+func TestCreateUserWithoutPasswordSetsVerifiedFlag(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	unverified, err := db.CreateUserWithoutPassword(ctx, uniqueEmail(t), false)
+	if err != nil {
+		t.Fatalf("CreateUserWithoutPassword (unverified): %v", err)
+	}
+	if unverified.EmailVerifiedAt != nil {
+		t.Fatalf("esperava EmailVerifiedAt nil, got %v", unverified.EmailVerifiedAt)
+	}
+
+	verified, err := db.CreateUserWithoutPassword(ctx, uniqueEmail(t), true)
+	if err != nil {
+		t.Fatalf("CreateUserWithoutPassword (verified): %v", err)
+	}
+	if verified.EmailVerifiedAt == nil {
+		t.Fatal("esperava EmailVerifiedAt preenchido para conta criada já verificada")
+	}
+}
+
+// TestReclaimUnverifiedAccount é o teste mais importante deste ficheiro:
+// confirma que reclamar uma conta squatted de verdade derruba o acesso do
+// atacante (credencial de senha removida, sessões revogadas), não só
+// marca um campo.
+func TestReclaimUnverifiedAccount(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	email := uniqueEmail(t)
+
+	// O "atacante" regista a conta por senha -- nunca verificada.
+	user, err := db.CreateUserWithPassword(ctx, email, "hash-do-atacante")
+	if err != nil {
+		t.Fatalf("CreateUserWithPassword: %v", err)
+	}
+	if user.EmailVerifiedAt != nil {
+		t.Fatal("conta registada por senha não devia nascer verificada")
+	}
+
+	// E tem uma sessão ativa (refresh token).
+	tokenHash := "hash-do-refresh-de-teste-" + user.ID
+	if err := db.Create(ctx, refresh.Token{
+		ID:        mustNewID(t),
+		UserID:    user.ID,
+		FamilyID:  mustNewID(t),
+		TokenHash: tokenHash,
+		ExpiresAt: time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("criando refresh token do atacante: %v", err)
+	}
+
+	if err := db.ReclaimUnverifiedAccount(ctx, user.ID); err != nil {
+		t.Fatalf("ReclaimUnverifiedAccount: %v", err)
+	}
+
+	// 1. E-mail passa a verificado.
+	reclaimed, _, err := db.FindUserByEmail(ctx, email)
+	if err != nil {
+		t.Fatalf("FindUserByEmail: %v", err)
+	}
+	if reclaimed.EmailVerifiedAt == nil {
+		t.Fatal("esperava EmailVerifiedAt preenchido após reclamar a conta")
+	}
+
+	// 2. A senha do atacante deixou de funcionar.
+	if _, _, err := db.FindUserByEmailWithPassword(ctx, email); err != ErrUserNotFound {
+		t.Fatalf("credencial de senha devia ter sido removida, got err=%v", err)
+	}
+
+	// 3. Sessões (refresh tokens) já ativas foram revogadas.
+	found, ok, err := db.FindByHash(ctx, tokenHash)
+	if err != nil {
+		t.Fatalf("FindByHash: %v", err)
+	}
+	if !ok {
+		t.Fatal("refresh token de setup não encontrado")
+	}
+	if found.RevokedAt == nil {
+		t.Fatal("refresh token ativo devia ter sido revogado ao reclamar a conta")
 	}
 }

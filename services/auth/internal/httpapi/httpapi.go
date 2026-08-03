@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/mail"
 	"strings"
@@ -28,6 +29,14 @@ import (
 type UserStore interface {
 	CreateUserWithPassword(ctx context.Context, email, passwordHash string) (store.User, error)
 	FindUserByEmailWithPassword(ctx context.Context, email string) (store.User, string, error)
+	FindUserByEmail(ctx context.Context, email string) (store.User, bool, error)
+}
+
+// EmailVerifier emite e confirma tokens de verificação de e-mail —
+// implementado por *verification.Manager.
+type EmailVerifier interface {
+	Issue(ctx context.Context, userID string) (string, error)
+	Verify(ctx context.Context, presented string) (userID string, err error)
 }
 
 // TokenIssuer emite, valida e expõe as chaves de access tokens (JWT) —
@@ -69,20 +78,28 @@ type OAuthLogin interface {
 
 // Handler agrupa as dependências de todos os endpoints.
 type Handler struct {
-	users     UserStore
-	tokens    TokenIssuer
-	refresh   RefreshIssuer
-	apiKeys   APIKeyIssuer
-	oauth     OAuthLogin
-	db        Pinger
-	accessTTL time.Duration
+	users        UserStore
+	tokens       TokenIssuer
+	refresh      RefreshIssuer
+	apiKeys      APIKeyIssuer
+	oauth        OAuthLogin
+	verification EmailVerifier
+	db           Pinger
+	accessTTL    time.Duration
+	logger       *slog.Logger
 }
 
 // NewHandler monta o Handler. accessTTL é usado só para reportar
 // "expires_in" nas respostas — a validade de verdade do token já está
-// embutida no próprio JWT (claim exp), calculada por quem assina.
-func NewHandler(users UserStore, tokens TokenIssuer, refreshTokens RefreshIssuer, apiKeys APIKeyIssuer, oauthLogin OAuthLogin, db Pinger, accessTTL time.Duration) *Handler {
-	return &Handler{users: users, tokens: tokens, refresh: refreshTokens, apiKeys: apiKeys, oauth: oauthLogin, db: db, accessTTL: accessTTL}
+// embutida no próprio JWT (claim exp), calculada por quem assina. logger
+// é usado hoje só para "enviar" o token de verificação de e-mail (ver
+// handleRegister) -- este serviço ainda não integra um provedor de e-mail
+// de verdade, então o token sai só no log estruturado do processo.
+func NewHandler(users UserStore, tokens TokenIssuer, refreshTokens RefreshIssuer, apiKeys APIKeyIssuer, oauthLogin OAuthLogin, emailVerifier EmailVerifier, db Pinger, accessTTL time.Duration, logger *slog.Logger) *Handler {
+	return &Handler{
+		users: users, tokens: tokens, refresh: refreshTokens, apiKeys: apiKeys,
+		oauth: oauthLogin, verification: emailVerifier, db: db, accessTTL: accessTTL, logger: logger,
+	}
 }
 
 // Routes monta o mux com todos os endpoints deste serviço.
@@ -92,6 +109,8 @@ func (h *Handler) Routes() *http.ServeMux {
 	mux.HandleFunc("POST /v1/login", h.handleLogin)
 	mux.HandleFunc("POST /v1/token/refresh", h.handleRefresh)
 	mux.HandleFunc("POST /v1/logout", h.handleLogout)
+	mux.HandleFunc("POST /v1/verify-email", h.handleVerifyEmail)
+	mux.HandleFunc("POST /v1/verify-email/resend", h.handleResendVerification)
 	mux.HandleFunc("POST /v1/api-keys", h.requireAuth(h.handleCreateAPIKey))
 	mux.HandleFunc("DELETE /v1/api-keys/{id}", h.requireAuth(h.handleRevokeAPIKey))
 	// Introspecção não exige um access token do chamador -- é chamado por
@@ -200,7 +219,69 @@ func (h *Handler) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.issueAndLogVerificationToken(r.Context(), user)
+
 	writeJSON(w, http.StatusCreated, registerResponse{UserID: user.ID, Email: user.Email})
+}
+
+// issueAndLogVerificationToken emite um token de verificação de e-mail e
+// regista-o no log estruturado do processo -- não é enviado por e-mail de
+// verdade, porque este serviço ainda não integra nenhum provedor de envio
+// (SMTP/SES/Postmark/etc.). O token NUNCA é devolvido na resposta HTTP:
+// se fosse, qualquer pessoa poderia registar o e-mail de outra pessoa e
+// verificá-lo na hora, sem nunca ter acesso à caixa de entrada -- o que
+// anularia o propósito inteiro da verificação. Best-effort: se falhar,
+// regista o erro mas não derruba o registo em si (a conta continua a
+// existir, só fica por verificar; pode pedir reenvio depois).
+func (h *Handler) issueAndLogVerificationToken(ctx context.Context, user store.User) {
+	tok, err := h.verification.Issue(ctx, user.ID)
+	if err != nil {
+		h.logger.Error("erro emitindo token de verificação de e-mail", "user_id", user.ID, "err", err)
+		return
+	}
+	h.logger.Info("TODO: enviar por e-mail (sem provedor de envio configurado ainda)",
+		"event", "email_verification_issued", "email", user.Email, "user_id", user.ID, "token", tok)
+}
+
+type verifyEmailRequest struct {
+	Token string `json:"token"`
+}
+
+func (h *Handler) handleVerifyEmail(w http.ResponseWriter, r *http.Request) {
+	var req verifyEmailRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.Token == "" {
+		writeError(w, http.StatusBadRequest, "missing_token", "token é obrigatório")
+		return
+	}
+
+	if _, err := h.verification.Verify(r.Context(), req.Token); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_token", "token inválido, já usado ou expirado")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type resendVerificationRequest struct {
+	Email string `json:"email"`
+}
+
+// handleResendVerification sempre responde 202, exista ou não a conta, e
+// esteja ela já verificada ou não -- de propósito, para não permitir
+// descobrir por este endpoint se um e-mail está registado (mesmo
+// raciocínio do login: não dar sinais diferentes pros dois casos).
+func (h *Handler) handleResendVerification(w http.ResponseWriter, r *http.Request) {
+	var req resendVerificationRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	if user, found, err := h.users.FindUserByEmail(r.Context(), req.Email); err == nil && found && user.EmailVerifiedAt == nil {
+		h.issueAndLogVerificationToken(r.Context(), user)
+	}
+	w.WriteHeader(http.StatusAccepted)
 }
 
 type loginRequest struct {

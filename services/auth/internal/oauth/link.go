@@ -13,8 +13,12 @@ import (
 type Store interface {
 	FindUserByOAuthIdentity(ctx context.Context, provider, providerUserID string) (store.User, bool, error)
 	FindUserByEmail(ctx context.Context, email string) (store.User, bool, error)
-	CreateUserWithoutPassword(ctx context.Context, email string) (store.User, error)
+	CreateUserWithoutPassword(ctx context.Context, email string, verified bool) (store.User, error)
 	LinkOAuthIdentity(ctx context.Context, userID, provider, providerUserID, email string) error
+	// ReclaimUnverifiedAccount é chamado quando o e-mail encontrado
+	// pertence a uma conta cujo e-mail NUNCA foi verificado do nosso lado
+	// -- ver o raciocínio completo em Manager.Login.
+	ReclaimUnverifiedAccount(ctx context.Context, userID string) error
 }
 
 // ErrUnknownProvider é devolvido quando o nome de provider pedido não foi
@@ -65,8 +69,20 @@ func (m *Manager) AuthCodeURL(providerName, state string) (string, error) {
 //     qualquer um poderia reivindicar o e-mail de outra pessoa que não é
 //     dele e assumir a conta dela. Sem confirmação, devolve
 //     ErrEmailNotVerified em vez de arriscar.
+//     Se a conta encontrada NUNCA teve o seu e-mail verificado do nosso
+//     lado (ex: foi registada por senha, sem nenhuma prova de posse do
+//     e-mail), tratamos este login social -- que ACABOU de provar posse
+//     via o provider -- como a reivindicação legítima, e chamamos
+//     ReclaimUnverifiedAccount: isso derruba qualquer credencial de senha
+//     que já existisse ali (quem a criou não era o dono de verdade) e
+//     revoga sessões ativas. Sem isto, alguém poderia pré-registar o
+//     e-mail de outra pessoa por senha e, quando essa pessoa entrasse de
+//     verdade via Google/GitHub, ficaria ligada -- sem saber -- à conta do
+//     atacante, que continuaria com acesso via a senha que já tinha.
 //  3. Nenhuma das anteriores: cria uma conta nova com esse e-mail (sem
-//     senha) e liga a identidade a ela.
+//     senha) e liga a identidade a ela -- já nascendo verificada se o
+//     provider confirma o e-mail (não há risco de squatting numa conta
+//     que acaba de nascer).
 func (m *Manager) Login(ctx context.Context, providerName, code string) (store.User, error) {
 	p, ok := m.providers[providerName]
 	if !ok {
@@ -90,13 +106,18 @@ func (m *Manager) Login(ctx context.Context, providerName, code string) (store.U
 		if !identity.EmailVerified {
 			return store.User{}, ErrEmailNotVerified
 		}
+		if user.EmailVerifiedAt == nil {
+			if err := m.store.ReclaimUnverifiedAccount(ctx, user.ID); err != nil {
+				return store.User{}, fmt.Errorf("oauth: reclamando conta não verificada: %w", err)
+			}
+		}
 		if err := m.store.LinkOAuthIdentity(ctx, user.ID, identity.Provider, identity.ProviderUserID, identity.Email); err != nil {
 			return store.User{}, fmt.Errorf("oauth: ligando identidade a conta existente: %w", err)
 		}
 		return user, nil
 	}
 
-	user, err := m.store.CreateUserWithoutPassword(ctx, identity.Email)
+	user, err := m.store.CreateUserWithoutPassword(ctx, identity.Email, identity.EmailVerified)
 	if err != nil {
 		return store.User{}, fmt.Errorf("oauth: criando conta nova: %w", err)
 	}

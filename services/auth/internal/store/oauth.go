@@ -15,18 +15,22 @@ import (
 // social depois da primeira vez (a ligação já existe).
 func (db *DB) FindUserByOAuthIdentity(ctx context.Context, provider, providerUserID string) (User, bool, error) {
 	var u User
+	var emailVerifiedAt sql.NullTime
 	err := db.sql.QueryRowContext(ctx, `
-		SELECT u.id, u.email, u.created_at
+		SELECT u.id, u.email, u.created_at, u.email_verified_at
 		FROM auth.users u
 		JOIN auth.oauth_identities i ON i.user_id = u.id
 		WHERE i.provider = $1 AND i.provider_user_id = $2`,
 		provider, providerUserID,
-	).Scan(&u.ID, &u.Email, &u.CreatedAt)
+	).Scan(&u.ID, &u.Email, &u.CreatedAt, &emailVerifiedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return User{}, false, nil
 	}
 	if err != nil {
 		return User{}, false, fmt.Errorf("store: buscando utilizador por identidade OAuth: %w", err)
+	}
+	if emailVerifiedAt.Valid {
+		u.EmailVerifiedAt = &emailVerifiedAt.Time
 	}
 	return u, true, nil
 }
@@ -37,32 +41,46 @@ func (db *DB) FindUserByOAuthIdentity(ctx context.Context, provider, providerUse
 // criada originalmente via OAuth).
 func (db *DB) FindUserByEmail(ctx context.Context, email string) (User, bool, error) {
 	var u User
+	var emailVerifiedAt sql.NullTime
 	err := db.sql.QueryRowContext(ctx,
-		`SELECT id, email, created_at FROM auth.users WHERE email = $1`,
+		`SELECT id, email, created_at, email_verified_at FROM auth.users WHERE email = $1`,
 		email,
-	).Scan(&u.ID, &u.Email, &u.CreatedAt)
+	).Scan(&u.ID, &u.Email, &u.CreatedAt, &emailVerifiedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return User{}, false, nil
 	}
 	if err != nil {
 		return User{}, false, fmt.Errorf("store: buscando utilizador por e-mail: %w", err)
 	}
+	if emailVerifiedAt.Valid {
+		u.EmailVerifiedAt = &emailVerifiedAt.Time
+	}
 	return u, true, nil
 }
 
 // CreateUserWithoutPassword cria uma conta nova sem nenhuma credencial de
 // senha -- usado quando alguém se regista pela primeira vez via login
-// social. A conta pode ganhar uma senha depois (fora do escopo desta fase).
-func (db *DB) CreateUserWithoutPassword(ctx context.Context, email string) (User, error) {
+// social. verified reflete se O PROVIDER já confirmou este e-mail (ex:
+// Google diz email_verified=true): se sim, não há risco de squatting (a
+// conta acaba de nascer, ninguém a registou antes por senha), então já
+// nasce com email_verified_at preenchido. Se o provider não confirma,
+// a conta nasce por verificar, igual a uma registada por senha.
+func (db *DB) CreateUserWithoutPassword(ctx context.Context, email string, verified bool) (User, error) {
 	id, err := idgen.New()
 	if err != nil {
 		return User{}, fmt.Errorf("store: gerando id de utilizador: %w", err)
 	}
 
+	var verifiedAt *time.Time
+	if verified {
+		now := time.Now()
+		verifiedAt = &now
+	}
+
 	var createdAt time.Time
 	err = db.sql.QueryRowContext(ctx,
-		`INSERT INTO auth.users (id, email) VALUES ($1, $2) RETURNING created_at`,
-		id, email,
+		`INSERT INTO auth.users (id, email, email_verified_at) VALUES ($1, $2, $3) RETURNING created_at`,
+		id, email, verifiedAt,
 	).Scan(&createdAt)
 	if isUniqueViolation(err) {
 		return User{}, ErrEmailTaken
@@ -71,7 +89,7 @@ func (db *DB) CreateUserWithoutPassword(ctx context.Context, email string) (User
 		return User{}, fmt.Errorf("store: criando utilizador: %w", err)
 	}
 
-	return User{ID: id, Email: email, CreatedAt: createdAt}, nil
+	return User{ID: id, Email: email, CreatedAt: createdAt, EmailVerifiedAt: verifiedAt}, nil
 }
 
 // LinkOAuthIdentity associa userID à identidade (provider, providerUserID)

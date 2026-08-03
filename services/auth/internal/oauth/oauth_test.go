@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"golang.org/x/oauth2"
 
@@ -26,6 +27,7 @@ type memStore struct {
 	users      map[string]store.User // por ID
 	emailIndex map[string]string     // email -> user ID
 	identities map[string]string     // "provider|providerUserID" -> user ID
+	reclaimed  []string              // IDs pra quem ReclaimUnverifiedAccount foi chamado
 }
 
 func newMemStore() *memStore {
@@ -56,7 +58,7 @@ func (s *memStore) FindUserByEmail(_ context.Context, email string) (store.User,
 	return s.users[userID], true, nil
 }
 
-func (s *memStore) CreateUserWithoutPassword(_ context.Context, email string) (store.User, error) {
+func (s *memStore) CreateUserWithoutPassword(_ context.Context, email string, verified bool) (store.User, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, exists := s.emailIndex[email]; exists {
@@ -64,9 +66,24 @@ func (s *memStore) CreateUserWithoutPassword(_ context.Context, email string) (s
 	}
 	s.nextID++
 	u := store.User{ID: fmt.Sprintf("user-%d", s.nextID), Email: email}
+	if verified {
+		now := time.Now()
+		u.EmailVerifiedAt = &now
+	}
 	s.users[u.ID] = u
 	s.emailIndex[email] = u.ID
 	return u, nil
+}
+
+func (s *memStore) ReclaimUnverifiedAccount(_ context.Context, userID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reclaimed = append(s.reclaimed, userID)
+	u := s.users[userID]
+	now := time.Now()
+	u.EmailVerifiedAt = &now
+	s.users[userID] = u
+	return nil
 }
 
 func (s *memStore) LinkOAuthIdentity(_ context.Context, userID, provider, providerUserID, _ string) error {
@@ -141,10 +158,10 @@ func TestLoginIsIdempotentForSameIdentity(t *testing.T) {
 	}
 }
 
-func TestLoginLinksToExistingAccountWithVerifiedEmail(t *testing.T) {
+func TestLoginLinksToExistingVerifiedAccountWithoutReclaiming(t *testing.T) {
 	ctx := context.Background()
 	memStore := newMemStore()
-	existing, err := memStore.CreateUserWithoutPassword(ctx, "ana@example.test")
+	existing, err := memStore.CreateUserWithoutPassword(ctx, "ana@example.test", true)
 	if err != nil {
 		t.Fatalf("setup: %v", err)
 	}
@@ -159,6 +176,38 @@ func TestLoginLinksToExistingAccountWithVerifiedEmail(t *testing.T) {
 	if user.ID != existing.ID {
 		t.Fatalf("devia ligar à conta existente %q, devolveu %q", existing.ID, user.ID)
 	}
+	if len(memStore.reclaimed) != 0 {
+		t.Fatalf("uma conta já verificada não devia ser reclamada, reclaimed=%v", memStore.reclaimed)
+	}
+}
+
+// TestLoginReclaimsUnverifiedSquattedAccount é o teste da correção da
+// vulnerabilidade: um atacante pré-registou (por senha) o e-mail de outra
+// pessoa, essa conta nunca foi verificada, e agora a vítima de verdade
+// entra via um provider que CONFIRMA o e-mail -- a conta tem de ser
+// reclamada (credencial de senha do atacante derrubada), não só ligada
+// como se já pertencesse legitimamente a quem está a entrar agora.
+func TestLoginReclaimsUnverifiedSquattedAccount(t *testing.T) {
+	ctx := context.Background()
+	memStore := newMemStore()
+	squatted, err := memStore.CreateUserWithoutPassword(ctx, "vitima@example.test", false)
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	provider := newTestProvider(t, Identity{ProviderUserID: "ext-legitimo", Email: "vitima@example.test", EmailVerified: true})
+	m := NewManager(memStore, provider)
+
+	user, err := m.Login(ctx, "test", "any-code")
+	if err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	if user.ID != squatted.ID {
+		t.Fatalf("devia ligar à conta squatted %q, devolveu %q", squatted.ID, user.ID)
+	}
+	if len(memStore.reclaimed) != 1 || memStore.reclaimed[0] != squatted.ID {
+		t.Fatalf("esperava ReclaimUnverifiedAccount chamado para %q, reclaimed=%v", squatted.ID, memStore.reclaimed)
+	}
 }
 
 // TestLoginRefusesToLinkUnverifiedEmail é o teste de segurança mais
@@ -168,7 +217,7 @@ func TestLoginLinksToExistingAccountWithVerifiedEmail(t *testing.T) {
 func TestLoginRefusesToLinkUnverifiedEmail(t *testing.T) {
 	ctx := context.Background()
 	memStore := newMemStore()
-	if _, err := memStore.CreateUserWithoutPassword(ctx, "vitima@example.test"); err != nil {
+	if _, err := memStore.CreateUserWithoutPassword(ctx, "vitima@example.test", false); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 
