@@ -3,10 +3,13 @@
 Demo end-to-end do base-stack: [services/autoscaler](../services/autoscaler)
 + [services/monitoring](../services/monitoring) (um serviço "demo" escalando
 de verdade, com métricas e logs no Grafana) e, à parte,
-[services/auth](../services/auth) + [services/portal](../services/portal) —
-com o próprio `auth` também gerido pelo autoscaler (`group-authd`), não como
-um container estático. As duas partes são independentes uma da outra — pode
-subir só a que precisa.
+[services/auth](../services/auth) + [services/portal](../services/portal) +
+[services/database](../services/database) — com o próprio `auth` também
+gerido pelo autoscaler (`group-authd`), não como um container estático, e o
+Postgres do auth vindo do `database` (Postgres partilhado com backups/PITR),
+não de um `postgres:16-alpine` ad-hoc só deste demo. As duas partes
+(demo/monitoring e auth/portal/database) são independentes uma da outra —
+pode subir só a que precisa.
 
 ## Autoscaler + monitoring (nginx de exemplo)
 
@@ -44,31 +47,45 @@ Ajustadas pra não colidir com outro projeto rodando no mesmo host — se não
 for o teu caso, pode simplificar de volta pra 8090/9090 em
 `demo/docker-compose.yml`.
 
-## Auth + portal (auth gerido pelo autoscaler)
+## Auth + portal + database (auth gerido pelo autoscaler, Postgres partilhado)
 
 Não precisa da plataforma de observabilidade — fica numa rede própria
-(`auth-net`, nome fixo) dentro do mesmo `docker-compose.yml`. A diferença
-para uma instalação "normal" do `auth` (ver
+(`auth-net`, nome fixo) dentro do mesmo `docker-compose.yml`. Duas
+diferenças em relação a uma instalação "normal" do `auth` (ver
 [services/auth/docker-compose.yml](../services/auth/docker-compose.yml)):
-aqui não existe um serviço Compose `authd` — quem cria/escala/remove os
-containers do auth é o **`group-authd`**, uma instância do autoscaler
-(mesmo binário do `group-demo`, outro `TARGET_SERVICE`), a partir de
-[launch-template.auth.json](launch-template.auth.json). É o autoscaler a
-gerir um serviço real, não só o nginx de exemplo.
+
+- Não existe um serviço Compose `authd` — quem cria/escala/remove os
+  containers do auth é o **`group-authd`**, uma instância do autoscaler
+  (mesmo binário do `group-demo`, outro `TARGET_SERVICE`), a partir de
+  [launch-template.auth.json](launch-template.auth.json). É o autoscaler a
+  gerir um serviço real, não só o nginx de exemplo.
+- O Postgres não é um `postgres:16-alpine` dedicado ao auth — é o
+  **`database`** ([services/database](../services/database)), o Postgres
+  partilhado do base-stack (um schema por serviço, backups em rotina +
+  PITR via pgBackRest). `demo/db-init/01-auth-role.sql` provisiona a role
+  `auth` nele na primeira inicialização; o próprio `authd` cria o seu
+  schema (`auth`) sozinho no arranque (ver
+  `services/auth/internal/store/migrate.go`) — o `database` não precisa
+  saber nada sobre o schema de ninguém.
 
 1. Construa as imagens:
    ```sh
    docker build -t autoscaler-group:latest services/autoscaler
    docker build -t auth-service:latest services/auth
    docker build -t portal:latest services/portal
+   docker build -t database-service:latest services/database
    ```
 2. Suba:
    ```sh
-   docker compose -f demo/docker-compose.yml up -d auth-postgres group-authd portal
+   docker compose -f demo/docker-compose.yml up -d database group-authd portal
    ```
    O `group-authd` cria a primeira réplica do `authd` sozinho (mesmo
    princípio do `group-demo`) — confira com
    `docker ps --filter label=autoscaler.service=auth`.
+
+   Opcional: `docker compose -f demo/docker-compose.yml up -d adminer`
+   sobe também um browser de tabelas/SQL ad-hoc contra o `database` (ver
+   "Onde olhar" abaixo) — só para inspecionar dados em dev.
 3. Abra `http://localhost:3100/register`, cria uma conta.
 4. Promove essa conta a super-admin (só necessário a primeira vez).
    Como as réplicas do auth agora nascem do `launch-template.auth.json`
@@ -97,6 +114,13 @@ gerir um serviço real, não só o nginx de exemplo.
   agora na frente de 1+ réplicas): `http://localhost:8081` (ex:
   `curl http://localhost:8081/.well-known/jwks.json`)
 - **Health/métricas do group-authd**: `http://localhost:9081/healthz`
+- **Adminer** (se subiu o serviço opcional): `http://localhost:8096` —
+  servidor `database`, utilizador/senha/BD conforme
+  `services/database/docker-compose.yml` (aqui: `app`/`app`/`app`).
+  Backups/PITR do schema `auth` seguem o mesmo fluxo documentado em
+  [services/database/README.md](../services/database/README.md), só
+  trocando `-f services/database/docker-compose.yml` por
+  `-f demo/docker-compose.yml` nos comandos.
 
 ### Uma réplica só por padrão, e por quê
 
@@ -119,7 +143,10 @@ docker compose -f demo/docker-compose.yml down
 Cada group (`group-demo`, `group-authd`) remove as réplicas que criou
 como parte do seu shutdown gracioso — não fica nada órfão. Dados do auth
 (contas, chaves) ficam em volumes nomeados e sobrevivem a este comando:
-- `auth-postgres-data` — declarado no Compose, `down -v` remove.
+- `demo-database-data` / `demo-database-backup-repo` — declarados no
+  Compose, `down -v` remove os dois (isto apaga também os backups locais
+  do pgBackRest -- se quiseres preservar backups ao derrubar o ambiente
+  de demo, não uses `-v`, ou troca `PGBACKREST_REPO_TYPE` pra `s3` antes).
 - `auth-signing-key` — **não** é gerido pelo Compose (nenhum serviço
   Compose o referencia; é criado pelo Docker na hora em que a primeira
   réplica do `group-authd` o monta, via `binds` do launch template) —

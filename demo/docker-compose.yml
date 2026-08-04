@@ -1,9 +1,14 @@
 # Demo end-to-end de todo o base-stack: autoscaler + monitoring (como já
-# era) e agora também auth + portal -- e o próprio auth service passa a
-# ser gerido pelo autoscaler (group-authd), não um container estático.
-# É o autoscaler a fazer exatamente o que foi construído pra fazer:
-# criar/escalar/balancear réplicas de um serviço real, não só do "demo"
-# de exemplo (nginx).
+# era) e agora também auth + portal + database -- com o auth service
+# gerido pelo autoscaler (group-authd), não um container estático, e o
+# Postgres dele vindo do services/database (Postgres partilhado, com
+# backups/PITR via pgBackRest) em vez de um `postgres:16-alpine` ad-hoc
+# só deste demo. É a migração que services/auth/docker-compose.yml já
+# anunciava ("quando o projeto tiver um serviço de base de dados
+# partilhado, isto migra pra lá") -- o compose standalone do auth
+# continua a subir o seu próprio Postgres (fica autossuficiente pra quem
+# só quiser o auth isolado); é aqui no demo, onde os serviços já
+# aparecem integrados, que faz sentido mostrar os dois juntos.
 #
 # Pré-requisito: suba a plataforma de observabilidade primeiro --
 #   docker compose -f services/monitoring/docker-compose.yml up -d
@@ -11,15 +16,17 @@
 #   docker build -t autoscaler-group:latest services/autoscaler
 #   docker build -t auth-service:latest services/auth
 #   docker build -t portal:latest services/portal
+#   docker build -t database-service:latest services/database
 # Depois suba isto:
 #   docker compose -f demo/docker-compose.yml up -d
 #
 # group-demo se conecta à rede externa "observability-net" (criada pelo
 # compose da plataforma) e carrega as labels prometheus.scrape/port --
 # é só isso que o Prometheus precisa pra descobrir e escrapear sozinho.
-# group-authd/auth-postgres/portal ficam numa rede própria deste compose
-# ("auth-net", com nome fixo -- ver comentário abaixo) -- não precisam de
-# falar com o autoscaler do "demo" nem com a plataforma de observabilidade.
+# group-authd/database/adminer/portal ficam numa rede própria deste
+# compose ("auth-net", com nome fixo -- ver comentário abaixo) -- não
+# precisam de falar com o autoscaler do "demo" nem com a plataforma de
+# observabilidade.
 networks:
   observability-net:
     external: true
@@ -67,21 +74,52 @@ services:
     networks:
       - observability-net
 
-  auth-postgres:
-    image: postgres:16-alpine
+  # Postgres partilhado (services/database) -- substitui o
+  # `postgres:16-alpine` ad-hoc que este demo subia antes só pro auth.
+  # Já vem com backups em rotina + PITR (pgBackRest) e Adminer, mesmo
+  # aqui no demo -- ver services/database/README.md.
+  database:
+    build: ../services/database
+    image: database-service:latest
     environment:
-      POSTGRES_DB: auth
-      POSTGRES_USER: auth
-      POSTGRES_PASSWORD: auth # dev only -- ver services/auth/docker-compose.yml
+      POSTGRES_DB: app
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app # dev only -- ver services/database/README.md
+      PGBACKREST_STANZA: demo
     volumes:
-      - auth-postgres-data:/var/lib/postgresql/data
+      - demo-database-data:/var/lib/postgresql/data
+      - demo-database-backup-repo:/var/lib/pgbackrest
+      # Provisiona a role "auth" na primeira inicialização (ver
+      # demo/db-init/01-auth-role.sql) -- é assim que um serviço novo
+      # ganha acesso ao Postgres partilhado sem o services/database
+      # precisar saber nada sobre ele.
+      - ./db-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U auth"]
+      test: ["CMD-SHELL", "pg_isready -U app"]
       interval: 5s
       timeout: 3s
       retries: 5
-    mem_limit: 256m
-    cpus: 0.5
+    mem_limit: 512m
+    cpus: 1.0
+    networks:
+      - auth-net
+
+  # Só para dev: browser de tabelas + SQL ad-hoc contra o Postgres
+  # partilhado. Nunca exponha esta porta fora da tua máquina/rede de
+  # confiança (Adminer não tem rate-limit nem MFA próprios).
+  adminer:
+    image: adminer:latest
+    environment:
+      ADMINER_DEFAULT_SERVER: database
+    ports:
+      # 8096, não 8081/8082/8095 -- já usados por group-authd, pelo
+      # services/database standalone e pelo group-demo respetivamente.
+      - "8096:8080"
+    depends_on:
+      database:
+        condition: service_healthy
+    mem_limit: 128m
+    cpus: 0.25
     networks:
       - auth-net
 
@@ -109,7 +147,7 @@ services:
       CPU_SCALE_DOWN_PERCENT: "20"
       RECONCILE_TICK_SECONDS: "3"
       # /readyz confere que o Postgres está alcançável -- uma réplica
-      # criada antes do auth-postgres ficar pronto simplesmente não entra
+      # criada antes do database ficar pronto simplesmente não entra
       # no backend do proxy até responder <400 aqui; o group nunca mata
       # uma réplica por falha de health check, só a exclui do roteamento
       # (ver services/autoscaler/internal/discovery).
@@ -128,7 +166,7 @@ services:
       - "8081:8090"
       - "9081:9090"
     depends_on:
-      auth-postgres:
+      database:
         condition: service_healthy
     mem_limit: 128m
     cpus: 0.5
@@ -153,7 +191,8 @@ services:
       - auth-net
 
 volumes:
-  auth-postgres-data:
+  demo-database-data:
+  demo-database-backup-repo:
   # auth-signing-key NÃO é montado por nenhum serviço Compose -- é
   # referenciado só dentro de launch-template.auth.json ("binds"), que o
   # group-authd usa para criar as réplicas via API do Docker diretamente.

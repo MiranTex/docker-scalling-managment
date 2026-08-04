@@ -1,0 +1,88 @@
+# Postgres partilhado (um schema por serviço) com backups em rotina +
+# PITR via pgBackRest, e Adminer no mesmo compose pra inspecionar dados
+# em dev sem precisar instalar um cliente Postgres local.
+#
+# Construa a imagem primeiro:
+#   docker build -t database-service:latest services/database
+# Depois suba:
+#   docker compose -f services/database/docker-compose.yml up -d
+#
+# Ver README.md pra: lista de variáveis de ambiente, como rodar um
+# backup manual, e o passo a passo de restore point-in-time.
+networks:
+  database-net:
+
+volumes:
+  database-data:
+  # Repo local do pgBackRest (usado só quando PGBACKREST_REPO_TYPE=posix,
+  # o default). Se trocares pra s3, este volume simplesmente fica vazio
+  # -- não custa nada mantê-lo declarado.
+  database-backup-repo:
+
+services:
+  postgres:
+    build: .
+    image: database-service:latest
+    environment:
+      POSTGRES_DB: app
+      POSTGRES_USER: app
+      # Senha de desenvolvimento -- troque isto antes de rodar fora de
+      # uma máquina de dev (mesmo aviso que services/auth/docker-compose.yml
+      # já faz pro Postgres dele).
+      POSTGRES_PASSWORD: app
+
+      # --- pgBackRest -----------------------------------------------
+      PGBACKREST_STANZA: shared
+      # posix (default, backups no volume `database-backup-repo`) ou s3
+      # (MinIO incluído -- é só um endpoint S3-compatible). Ver README
+      # "Trocar o storage de backup" antes de mudar isto.
+      PGBACKREST_REPO_TYPE: posix
+      PGBACKREST_REPO_PATH: /var/lib/pgbackrest
+      # Quando PGBACKREST_REPO_TYPE=s3, descomenta e preenche:
+      # PGBACKREST_S3_BUCKET: ""
+      # PGBACKREST_S3_ENDPOINT: ""
+      # PGBACKREST_S3_REGION: ""
+      # PGBACKREST_S3_KEY: ""
+      # PGBACKREST_S3_KEY_SECRET: ""
+      # PGBACKREST_S3_VERIFY_TLS: "y" # usa "n" só se for MinIO com TLS auto-assinado
+      PGBACKREST_RETENTION_FULL: "2"
+      PGBACKREST_PROCESS_MAX: "1"
+      # Cron (5 campos, UTC): default é full aos domingos 02:00 e
+      # incremental nos outros dias, também às 02:00.
+      BACKUP_SCHEDULE_FULL: "0 2 * * 0"
+      BACKUP_SCHEDULE_INCR: "0 2 * * 1-6"
+    volumes:
+      - database-data:/var/lib/postgresql/data
+      - database-backup-repo:/var/lib/pgbackrest
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    ports:
+      # 5432 é a primeira coisa neste repo a usar essa porta -- atenção
+      # se já tiveres um Postgres local a correr na tua máquina (troca o
+      # lado esquerdo se colidir, ex: "55432:5432").
+      - "5432:5432"
+    mem_limit: 512m
+    cpus: 1.0
+    networks:
+      - database-net
+
+  # Só para dev: browser de tabelas + SQL ad-hoc. Adminer não tem
+  # rate-limit nem MFA próprios -- nunca exponhas esta porta fora da tua
+  # máquina/rede de confiança.
+  adminer:
+    image: adminer:latest
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+    ports:
+      # 8082, não 8080/8081 -- 8081 já é do group-authd (ver demo/docker-compose.yml).
+      - "8082:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    mem_limit: 128m
+    cpus: 0.25
+    networks:
+      - database-net

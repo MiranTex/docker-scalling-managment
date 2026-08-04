@@ -14,6 +14,7 @@ services/
   monitoring/    plataforma de observabilidade: Prometheus + Loki + Promtail + Grafana
   auth/          autenticação: registo/login, JWT (RS256) + JWKS, refresh tokens
   portal/        frontend: login, controlo de sessão, API tokens pessoais (Next.js)
+  database/      Postgres partilhado (um schema por serviço), backups + PITR, Adminer em dev
 demo/            compose de exemplo ligando autoscaler + monitoring + auth + portal, pra testar end-to-end
 ```
 
@@ -42,6 +43,10 @@ pra mostrar os dois funcionando juntos e servir de referência de integração.
   renovação automática, e criação/listagem/revogação de API tokens
   pessoais. Serviço piloto que integra os demais consumidos por uma
   aplicação real, não só por `curl`.
+- **[services/database](services/database/README.md)** — Postgres
+  partilhado (um schema por serviço), imagem custom com pgBackRest
+  (backups em rotina + PITR, storage trocável entre volume local e
+  S3/MinIO) e Adminer para inspecionar dados/rodar queries em dev.
 
 ## Demo end-to-end
 

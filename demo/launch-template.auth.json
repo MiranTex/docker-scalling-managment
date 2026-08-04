@@ -1,7 +1,7 @@
 {
   "image": "auth-service:latest",
   "env": [
-    "AUTH_DATABASE_URL=postgres://auth:auth@auth-postgres:5432/auth?sslmode=disable",
+    "AUTH_DATABASE_URL=postgres://auth:auth@database:5432/app?sslmode=disable",
     "AUTH_ISSUER=auth.base-stack.local",
     "AUTH_AUDIENCE=base-stack",
     "LOG_FORMAT=json",
