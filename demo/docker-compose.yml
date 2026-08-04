@@ -1,21 +1,35 @@
-# Demo end-to-end: liga o autoscaler (services/autoscaler) à plataforma de
-# observabilidade (services/monitoring). Só o group -- ele mesmo cria o(s)
-# backend(s) do serviço "demo" a partir de launch-template.json (neste
-# diretório), inclusive o primeiro (sem bootstrap manual).
+# Demo end-to-end de todo o base-stack: autoscaler + monitoring (como já
+# era) e agora também auth + portal -- e o próprio auth service passa a
+# ser gerido pelo autoscaler (group-authd), não um container estático.
+# É o autoscaler a fazer exatamente o que foi construído pra fazer:
+# criar/escalar/balancear réplicas de um serviço real, não só do "demo"
+# de exemplo (nginx).
 #
 # Pré-requisito: suba a plataforma de observabilidade primeiro --
 #   docker compose -f services/monitoring/docker-compose.yml up -d
-# Construa a imagem do autoscaler, se ainda não tiver --
+# Construa as imagens, se ainda não tiver --
 #   docker build -t autoscaler-group:latest services/autoscaler
+#   docker build -t auth-service:latest services/auth
+#   docker build -t portal:latest services/portal
 # Depois suba isto:
 #   docker compose -f demo/docker-compose.yml up -d
 #
 # group-demo se conecta à rede externa "observability-net" (criada pelo
 # compose da plataforma) e carrega as labels prometheus.scrape/port --
 # é só isso que o Prometheus precisa pra descobrir e escrapear sozinho.
+# group-authd/auth-postgres/portal ficam numa rede própria deste compose
+# ("auth-net", com nome fixo -- ver comentário abaixo) -- não precisam de
+# falar com o autoscaler do "demo" nem com a plataforma de observabilidade.
 networks:
   observability-net:
     external: true
+  auth-net:
+    # Nome fixo, não o default prefixado pelo nome do projeto Compose
+    # (ex: "demo_auth-net") -- o launch-template.auth.json referencia
+    # este nome literal no campo "network", e quem cria os containers a
+    # partir dele é o group-authd via API do Docker diretamente, sem
+    # passar pelo Compose (que resolveria o prefixo por você).
+    name: auth-net
 
 services:
   group-demo:
@@ -52,3 +66,97 @@ services:
       - ./launch-template.json:/etc/autoscaler/launch-template.json:ro
     networks:
       - observability-net
+
+  auth-postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: auth
+      POSTGRES_USER: auth
+      POSTGRES_PASSWORD: auth # dev only -- ver services/auth/docker-compose.yml
+    volumes:
+      - auth-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U auth"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    mem_limit: 256m
+    cpus: 0.5
+    networks:
+      - auth-net
+
+  # Réplicas do auth service não existem aqui como um serviço Compose --
+  # group-authd cria/remove os containers "authd" sozinho a partir de
+  # launch-template.auth.json (imagem, env, rede, o bind do signing-key),
+  # exatamente como group-demo já fazia pro nginx de exemplo. O que este
+  # serviço expõe é só o PROXY do group (roteia pras réplicas por IP na
+  # rede auth-net + BACKEND_PORT, nunca porta publicada) -- de fora,
+  # nada muda: localhost:8081 continua sendo "o auth service".
+  group-authd:
+    image: autoscaler-group:latest
+    environment:
+      TARGET_SERVICE: auth
+      BACKEND_PORT: "8080" # porta do authd dentro do container (AUTH_LISTEN_ADDR default)
+      # Um replica só por padrão: evita a corrida em que duas réplicas
+      # tentassem gerar a chave de assinatura (signing-key) ao mesmo
+      # tempo num volume ainda vazio (ver internal/keystore.LoadOrGenerate
+      # em services/auth) -- depois da chave já existir no volume
+      # partilhado, escalar pra mais réplicas é seguro (todas leem a
+      # mesma chave).
+      MIN_REPLICAS: "1"
+      MAX_REPLICAS: "3"
+      CPU_SCALE_UP_PERCENT: "50"
+      CPU_SCALE_DOWN_PERCENT: "20"
+      RECONCILE_TICK_SECONDS: "3"
+      # /readyz confere que o Postgres está alcançável -- uma réplica
+      # criada antes do auth-postgres ficar pronto simplesmente não entra
+      # no backend do proxy até responder <400 aqui; o group nunca mata
+      # uma réplica por falha de health check, só a exclui do roteamento
+      # (ver services/autoscaler/internal/discovery).
+      HEALTH_CHECK_PATH: "/readyz"
+      LOG_FORMAT: "json"
+      LOG_LEVEL: "info"
+      METRICS_ADDR: ":9090"
+      LAUNCH_TEMPLATE_FILE: "/etc/autoscaler/launch-template.auth.json"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./launch-template.auth.json:/etc/autoscaler/launch-template.auth.json:ro
+    ports:
+      # Proxy do group -- mesma porta externa (8081) que o authd estático
+      # publicava antes, só que agora quem responde é o load balancer do
+      # group, na frente de 1+ réplicas.
+      - "8081:8090"
+      - "9081:9090"
+    depends_on:
+      auth-postgres:
+        condition: service_healthy
+    mem_limit: 128m
+    cpus: 0.5
+    networks:
+      - auth-net
+
+  portal:
+    image: portal:latest
+    environment:
+      # Aponta pro PROXY do group-authd, não direto pra uma réplica --
+      # é o group quem passa a ser o endpoint estável do auth service.
+      AUTH_SERVICE_URL: "http://group-authd:8090"
+    ports:
+      # 3100 no host, não 3000 -- o Grafana da plataforma de observabilidade
+      # já usa 3000 (ver services/monitoring).
+      - "3100:3000"
+    depends_on:
+      - group-authd
+    mem_limit: 256m
+    cpus: 0.5
+    networks:
+      - auth-net
+
+volumes:
+  auth-postgres-data:
+  # auth-signing-key NÃO é montado por nenhum serviço Compose -- é
+  # referenciado só dentro de launch-template.auth.json ("binds"), que o
+  # group-authd usa para criar as réplicas via API do Docker diretamente.
+  # O Docker cria este volume nomeado sozinho, vazio, na primeira vez que
+  # uma réplica o monta -- não precisa (nem faz sentido) declará-lo aqui
+  # como volume de um serviço Compose que não existe mais.

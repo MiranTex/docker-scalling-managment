@@ -1,0 +1,12 @@
+{
+  "image": "auth-service:latest",
+  "env": [
+    "AUTH_DATABASE_URL=postgres://auth:auth@auth-postgres:5432/auth?sslmode=disable",
+    "AUTH_ISSUER=auth.base-stack.local",
+    "AUTH_AUDIENCE=base-stack",
+    "LOG_FORMAT=json",
+    "LOG_LEVEL=info"
+  ],
+  "binds": ["auth-signing-key:/var/lib/auth"],
+  "network": "auth-net"
+}

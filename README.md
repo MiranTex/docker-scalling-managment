@@ -14,7 +14,7 @@ services/
   monitoring/    plataforma de observabilidade: Prometheus + Loki + Promtail + Grafana
   auth/          autenticação: registo/login, JWT (RS256) + JWKS, refresh tokens
   portal/        frontend: login, controlo de sessão, API tokens pessoais (Next.js)
-demo/            compose de exemplo ligando autoscaler + monitoring, pra testar end-to-end
+demo/            compose de exemplo ligando autoscaler + monitoring + auth + portal, pra testar end-to-end
 ```
 
 Cada serviço em `services/` é autossuficiente: tem seu próprio
@@ -33,9 +33,10 @@ pra mostrar os dois funcionando juntos e servir de referência de integração.
   projetos ao mesmo tempo (auto-descoberta via labels/socket Docker, sem
   precisar editar config a cada projeto novo).
 - **[services/auth](services/auth/README.md)** — registo/login por
-  email+senha, JWT RS256 com JWKS pra validação sem segredo partilhado, e
-  refresh tokens com rotação e deteção de reuso. Fase 1 de um serviço
-  pensado pra crescer com API keys, OAuth2/OIDC e WebAuthn/passkeys.
+  email+senha, JWT RS256 com JWKS pra validação sem segredo partilhado,
+  refresh tokens com rotação e deteção de reuso, e roles
+  (`user`/`admin`/`infra-admin`/`super-admin`) como claim no JWT --
+  gestão de utilizadores (`/v1/admin/users`) restrita a super-admin.
 - **[services/portal](services/portal/README.md)** — frontend (Next.js)
   em cima do `auth`: login/registo, sessão em cookies `httpOnly` com
   renovação automática, e criação/listagem/revogação de API tokens
