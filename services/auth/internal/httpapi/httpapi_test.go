@@ -45,7 +45,7 @@ func (f *fakeUsers) CreateUserWithPassword(_ context.Context, email, hash string
 		return store.User{}, store.ErrEmailTaken
 	}
 	f.nextID++
-	u := store.User{ID: fmt.Sprintf("user-%d", f.nextID), Email: email, CreatedAt: time.Now()}
+	u := store.User{ID: fmt.Sprintf("user-%d", f.nextID), Email: email, CreatedAt: time.Now(), Role: store.RoleUser}
 	f.byEmail[email] = u
 	f.hashes[u.ID] = hash
 	return u, nil
@@ -66,6 +66,68 @@ func (f *fakeUsers) FindUserByEmail(_ context.Context, email string) (store.User
 	defer f.mu.Unlock()
 	u, ok := f.byEmail[email]
 	return u, ok, nil
+}
+
+func (f *fakeUsers) FindUserByID(_ context.Context, id string) (store.User, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, u := range f.byEmail {
+		if u.ID == id {
+			return u, true, nil
+		}
+	}
+	return store.User{}, false, nil
+}
+
+// ListUsers/CreateUserWithPasswordAndRole/UpdateUserRole implementam
+// UserAdmin -- fakeUsers serve os dois papéis (UserStore e UserAdmin) nos
+// testes, exatamente como *store.DB serve os dois em produção.
+func (f *fakeUsers) ListUsers(_ context.Context) ([]store.User, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	users := make([]store.User, 0, len(f.byEmail))
+	for _, u := range f.byEmail {
+		users = append(users, u)
+	}
+	return users, nil
+}
+
+func (f *fakeUsers) CreateUserWithPasswordAndRole(_ context.Context, email, hash, role string) (store.User, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, exists := f.byEmail[email]; exists {
+		return store.User{}, store.ErrEmailTaken
+	}
+	f.nextID++
+	now := time.Now()
+	u := store.User{ID: fmt.Sprintf("user-%d", f.nextID), Email: email, CreatedAt: now, EmailVerifiedAt: &now, Role: role}
+	f.byEmail[email] = u
+	f.hashes[u.ID] = hash
+	return u, nil
+}
+
+func (f *fakeUsers) UpdateUserRole(_ context.Context, id, role string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for email, u := range f.byEmail {
+		if u.ID == id {
+			u.Role = role
+			f.byEmail[email] = u
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// setRole é um atalho só de teste para preparar um utilizador já
+// promovido antes de fazer login (evita depender de UpdateUserRole + um
+// ID que os testes teriam de descobrir primeiro).
+func (f *fakeUsers) setRole(email, role string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	u := f.byEmail[email]
+	u.Role = role
+	f.byEmail[email] = u
 }
 
 // fakeEmailVerifier simula internal/verification.Manager -- cada teste
@@ -108,23 +170,26 @@ func (f *fakeEmailVerifier) Verify(_ context.Context, presented string) (string,
 
 type fakeTokens struct{}
 
-func (fakeTokens) Sign(subject string) (string, error) {
-	return "access-for-" + subject, nil
+func (fakeTokens) Sign(subject, role string) (string, error) {
+	return "access-for-" + subject + "|" + role, nil
 }
 
 func (fakeTokens) JWKS() token.JWKSDocument {
 	return token.JWKSDocument{Keys: []token.JWK{{Kty: "RSA", Use: "sig", Alg: "RS256", Kid: "fake", N: "n", E: "e"}}}
 }
 
-// Verify é o inverso de Sign: só sabe desfazer o formato "access-for-<sub>"
-// que este fake usa -- suficiente pra exercitar requireAuth nos testes
-// sem precisar de um Manager de JWT real.
+// Verify é o inverso de Sign: só sabe desfazer o formato
+// "access-for-<sub>|<role>" que este fake usa -- suficiente pra exercitar
+// requireAuth/requireRole nos testes sem precisar de um Manager de JWT
+// real.
 func (fakeTokens) Verify(tokenString string) (token.Claims, error) {
 	const prefix = "access-for-"
 	if !strings.HasPrefix(tokenString, prefix) {
 		return token.Claims{}, token.ErrInvalidToken
 	}
-	return token.Claims{Subject: strings.TrimPrefix(tokenString, prefix)}, nil
+	rest := strings.TrimPrefix(tokenString, prefix)
+	subject, role, _ := strings.Cut(rest, "|")
+	return token.Claims{Subject: subject, Role: role}, nil
 }
 
 type fakeAPIKeys struct {
@@ -288,7 +353,7 @@ func newTestDeps() *testDeps {
 	emailVerifier := newFakeEmailVerifier()
 	pinger := &fakePinger{}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h := NewHandler(users, fakeTokens{}, refreshMgr, apiKeys, oauthLogin, emailVerifier, pinger, 15*time.Minute, logger)
+	h := NewHandler(users, users, fakeTokens{}, refreshMgr, apiKeys, oauthLogin, emailVerifier, pinger, 15*time.Minute, logger)
 	return &testDeps{
 		users: users, refresh: refreshMgr, apiKeys: apiKeys, oauth: oauthLogin,
 		verification: emailVerifier, pinger: pinger, handler: h,
@@ -301,6 +366,23 @@ func newTestDeps() *testDeps {
 func loginAndGetAccessToken(t *testing.T, mux http.Handler, email string) string {
 	t.Helper()
 	doRequest(t, mux, http.MethodPost, "/v1/register", registerRequest{Email: email, Password: "senha-forte"})
+	rec := doRequest(t, mux, http.MethodPost, "/v1/login", loginRequest{Email: email, Password: "senha-forte"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("login: status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	return decodeBody[tokenPair](t, rec).AccessToken
+}
+
+// loginAndGetAccessTokenWithRole é como loginAndGetAccessToken, mas
+// promove a conta à role informada (via o atalho de teste
+// fakeUsers.setRole) antes do login -- assim o access token devolvido já
+// carrega essa role na claim, como aconteceria em produção depois de um
+// super-admin chamar PATCH /v1/admin/users/{id}/role e a pessoa fazer
+// login (ou refresh) de novo.
+func loginAndGetAccessTokenWithRole(t *testing.T, mux http.Handler, users *fakeUsers, email, role string) string {
+	t.Helper()
+	doRequest(t, mux, http.MethodPost, "/v1/register", registerRequest{Email: email, Password: "senha-forte"})
+	users.setRole(email, role)
 	rec := doRequest(t, mux, http.MethodPost, "/v1/login", loginRequest{Email: email, Password: "senha-forte"})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("login: status = %d, body=%s", rec.Code, rec.Body.String())
@@ -507,6 +589,118 @@ func TestLogoutOfUnknownTokenIsNoContent(t *testing.T) {
 	rec := doRequest(t, deps.handler.Routes(), http.MethodPost, "/v1/logout", refreshRequest{RefreshToken: "nunca-existiu"})
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, want 204", rec.Code)
+	}
+}
+
+func TestAdminEndpointsRejectNonSuperAdmin(t *testing.T) {
+	deps := newTestDeps()
+	mux := deps.handler.Routes()
+	userToken := loginAndGetAccessToken(t, mux, "ana@example.test")
+
+	list := doAuthedRequest(t, mux, http.MethodGet, "/v1/admin/users", userToken, nil)
+	if list.Code != http.StatusForbidden {
+		t.Fatalf("GET /v1/admin/users: status = %d, want 403", list.Code)
+	}
+
+	create := doAuthedRequest(t, mux, http.MethodPost, "/v1/admin/users", userToken,
+		createUserRequest{Email: "novo@example.test", Password: "senha-forte", Role: store.RoleAdmin})
+	if create.Code != http.StatusForbidden {
+		t.Fatalf("POST /v1/admin/users: status = %d, want 403", create.Code)
+	}
+}
+
+func TestAdminEndpointsRequireAuth(t *testing.T) {
+	deps := newTestDeps()
+	rec := doRequest(t, deps.handler.Routes(), http.MethodGet, "/v1/admin/users", nil)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+}
+
+func TestSuperAdminCanCreateListAndPromoteUsers(t *testing.T) {
+	deps := newTestDeps()
+	mux := deps.handler.Routes()
+	superToken := loginAndGetAccessTokenWithRole(t, mux, deps.users, "root@example.test", store.RoleSuperAdmin)
+
+	createRec := doAuthedRequest(t, mux, http.MethodPost, "/v1/admin/users", superToken,
+		createUserRequest{Email: "nova@example.test", Password: "senha-forte", Role: store.RoleInfraAdmin})
+	if createRec.Code != http.StatusCreated {
+		t.Fatalf("create: status = %d, want 201, body=%s", createRec.Code, createRec.Body.String())
+	}
+	created := decodeBody[userListItem](t, createRec)
+	if created.Role != store.RoleInfraAdmin || created.EmailVerifiedAt == nil {
+		t.Fatalf("utilizador criado inesperado: %+v", created)
+	}
+
+	listRec := doAuthedRequest(t, mux, http.MethodGet, "/v1/admin/users", superToken, nil)
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("list: status = %d, want 200", listRec.Code)
+	}
+	users := decodeBody[[]userListItem](t, listRec)
+	if len(users) != 2 { // root + nova
+		t.Fatalf("esperava 2 utilizadores, veio %d: %+v", len(users), users)
+	}
+
+	updateRec := doAuthedRequest(t, mux, http.MethodPatch, "/v1/admin/users/"+created.ID+"/role", superToken,
+		updateUserRoleRequest{Role: store.RoleAdmin})
+	if updateRec.Code != http.StatusNoContent {
+		t.Fatalf("update role: status = %d, want 204, body=%s", updateRec.Code, updateRec.Body.String())
+	}
+
+	// A conta atualizada precisa refletir a nova role num login seguinte.
+	loginRec := doRequest(t, mux, http.MethodPost, "/v1/login", loginRequest{Email: "nova@example.test", Password: "senha-forte"})
+	if loginRec.Code != http.StatusOK {
+		t.Fatalf("login pós-promoção: status = %d", loginRec.Code)
+	}
+}
+
+func TestCreateUserRejectsInvalidRole(t *testing.T) {
+	deps := newTestDeps()
+	mux := deps.handler.Routes()
+	superToken := loginAndGetAccessTokenWithRole(t, mux, deps.users, "root@example.test", store.RoleSuperAdmin)
+
+	rec := doAuthedRequest(t, mux, http.MethodPost, "/v1/admin/users", superToken,
+		createUserRequest{Email: "novo@example.test", Password: "senha-forte", Role: "super-usuario-inventado"})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestUpdateUserRoleRejectsUnknownID(t *testing.T) {
+	deps := newTestDeps()
+	mux := deps.handler.Routes()
+	superToken := loginAndGetAccessTokenWithRole(t, mux, deps.users, "root@example.test", store.RoleSuperAdmin)
+
+	rec := doAuthedRequest(t, mux, http.MethodPatch, "/v1/admin/users/nao-existe/role", superToken,
+		updateUserRoleRequest{Role: store.RoleAdmin})
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+// RegisterRequest não tem campo "role" -- este teste é uma trava contra
+// alguém adicionar um no futuro sem pensar no risco: JSON com uma chave
+// que a struct não conhece é só ignorado pelo decoder, então "role" vindo
+// do cliente aqui nunca teve efeito nenhum. Fixa esse comportamento.
+func TestRegisterIgnoresRoleFieldFromClient(t *testing.T) {
+	deps := newTestDeps()
+	mux := deps.handler.Routes()
+
+	body := `{"email":"ana@example.test","password":"senha-forte","role":"super-admin"}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/register", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201, body=%s", rec.Code, rec.Body.String())
+	}
+
+	u, _, err := deps.users.FindUserByEmailWithPassword(context.Background(), "ana@example.test")
+	if err != nil {
+		t.Fatalf("FindUserByEmailWithPassword: %v", err)
+	}
+	if u.Role != store.RoleUser {
+		t.Fatalf("role = %q, want %q (self-registration nunca deve aceitar role do cliente)", u.Role, store.RoleUser)
 	}
 }
 

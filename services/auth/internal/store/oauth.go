@@ -17,12 +17,12 @@ func (db *DB) FindUserByOAuthIdentity(ctx context.Context, provider, providerUse
 	var u User
 	var emailVerifiedAt sql.NullTime
 	err := db.sql.QueryRowContext(ctx, `
-		SELECT u.id, u.email, u.created_at, u.email_verified_at
+		SELECT u.id, u.email, u.created_at, u.email_verified_at, u.role
 		FROM auth.users u
 		JOIN auth.oauth_identities i ON i.user_id = u.id
 		WHERE i.provider = $1 AND i.provider_user_id = $2`,
 		provider, providerUserID,
-	).Scan(&u.ID, &u.Email, &u.CreatedAt, &emailVerifiedAt)
+	).Scan(&u.ID, &u.Email, &u.CreatedAt, &emailVerifiedAt, &u.Role)
 	if errors.Is(err, sql.ErrNoRows) {
 		return User{}, false, nil
 	}
@@ -43,9 +43,9 @@ func (db *DB) FindUserByEmail(ctx context.Context, email string) (User, bool, er
 	var u User
 	var emailVerifiedAt sql.NullTime
 	err := db.sql.QueryRowContext(ctx,
-		`SELECT id, email, created_at, email_verified_at FROM auth.users WHERE email = $1`,
+		`SELECT id, email, created_at, email_verified_at, role FROM auth.users WHERE email = $1`,
 		email,
-	).Scan(&u.ID, &u.Email, &u.CreatedAt, &emailVerifiedAt)
+	).Scan(&u.ID, &u.Email, &u.CreatedAt, &emailVerifiedAt, &u.Role)
 	if errors.Is(err, sql.ErrNoRows) {
 		return User{}, false, nil
 	}
@@ -89,7 +89,7 @@ func (db *DB) CreateUserWithoutPassword(ctx context.Context, email string, verif
 		return User{}, fmt.Errorf("store: criando utilizador: %w", err)
 	}
 
-	return User{ID: id, Email: email, CreatedAt: createdAt, EmailVerifiedAt: verifiedAt}, nil
+	return User{ID: id, Email: email, CreatedAt: createdAt, EmailVerifiedAt: verifiedAt, Role: RoleUser}, nil
 }
 
 // LinkOAuthIdentity associa userID à identidade (provider, providerUserID)

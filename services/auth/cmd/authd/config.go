@@ -40,6 +40,15 @@ type config struct {
 	githubClientID     string
 	githubClientSecret string
 	githubRedirectURL  string
+
+	// bootstrapSuperAdminEmail resolve o problema do "primeiro admin":
+	// os endpoints /v1/admin/* só respondem a quem já é super-admin, e
+	// sem nenhum a chave nunca vira. Se definida, no arranque (ver
+	// promoteBootstrapSuperAdmin em main.go) o processo promove esta
+	// conta a super-admin, mas só se ainda não existir nenhum -- depois
+	// disso, a gestão de roles passa a ser feita pelos próprios
+	// endpoints admin, não por env var.
+	bootstrapSuperAdminEmail string
 }
 
 func loadConfig() config {
@@ -60,6 +69,8 @@ func loadConfig() config {
 		githubClientID:     os.Getenv("AUTH_GITHUB_CLIENT_ID"),
 		githubClientSecret: os.Getenv("AUTH_GITHUB_CLIENT_SECRET"),
 		githubRedirectURL:  os.Getenv("AUTH_GITHUB_REDIRECT_URL"),
+
+		bootstrapSuperAdminEmail: os.Getenv("AUTH_BOOTSTRAP_SUPERADMIN_EMAIL"),
 	}
 
 	if cfg.databaseURL == "" {

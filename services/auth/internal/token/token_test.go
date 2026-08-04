@@ -20,7 +20,7 @@ func TestSignAndVerifyRoundTrip(t *testing.T) {
 	key := mustKey(t, "k1")
 	m := NewManager("auth.example", "example-api", time.Minute, key)
 
-	tok, err := m.Sign("user-123")
+	tok, err := m.Sign("user-123", "user")
 	if err != nil {
 		t.Fatalf("Sign: %v", err)
 	}
@@ -35,13 +35,33 @@ func TestSignAndVerifyRoundTrip(t *testing.T) {
 	if claims.Issuer != "auth.example" || claims.Audience != "example-api" {
 		t.Fatalf("issuer/audience inesperados: %+v", claims)
 	}
+	if claims.Role != "user" {
+		t.Fatalf("role = %q, want %q", claims.Role, "user")
+	}
+}
+
+func TestSignCarriesRole(t *testing.T) {
+	key := mustKey(t, "k1")
+	m := NewManager("auth.example", "example-api", time.Minute, key)
+
+	tok, err := m.Sign("user-123", "super-admin")
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	claims, err := m.Verify(tok)
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if claims.Role != "super-admin" {
+		t.Fatalf("role = %q, want %q", claims.Role, "super-admin")
+	}
 }
 
 func TestVerifyRejectsTamperedPayload(t *testing.T) {
 	key := mustKey(t, "k1")
 	m := NewManager("auth.example", "example-api", time.Minute, key)
 
-	tok, err := m.Sign("user-123")
+	tok, err := m.Sign("user-123", "user")
 	if err != nil {
 		t.Fatalf("Sign: %v", err)
 	}
@@ -64,7 +84,7 @@ func TestVerifyRejectsWrongKey(t *testing.T) {
 	legit := NewManager("auth.example", "example-api", time.Minute, signingKey)
 	attacker := NewManager("auth.example", "example-api", time.Minute, attackerKey)
 
-	forged, err := attacker.Sign("user-123")
+	forged, err := attacker.Sign("user-123", "user")
 	if err != nil {
 		t.Fatalf("Sign: %v", err)
 	}
@@ -78,7 +98,7 @@ func TestVerifyRejectsExpired(t *testing.T) {
 	key := mustKey(t, "k1")
 	m := NewManager("auth.example", "example-api", -time.Second, key) // já nasce expirado
 
-	tok, err := m.Sign("user-123")
+	tok, err := m.Sign("user-123", "user")
 	if err != nil {
 		t.Fatalf("Sign: %v", err)
 	}
@@ -94,7 +114,7 @@ func TestVerifyRejectsWrongAudienceAndIssuer(t *testing.T) {
 	issuerB := NewManager("issuer-b", "aud-a", time.Minute, key)
 	audB := NewManager("issuer-a", "aud-b", time.Minute, key)
 
-	tok, err := issuerA.Sign("user-123")
+	tok, err := issuerA.Sign("user-123", "user")
 	if err != nil {
 		t.Fatalf("Sign: %v", err)
 	}
@@ -113,7 +133,7 @@ func TestVerifyRejectsUnknownKid(t *testing.T) {
 	signer := NewManager("auth.example", "example-api", time.Minute, key)
 	verifier := NewManager("auth.example", "example-api", time.Minute, other)
 
-	tok, err := signer.Sign("user-123")
+	tok, err := signer.Sign("user-123", "user")
 	if err != nil {
 		t.Fatalf("Sign: %v", err)
 	}
@@ -151,7 +171,7 @@ func TestKeyRotationAcceptsPreviousKey(t *testing.T) {
 	oldManager := NewManager("auth.example", "example-api", time.Minute, oldKey)
 	rotated := NewManager("auth.example", "example-api", time.Minute, newKey, oldKey)
 
-	tokFromOld, err := oldManager.Sign("user-123")
+	tokFromOld, err := oldManager.Sign("user-123", "user")
 	if err != nil {
 		t.Fatalf("Sign: %v", err)
 	}
@@ -159,7 +179,7 @@ func TestKeyRotationAcceptsPreviousKey(t *testing.T) {
 		t.Fatalf("Verify token da chave antiga após rotação: %v", err)
 	}
 
-	tokFromNew, err := rotated.Sign("user-456")
+	tokFromNew, err := rotated.Sign("user-456", "user")
 	if err != nil {
 		t.Fatalf("Sign: %v", err)
 	}
@@ -209,7 +229,7 @@ func TestPrivateKeyPEMRoundTrip(t *testing.T) {
 	m1 := NewManager("auth.example", "example-api", time.Minute, key)
 	m2 := NewManager("auth.example", "example-api", time.Minute, decoded)
 
-	tok, err := m1.Sign("user-123")
+	tok, err := m1.Sign("user-123", "user")
 	if err != nil {
 		t.Fatalf("Sign: %v", err)
 	}

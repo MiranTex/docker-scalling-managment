@@ -35,7 +35,7 @@ func TestLoadOrGenerateCreatesThenReuses(t *testing.T) {
 	m1 := token.NewManager("iss", "aud", time.Minute, first)
 	m2 := token.NewManager("iss", "aud", time.Minute, second)
 
-	tok, err := m1.Sign("user-1")
+	tok, err := m1.Sign("user-1", "user")
 	if err != nil {
 		t.Fatalf("Sign: %v", err)
 	}

@@ -64,6 +64,11 @@ type User struct {
 	// pra decidir se uma conta encontrada por e-mail pode ser confiada
 	// como está, ou se precisa ser "reclamada" (ver ReclaimUnverifiedAccount).
 	EmailVerifiedAt *time.Time
+	// Role é uma das constantes em role.go -- vai como claim no JWT
+	// emitido no login/refresh (ver httpapi.issueTokenPair), é assim que
+	// outro serviço decide se esta conta pode entrar numa superfície
+	// administrativa.
+	Role string
 }
 
 // ErrEmailTaken é devolvido por CreateUserWithPassword quando o e-mail já
@@ -115,7 +120,10 @@ func (db *DB) CreateUserWithPassword(ctx context.Context, email, passwordHash st
 		return User{}, fmt.Errorf("store: confirmando criação de utilizador: %w", err)
 	}
 
-	return User{ID: id, Email: email, CreatedAt: createdAt}, nil
+	// Self-registration nunca aceita role do cliente -- toda conta criada
+	// por aqui nasce "user" (o DEFAULT da coluna). RoleUser aqui é só para
+	// o valor devolvido bater com o que está mesmo na base.
+	return User{ID: id, Email: email, CreatedAt: createdAt, Role: RoleUser}, nil
 }
 
 // FindUserByEmailWithPassword devolve o utilizador e o hash da senha
@@ -126,12 +134,12 @@ func (db *DB) FindUserByEmailWithPassword(ctx context.Context, email string) (Us
 	var passwordHash string
 	var emailVerifiedAt sql.NullTime
 	err := db.sql.QueryRowContext(ctx, `
-		SELECT u.id, u.email, u.created_at, u.email_verified_at, p.password_hash
+		SELECT u.id, u.email, u.created_at, u.email_verified_at, u.role, p.password_hash
 		FROM auth.users u
 		JOIN auth.password_credentials p ON p.user_id = u.id
 		WHERE u.email = $1`,
 		email,
-	).Scan(&u.ID, &u.Email, &u.CreatedAt, &emailVerifiedAt, &passwordHash)
+	).Scan(&u.ID, &u.Email, &u.CreatedAt, &emailVerifiedAt, &u.Role, &passwordHash)
 	if errors.Is(err, sql.ErrNoRows) {
 		return User{}, "", ErrUserNotFound
 	}
@@ -142,6 +150,144 @@ func (db *DB) FindUserByEmailWithPassword(ctx context.Context, email string) (Us
 		u.EmailVerifiedAt = &emailVerifiedAt.Time
 	}
 	return u, passwordHash, nil
+}
+
+// FindUserByID devolve o utilizador pelo ID -- usado em
+// POST /v1/token/refresh para reler a role atual (pode ter mudado desde
+// que o access token anterior foi emitido) antes de assinar um novo.
+func (db *DB) FindUserByID(ctx context.Context, id string) (User, bool, error) {
+	var u User
+	var emailVerifiedAt sql.NullTime
+	err := db.sql.QueryRowContext(ctx,
+		`SELECT id, email, created_at, email_verified_at, role FROM auth.users WHERE id = $1`,
+		id,
+	).Scan(&u.ID, &u.Email, &u.CreatedAt, &emailVerifiedAt, &u.Role)
+	if errors.Is(err, sql.ErrNoRows) {
+		return User{}, false, nil
+	}
+	if err != nil {
+		return User{}, false, fmt.Errorf("store: buscando utilizador por id: %w", err)
+	}
+	if emailVerifiedAt.Valid {
+		u.EmailVerifiedAt = &emailVerifiedAt.Time
+	}
+	return u, true, nil
+}
+
+// ListUsers devolve todas as contas, mais recentes primeiro -- usado pela
+// gestão de utilizadores ("GET /v1/admin/users"). Nunca inclui o hash da
+// senha (nem sequer é lido aqui).
+func (db *DB) ListUsers(ctx context.Context) ([]User, error) {
+	rows, err := db.sql.QueryContext(ctx, `
+		SELECT id, email, created_at, email_verified_at, role
+		FROM auth.users
+		ORDER BY created_at DESC`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("store: listando utilizadores: %w", err)
+	}
+	defer rows.Close()
+
+	var users []User
+	for rows.Next() {
+		var u User
+		var emailVerifiedAt sql.NullTime
+		if err := rows.Scan(&u.ID, &u.Email, &u.CreatedAt, &emailVerifiedAt, &u.Role); err != nil {
+			return nil, fmt.Errorf("store: lendo utilizador: %w", err)
+		}
+		if emailVerifiedAt.Valid {
+			u.EmailVerifiedAt = &emailVerifiedAt.Time
+		}
+		users = append(users, u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: iterando utilizadores: %w", err)
+	}
+	return users, nil
+}
+
+// CreateUserWithPasswordAndRole cria uma conta administrativamente (ao
+// contrário de CreateUserWithPassword, usado no self-registration): aceita
+// a role explicitamente, e a conta já nasce com o e-mail marcado como
+// verificado -- é quem a está a criar (um super-admin autenticado) que
+// está a vouch pelo e-mail, não a própria pessoa.
+func (db *DB) CreateUserWithPasswordAndRole(ctx context.Context, email, passwordHash, role string) (User, error) {
+	id, err := idgen.New()
+	if err != nil {
+		return User{}, fmt.Errorf("store: gerando id de utilizador: %w", err)
+	}
+
+	tx, err := db.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return User{}, fmt.Errorf("store: iniciando transação: %w", err)
+	}
+	defer tx.Rollback()
+
+	now := time.Now()
+	var createdAt time.Time
+	err = tx.QueryRowContext(ctx,
+		`INSERT INTO auth.users (id, email, role, email_verified_at) VALUES ($1, $2, $3, $4) RETURNING created_at`,
+		id, email, role, now,
+	).Scan(&createdAt)
+	if isUniqueViolation(err) {
+		return User{}, ErrEmailTaken
+	}
+	if err != nil {
+		return User{}, fmt.Errorf("store: criando utilizador: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO auth.password_credentials (user_id, password_hash) VALUES ($1, $2)`,
+		id, passwordHash,
+	); err != nil {
+		return User{}, fmt.Errorf("store: criando credencial de senha: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return User{}, fmt.Errorf("store: confirmando criação de utilizador: %w", err)
+	}
+
+	return User{ID: id, Email: email, CreatedAt: createdAt, EmailVerifiedAt: &now, Role: role}, nil
+}
+
+// UpdateUserRole troca a role de uma conta. found=false se o ID não
+// existir -- quem chama decide se isso é um 404.
+func (db *DB) UpdateUserRole(ctx context.Context, id, role string) (found bool, err error) {
+	res, err := db.sql.ExecContext(ctx, `UPDATE auth.users SET role = $2 WHERE id = $1`, id, role)
+	if err != nil {
+		return false, fmt.Errorf("store: atualizando role: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("store: confirmando atualização de role: %w", err)
+	}
+	return n > 0, nil
+}
+
+// CountUsersByRole é usado só no arranque do processo, para decidir se
+// vale a pena tentar promover o super-admin de bootstrap (ver
+// cmd/authd) -- nunca chamado a partir de um pedido HTTP.
+func (db *DB) CountUsersByRole(ctx context.Context, role string) (int, error) {
+	var n int
+	if err := db.sql.QueryRowContext(ctx, `SELECT count(*) FROM auth.users WHERE role = $1`, role).Scan(&n); err != nil {
+		return 0, fmt.Errorf("store: contando utilizadores por role: %w", err)
+	}
+	return n, nil
+}
+
+// PromoteUserByEmail troca a role de quem tem este e-mail. found=false se
+// não existir conta com esse e-mail (ex: a pessoa ainda não se
+// registou) -- ver cmd/authd sobre o bootstrap do primeiro super-admin.
+func (db *DB) PromoteUserByEmail(ctx context.Context, email, role string) (found bool, err error) {
+	res, err := db.sql.ExecContext(ctx, `UPDATE auth.users SET role = $2 WHERE email = $1`, email, role)
+	if err != nil {
+		return false, fmt.Errorf("store: promovendo utilizador: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("store: confirmando promoção: %w", err)
+	}
+	return n > 0, nil
 }
 
 // ReclaimUnverifiedAccount é chamado quando um login social prova, via um

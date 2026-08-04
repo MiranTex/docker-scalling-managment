@@ -36,6 +36,11 @@ services:
       AUTH_AUDIENCE: "base-stack"
       LOG_FORMAT: "json"
       LOG_LEVEL: "info"
+      # Promove esta conta a super-admin no arranque, mas só se ainda não
+      # existir nenhum super-admin -- e só se a conta já existir (registe
+      # normalmente via POST /v1/register primeiro). Ver
+      # promoteBootstrapSuperAdmin em cmd/authd/main.go.
+      AUTH_BOOTSTRAP_SUPERADMIN_EMAIL: "${AUTH_BOOTSTRAP_SUPERADMIN_EMAIL:-}"
     volumes:
       # Onde a chave RSA de assinatura é persistida entre restarts (ver
       # internal/keystore) -- sem isto, cada restart geraria uma chave

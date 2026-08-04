@@ -30,6 +30,20 @@ type UserStore interface {
 	CreateUserWithPassword(ctx context.Context, email, passwordHash string) (store.User, error)
 	FindUserByEmailWithPassword(ctx context.Context, email string) (store.User, string, error)
 	FindUserByEmail(ctx context.Context, email string) (store.User, bool, error)
+	// FindUserByID é usado em POST /v1/token/refresh -- releva a role
+	// atual (pode ter mudado desde o login) antes de assinar um novo
+	// access token.
+	FindUserByID(ctx context.Context, id string) (store.User, bool, error)
+}
+
+// UserAdmin é a gestão de contas por um super-admin: criar, listar,
+// promover/despromover role -- implementado por *store.DB. Separado de
+// UserStore porque nem todo Handler de teste precisa disto (só os testes
+// dos endpoints /v1/admin/*).
+type UserAdmin interface {
+	ListUsers(ctx context.Context) ([]store.User, error)
+	CreateUserWithPasswordAndRole(ctx context.Context, email, passwordHash, role string) (store.User, error)
+	UpdateUserRole(ctx context.Context, id, role string) (found bool, err error)
 }
 
 // EmailVerifier emite e confirma tokens de verificação de e-mail —
@@ -42,7 +56,7 @@ type EmailVerifier interface {
 // TokenIssuer emite, valida e expõe as chaves de access tokens (JWT) —
 // implementado por *token.Manager.
 type TokenIssuer interface {
-	Sign(subject string) (string, error)
+	Sign(subject, role string) (string, error)
 	Verify(tokenString string) (token.Claims, error)
 	JWKS() token.JWKSDocument
 }
@@ -80,6 +94,7 @@ type OAuthLogin interface {
 // Handler agrupa as dependências de todos os endpoints.
 type Handler struct {
 	users        UserStore
+	userAdmin    UserAdmin
 	tokens       TokenIssuer
 	refresh      RefreshIssuer
 	apiKeys      APIKeyIssuer
@@ -96,9 +111,9 @@ type Handler struct {
 // é usado hoje só para "enviar" o token de verificação de e-mail (ver
 // handleRegister) -- este serviço ainda não integra um provedor de e-mail
 // de verdade, então o token sai só no log estruturado do processo.
-func NewHandler(users UserStore, tokens TokenIssuer, refreshTokens RefreshIssuer, apiKeys APIKeyIssuer, oauthLogin OAuthLogin, emailVerifier EmailVerifier, db Pinger, accessTTL time.Duration, logger *slog.Logger) *Handler {
+func NewHandler(users UserStore, userAdmin UserAdmin, tokens TokenIssuer, refreshTokens RefreshIssuer, apiKeys APIKeyIssuer, oauthLogin OAuthLogin, emailVerifier EmailVerifier, db Pinger, accessTTL time.Duration, logger *slog.Logger) *Handler {
 	return &Handler{
-		users: users, tokens: tokens, refresh: refreshTokens, apiKeys: apiKeys,
+		users: users, userAdmin: userAdmin, tokens: tokens, refresh: refreshTokens, apiKeys: apiKeys,
 		oauth: oauthLogin, verification: emailVerifier, db: db, accessTTL: accessTTL, logger: logger,
 	}
 }
@@ -115,6 +130,12 @@ func (h *Handler) Routes() *http.ServeMux {
 	mux.HandleFunc("POST /v1/api-keys", h.requireAuth(h.handleCreateAPIKey))
 	mux.HandleFunc("GET /v1/api-keys", h.requireAuth(h.handleListAPIKeys))
 	mux.HandleFunc("DELETE /v1/api-keys/{id}", h.requireAuth(h.handleRevokeAPIKey))
+	// Gestão de utilizadores -- só super-admin. Criar/listar contas e
+	// atribuir role são ações administrativas, não algo que qualquer
+	// sessão autenticada deva conseguir fazer.
+	mux.HandleFunc("GET /v1/admin/users", h.requireRole(store.RoleSuperAdmin, h.handleListUsers))
+	mux.HandleFunc("POST /v1/admin/users", h.requireRole(store.RoleSuperAdmin, h.handleCreateUser))
+	mux.HandleFunc("PATCH /v1/admin/users/{id}/role", h.requireRole(store.RoleSuperAdmin, h.handleUpdateUserRole))
 	// Introspecção não exige um access token do chamador -- é chamado por
 	// OUTRO serviço, de posse só da API key que quer validar, não de uma
 	// sessão de utilizador. Ver limitação na documentação: hoje qualquer
@@ -129,22 +150,58 @@ func (h *Handler) Routes() *http.ServeMux {
 	return mux
 }
 
+// bearerClaims extrai e valida o access token do cabeçalho Authorization,
+// partilhado por requireAuth e requireRole.
+func (h *Handler) bearerClaims(r *http.Request) (token.Claims, error) {
+	const prefix = "Bearer "
+	authHeader := r.Header.Get("Authorization")
+	if !strings.HasPrefix(authHeader, prefix) {
+		return token.Claims{}, errMissingToken
+	}
+	return h.tokens.Verify(strings.TrimPrefix(authHeader, prefix))
+}
+
+var errMissingToken = errors.New("httpapi: cabeçalho Authorization ausente")
+
 // requireAuth envolve um handler que precisa saber QUEM está a chamar:
 // exige um access token válido no cabeçalho Authorization e passa o
 // "sub" (user ID) do token adiante -- é assim que uma API key criada em
 // POST /v1/api-keys fica associada a quem a criou.
 func (h *Handler) requireAuth(next func(w http.ResponseWriter, r *http.Request, userID string)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		const prefix = "Bearer "
-		authHeader := r.Header.Get("Authorization")
-		if !strings.HasPrefix(authHeader, prefix) {
+		claims, err := h.bearerClaims(r)
+		if errors.Is(err, errMissingToken) {
 			writeError(w, http.StatusUnauthorized, "missing_token", "cabeçalho Authorization: Bearer <token> é obrigatório")
 			return
 		}
-
-		claims, err := h.tokens.Verify(strings.TrimPrefix(authHeader, prefix))
 		if err != nil {
 			writeError(w, http.StatusUnauthorized, "invalid_token", "access token inválido ou expirado")
+			return
+		}
+		next(w, r, claims.Subject)
+	}
+}
+
+// requireRole é como requireAuth, mas também exige que a claim "role" do
+// access token seja exatamente role -- usado nos endpoints administrativos
+// (/v1/admin/*), onde uma sessão autenticada qualquer não basta. A claim
+// vem do momento em que o token foi assinado (login/refresh); se a role de
+// alguém for revogada, isso só se reflete depois do access token atual
+// expirar (15 min por default) -- mesma limitação já aceita para revogação
+// de JWT em geral (ver README, seção de limitações).
+func (h *Handler) requireRole(role string, next func(w http.ResponseWriter, r *http.Request, userID string)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims, err := h.bearerClaims(r)
+		if errors.Is(err, errMissingToken) {
+			writeError(w, http.StatusUnauthorized, "missing_token", "cabeçalho Authorization: Bearer <token> é obrigatório")
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, "invalid_token", "access token inválido ou expirado")
+			return
+		}
+		if claims.Role != role {
+			writeError(w, http.StatusForbidden, "forbidden", "esta ação exige a role "+role)
 			return
 		}
 		next(w, r, claims.Subject)
@@ -158,8 +215,8 @@ type tokenPair struct {
 	ExpiresIn    int    `json:"expires_in"`
 }
 
-func (h *Handler) issueTokenPair(ctx context.Context, userID string) (tokenPair, error) {
-	access, err := h.tokens.Sign(userID)
+func (h *Handler) issueTokenPair(ctx context.Context, userID, role string) (tokenPair, error) {
+	access, err := h.tokens.Sign(userID, role)
 	if err != nil {
 		return tokenPair{}, err
 	}
@@ -317,7 +374,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pair, err := h.issueTokenPair(r.Context(), user.ID)
+	pair, err := h.issueTokenPair(r.Context(), user.ID, user.Role)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "erro emitindo tokens")
 		return
@@ -357,7 +414,21 @@ func (h *Handler) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	access, err := h.tokens.Sign(userID)
+	// Relê a role atual em vez de confiar em nenhum claim antigo -- um
+	// refresh é exatamente o momento em que uma promoção/despromoção de
+	// role feita entretanto passa a valer (o access token anterior, se
+	// ainda válido, continua com a role de quando foi assinado).
+	user, found, err := h.users.FindUserByID(r.Context(), userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "erro buscando utilizador")
+		return
+	}
+	if !found {
+		writeError(w, http.StatusUnauthorized, "invalid_refresh_token", "refresh token inválido")
+		return
+	}
+
+	access, err := h.tokens.Sign(userID, user.Role)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "erro emitindo access token")
 		return
@@ -383,6 +454,116 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.refresh.Revoke(r.Context(), req.RefreshToken); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "erro revogando sessão")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// userListItem é o que devolvemos em GET /v1/admin/users -- nunca inclui
+// hash de senha nem nenhuma credencial.
+type userListItem struct {
+	ID              string     `json:"id"`
+	Email           string     `json:"email"`
+	Role            string     `json:"role"`
+	CreatedAt       time.Time  `json:"created_at"`
+	EmailVerifiedAt *time.Time `json:"email_verified_at,omitempty"`
+}
+
+// handleListUsers devolve todas as contas -- só super-admin (ver
+// requireRole em Routes).
+func (h *Handler) handleListUsers(w http.ResponseWriter, r *http.Request, _ string) {
+	users, err := h.userAdmin.ListUsers(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "erro listando utilizadores")
+		return
+	}
+
+	items := make([]userListItem, 0, len(users))
+	for _, u := range users {
+		items = append(items, userListItem{
+			ID: u.ID, Email: u.Email, Role: u.Role, CreatedAt: u.CreatedAt, EmailVerifiedAt: u.EmailVerifiedAt,
+		})
+	}
+	writeJSON(w, http.StatusOK, items)
+}
+
+type createUserRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+	Role     string `json:"role"`
+}
+
+// handleCreateUser cria uma conta administrativamente -- ao contrário de
+// POST /v1/register (self-registration, sempre role "user"), aqui quem
+// chama já é um super-admin autenticado e escolhe a role da conta nova.
+// A conta nasce com o e-mail já marcado como verificado (ver
+// store.CreateUserWithPasswordAndRole): é o super-admin que está a vouch
+// pelo e-mail, não a própria pessoa.
+func (h *Handler) handleCreateUser(w http.ResponseWriter, r *http.Request, _ string) {
+	var req createUserRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	if _, err := mail.ParseAddress(req.Email); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_email", "e-mail inválido")
+		return
+	}
+	if len(req.Password) < minPasswordLength {
+		writeError(w, http.StatusBadRequest, "weak_password", "senha precisa de pelo menos 8 caracteres")
+		return
+	}
+	if !store.ValidRole(req.Role) {
+		writeError(w, http.StatusBadRequest, "invalid_role", "role inválida")
+		return
+	}
+
+	hash, err := password.Hash(req.Password)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "erro processando senha")
+		return
+	}
+
+	user, err := h.userAdmin.CreateUserWithPasswordAndRole(r.Context(), req.Email, hash, req.Role)
+	if errors.Is(err, store.ErrEmailTaken) {
+		writeError(w, http.StatusConflict, "email_taken", "e-mail já registado")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "erro criando utilizador")
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, userListItem{
+		ID: user.ID, Email: user.Email, Role: user.Role, CreatedAt: user.CreatedAt, EmailVerifiedAt: user.EmailVerifiedAt,
+	})
+}
+
+type updateUserRoleRequest struct {
+	Role string `json:"role"`
+}
+
+// handleUpdateUserRole atribui uma role nova a uma conta já existente --
+// é assim que um super-admin promove alguém a admin/infra-admin (ou
+// despromove de volta a "user").
+func (h *Handler) handleUpdateUserRole(w http.ResponseWriter, r *http.Request, _ string) {
+	id := r.PathValue("id")
+	var req updateUserRoleRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if !store.ValidRole(req.Role) {
+		writeError(w, http.StatusBadRequest, "invalid_role", "role inválida")
+		return
+	}
+
+	found, err := h.userAdmin.UpdateUserRole(r.Context(), id, req.Role)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "erro atualizando role")
+		return
+	}
+	if !found {
+		writeError(w, http.StatusNotFound, "not_found", "utilizador não encontrado")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -610,7 +791,7 @@ func (h *Handler) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pair, err := h.issueTokenPair(r.Context(), user.ID)
+	pair, err := h.issueTokenPair(r.Context(), user.ID, user.Role)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "erro emitindo tokens")
 		return

@@ -44,12 +44,14 @@ func main() {
 	db := connectWithRetry(ctx, cfg.databaseURL, logger)
 	defer db.Close()
 
+	promoteBootstrapSuperAdmin(ctx, db, cfg, logger)
+
 	tokens := token.NewManager(cfg.issuer, cfg.audience, cfg.accessTokenTTL, signingKey)
 	refreshTokens := refresh.NewManager(db, cfg.refreshTokenTTL)
 	apiKeys := apikey.NewManager(db.APIKeyStore())
 	oauthLogin := oauth.NewManager(db, oauthProviders(cfg, logger)...)
 	emailVerifier := verification.NewManager(db.EmailVerificationStore(), cfg.emailVerificationTTL)
-	handler := httpapi.NewHandler(db, tokens, refreshTokens, apiKeys, oauthLogin, emailVerifier, db, cfg.accessTokenTTL, logger)
+	handler := httpapi.NewHandler(db, db, tokens, refreshTokens, apiKeys, oauthLogin, emailVerifier, db, cfg.accessTokenTTL, logger)
 
 	srv := &http.Server{
 		Addr:    cfg.listenAddr,
@@ -73,6 +75,42 @@ func main() {
 		logger.Warn("shutdown do servidor HTTP não terminou a tempo", "err", err)
 	}
 	logger.Info("authd encerrado")
+}
+
+// promoteBootstrapSuperAdmin resolve o problema do "primeiro admin": os
+// endpoints /v1/admin/* só respondem a quem já é super-admin, então sem
+// nenhum a chave nunca vira. Se AUTH_BOOTSTRAP_SUPERADMIN_EMAIL estiver
+// definida e ainda não existir nenhum super-admin, promove a conta com
+// esse e-mail (que precisa já existir -- registada normalmente via
+// POST /v1/register). Se a conta ainda não existir, não faz nada e
+// tenta de novo no próximo arranque -- não cria contas "fantasma" a
+// partir de uma env var.
+func promoteBootstrapSuperAdmin(ctx context.Context, db *store.DB, cfg config, logger *slog.Logger) {
+	if cfg.bootstrapSuperAdminEmail == "" {
+		return
+	}
+
+	n, err := db.CountUsersByRole(ctx, store.RoleSuperAdmin)
+	if err != nil {
+		logger.Error("erro verificando super-admins existentes", "err", err)
+		return
+	}
+	if n > 0 {
+		logger.Debug("AUTH_BOOTSTRAP_SUPERADMIN_EMAIL definida mas já existe super-admin, ignorando", "existing_super_admins", n)
+		return
+	}
+
+	found, err := db.PromoteUserByEmail(ctx, cfg.bootstrapSuperAdminEmail, store.RoleSuperAdmin)
+	if err != nil {
+		logger.Error("erro promovendo super-admin de bootstrap", "email", cfg.bootstrapSuperAdminEmail, "err", err)
+		return
+	}
+	if !found {
+		logger.Warn("AUTH_BOOTSTRAP_SUPERADMIN_EMAIL definida mas conta ainda não existe -- registe-a primeiro (POST /v1/register) e reinicie",
+			"email", cfg.bootstrapSuperAdminEmail)
+		return
+	}
+	logger.Info("conta promovida a super-admin (bootstrap)", "email", cfg.bootstrapSuperAdminEmail)
 }
 
 // oauthProviders monta os providers de login social a partir da config --

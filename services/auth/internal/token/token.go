@@ -59,6 +59,13 @@ type Claims struct {
 	Audience  string `json:"aud,omitempty"`
 	ExpiresAt int64  `json:"exp"`
 	IssuedAt  int64  `json:"iat"`
+	// Role é um claim customizado (não faz parte da RFC 7519, mas o
+	// formato de claims é só um objeto JSON -- qualquer chave extra é
+	// válida). Carrega a role da conta (ver store.Role*) no momento em
+	// que este token foi assinado -- outro serviço usa isto pra decidir
+	// se esta sessão pode entrar numa superfície administrativa, sem
+	// precisar perguntar ao auth service em tempo real.
+	Role string `json:"role,omitempty"`
 }
 
 // ErrInvalidToken é a causa raiz de todo erro de validação de token
@@ -102,8 +109,9 @@ func NewManager(issuer, audience string, ttl time.Duration, signing Key, previou
 }
 
 // Sign emite um novo access token para subject (tipicamente o ID do
-// utilizador), com issuer/audience/exp/iat preenchidos automaticamente.
-func (m *Manager) Sign(subject string) (string, error) {
+// utilizador) com a role informada, com issuer/audience/exp/iat
+// preenchidos automaticamente.
+func (m *Manager) Sign(subject, role string) (string, error) {
 	now := time.Now()
 	claims := Claims{
 		Subject:   subject,
@@ -111,6 +119,7 @@ func (m *Manager) Sign(subject string) (string, error) {
 		Audience:  m.audience,
 		IssuedAt:  now.Unix(),
 		ExpiresAt: now.Add(m.ttl).Unix(),
+		Role:      role,
 	}
 	return m.sign(claims)
 }

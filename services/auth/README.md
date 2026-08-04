@@ -51,6 +51,22 @@ que já está pronto.
   por senha **não** exige verificação prévia (não bloqueia o uso
   imediato da conta), mas o login social exige, indiretamente: ver a
   próxima secção sobre o porquê disto ser mais que uma formalidade.
+- **Roles (`internal/store/role.go`)**: `user` (default), `admin`,
+  `infra-admin` ou `super-admin` -- um gate GROSSO (a que superfícies
+  administrativas uma conta tem acesso), não autorização fina. A role vai
+  como claim `role` em todo access token (JWT) emitido no login/refresh;
+  qualquer outro serviço que valide o token via JWKS lê essa claim
+  diretamente, sem perguntar nada a este serviço em tempo real -- a
+  autorização fina (ex: que ações específicas dentro do autoscaler) é
+  responsabilidade de cada serviço de recursos, que nem precisa saber que
+  estas roles existem. Só `super-admin` pode gerir outras contas
+  (`/v1/admin/users`); `self-registration` (`POST /v1/register`) nunca
+  aceita role do cliente -- nasce sempre `user`. Contas criadas por
+  `POST /v1/admin/users` nascem já com o e-mail verificado (é o
+  super-admin que está a vouch por ela). Se a role de alguém mudar, isso
+  só se reflete no próximo login/refresh -- um access token já emitido
+  continua com a role de quando foi assinado até expirar (15 min por
+  default), mesma limitação já aceita para revogação de JWT em geral.
 
 ### A vulnerabilidade que a verificação de e-mail fecha
 
@@ -98,6 +114,9 @@ raciocínio.
 | GET | `/v1/api-keys` | *(Bearer access token)* lista as chaves do utilizador autenticado (nunca inclui o segredo) |
 | DELETE | `/v1/api-keys/{id}` | *(Bearer access token, precisa ser o dono)* revoga a chave |
 | POST | `/v1/api-keys/introspect` | `{key}` → `{active, owner?, scopes?}` — usado por OUTRO serviço para validar uma API key |
+| GET | `/v1/admin/users` | *(Bearer access token, role `super-admin`)* lista todas as contas |
+| POST | `/v1/admin/users` | *(Bearer access token, role `super-admin`)* `{email, password, role}` → cria conta já verificada, com a role escolhida |
+| PATCH | `/v1/admin/users/{id}/role` | *(Bearer access token, role `super-admin`)* `{role}` → atribui uma role nova a uma conta existente |
 | GET | `/v1/oauth/{provider}/start` | Redireciona (302) para o provider (`google` ou `github`) |
 | GET | `/v1/oauth/{provider}/callback` | Recebido do provider após login → `{access_token, refresh_token, ...}` |
 | GET | `/.well-known/jwks.json` | Chaves públicas para validar tokens |
@@ -118,7 +137,8 @@ internal/
   verification/        verificação de e-mail: emissão/confirmação de token de uso único
   opaquetoken/         segredo aleatório + hash, partilhado por refresh, apikey e verification
   idgen/               UUIDs (usado por vários pacotes acima)
-  store/               Postgres: users, password_credentials, refresh_tokens, api_keys, oauth_identities, email_verifications
+  store/               Postgres: users (com role), password_credentials, refresh_tokens, api_keys, oauth_identities, email_verifications
+  store/role.go         constantes de role (user/admin/infra-admin/super-admin) + validação
   httpapi/             handlers HTTP, ligando tudo o resto
 ```
 
@@ -145,6 +165,7 @@ validação HTTP, account linking) com fakes em memória, e só a camada
 | `LOG_FORMAT` / `LOG_LEVEL` | `json` / `info` | Mesmo padrão do services/autoscaler. |
 | `AUTH_GOOGLE_CLIENT_ID` / `AUTH_GOOGLE_CLIENT_SECRET` / `AUTH_GOOGLE_REDIRECT_URL` | *(vazio = desabilitado)* | Habilita login via Google. As três precisam estar definidas. |
 | `AUTH_GITHUB_CLIENT_ID` / `AUTH_GITHUB_CLIENT_SECRET` / `AUTH_GITHUB_REDIRECT_URL` | *(vazio = desabilitado)* | Habilita login via GitHub. As três precisam estar definidas. Scope necessário: `user:email`. |
+| `AUTH_BOOTSTRAP_SUPERADMIN_EMAIL` | *(vazio = desabilitado)* | Promove esta conta a `super-admin` no arranque, mas só se ainda não existir nenhum super-admin e a conta já existir (registe primeiro via `POST /v1/register`). Resolve o problema do "primeiro admin" -- ver `promoteBootstrapSuperAdmin` em `cmd/authd/main.go`. |
 
 Sem nenhum provider configurado, o serviço sobe normalmente -- os
 endpoints `/v1/oauth/*` só respondem "provider desconhecido" (404). Para
@@ -164,12 +185,32 @@ Sobe um Postgres básico dedicado a este serviço (schema `auth`) — quando
 o projeto tiver um serviço de base de dados partilhado (um Postgres com
 um schema por serviço), isto migra pra lá.
 
+Alternativa: `demo/docker-compose.yml` sobe este serviço gerido pelo
+[services/autoscaler](../autoscaler/README.md) (`group-authd`) em vez de
+um container estático -- útil pra testar o auth já escalando/balanceando
+de verdade. Ver `demo/README.md`, seção "Auth + portal".
+
 Testar:
 ```sh
 curl -X POST localhost:8081/v1/register -d '{"email":"a@example.test","password":"senha-forte"}'
 curl -X POST localhost:8081/v1/login -d '{"email":"a@example.test","password":"senha-forte"}'
 curl localhost:8081/.well-known/jwks.json
 ```
+
+### Criando o primeiro super-admin
+
+Os endpoints `/v1/admin/*` só respondem a quem já é `super-admin` -- sem
+nenhum, a chave nunca vira. Registe a conta normalmente, defina
+`AUTH_BOOTSTRAP_SUPERADMIN_EMAIL` com o e-mail dela e reinicie o
+processo:
+```sh
+curl -X POST localhost:8081/v1/register -d '{"email":"root@example.test","password":"senha-forte"}'
+AUTH_BOOTSTRAP_SUPERADMIN_EMAIL=root@example.test docker compose -f services/auth/docker-compose.yml up -d
+```
+No log do arranque deve aparecer `"conta promovida a super-admin
+(bootstrap)"`. Depois disso, use `POST /v1/admin/users` (ou o portal, ver
+services/portal) para criar/gerir as demais contas -- a env var só serve
+para destravar a primeira vez.
 
 ## Testes
 
@@ -212,6 +253,14 @@ ponta a ponta.
 
 ## Limitações conhecidas
 
+- Sem "convite por e-mail" para promover alguém que ainda não tem conta —
+  `POST /v1/admin/users` sempre cria a conta e a credencial de senha na
+  hora (o super-admin escolhe a senha inicial); não há fluxo de "a pessoa
+  se registra sozinha depois de convidada".
+- `PATCH /v1/admin/users/{id}/role` não impede um super-admin de
+  despromover a própria conta (incluindo despromover o único
+  super-admin que resta) — se isso acontecer, o próximo "primeiro
+  super-admin" precisa passar de novo por `AUTH_BOOTSTRAP_SUPERADMIN_EMAIL`.
 - Sem rate limiting / proteção de força bruta em `/v1/login` — fica para
   quando o projeto tiver um API gateway/proxy comum na frente dos
   serviços, ou uma fase dedicada a isso.
