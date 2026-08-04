@@ -20,6 +20,10 @@ export default async function DashboardPage() {
             <td>{(claims?.sub as string) ?? "—"}</td>
           </tr>
           <tr>
+            <th>Role</th>
+            <td>{(claims?.role as string) ?? "—"}</td>
+          </tr>
+          <tr>
             <th>Emissor (iss)</th>
             <td>{(claims?.iss as string) ?? "—"}</td>
           </tr>

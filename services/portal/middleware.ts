@@ -18,7 +18,15 @@ export async function middleware(req: NextRequest) {
       const res = await refreshTokens(refreshToken);
       if (res.ok) {
         const pair: TokenPair = await res.json();
-        const next = NextResponse.next();
+        // Não basta pôr o cookie novo na resposta (isso só chega ao
+        // browser no PRÓXIMO pedido) -- sem também mutar req.cookies e
+        // repassar req.headers, o Route Handler/Server Component que vai
+        // tratar este MESMO pedido ainda veria access_token ausente (e
+        // `cookies().get(ACCESS_COOKIE)!.value` rebentaria em runtime nos
+        // handlers que assumem que o middleware já garantiu o cookie).
+        req.cookies.set(ACCESS_COOKIE, pair.access_token);
+        req.cookies.set(REFRESH_COOKIE, pair.refresh_token);
+        const next = NextResponse.next({ request: { headers: req.headers } });
         setSessionCookies(next, pair);
         return next;
       }
@@ -38,5 +46,5 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/tokens/:path*", "/api/tokens/:path*"],
+  matcher: ["/dashboard/:path*", "/tokens/:path*", "/admin/:path*", "/api/tokens/:path*", "/api/admin/:path*"],
 };

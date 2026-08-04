@@ -36,16 +36,29 @@ roubá-los.
   junto com este portal (antes só existia criar/revogar) — ver
   `services/auth/internal/apikey`, `internal/store/apikey.go` e
   `internal/httpapi/httpapi.go`.
+- **Gestão de utilizadores (`/admin/users`)**: só visível/acessível a
+  quem tem a claim `role: super-admin` no access token. Lista todas as
+  contas, cria contas novas já com uma role escolhida (`user`, `admin`,
+  `infra-admin` ou `super-admin`), e permite trocar a role de uma conta
+  existente. A checagem no portal (esconder o link, mostrar "só para
+  super-admin" em vez da tabela) é só UX -- a autorização de verdade é
+  feita pelo auth service (`requireRole`, `services/auth/internal/httpapi`),
+  que recusa qualquer chamada a `/v1/admin/*` cuja role não bata,
+  independente do que este ecrã decidir mostrar. Ver
+  `services/auth/README.md` para o desenho completo de roles e como
+  criar o primeiro super-admin.
 
 ## Estrutura
 
 ```
 app/
   login/, register/            páginas públicas (client components)
-  (protected)/dashboard/        sessão ativa: user ID, iss, validade do access token
+  (protected)/dashboard/        sessão ativa: user ID, role, iss, validade do access token
   (protected)/tokens/           listar/criar/revogar API tokens pessoais
+  (protected)/admin/users/      gestão de utilizadores (só super-admin) -- criar, listar, trocar role
   api/auth/{login,register,logout}/route.ts   proxy para o auth service + cookies
   api/tokens/[[id]]/route.ts    proxy para /v1/api-keys (list/create/revoke)
+  api/admin/users/...           proxy para /v1/admin/users e /v1/admin/users/{id}/role
 lib/
   authClient.ts                 cliente HTTP fino para o auth service (server-only)
   session.ts                    set/clear dos cookies de sessão
@@ -73,6 +86,10 @@ docker compose -f services/portal/docker-compose.yml up -d
 Abre `http://localhost:3100` — mapeado assim (não 3000) porque o Grafana
 de `services/monitoring` já usa 3000 (ver `demo/README.md`).
 
+Alternativa: `demo/docker-compose.yml` sobe `auth` + `portal` já ligados
+na mesma rede (mais simples que coordenar os dois `docker-compose.yml`
+separados) — ver `demo/README.md`.
+
 Local, sem Docker:
 ```sh
 cd services/portal
@@ -83,14 +100,24 @@ npm run dev
 
 ## Testado manualmente
 
-Fluxo completo validado via `curl` com cookie jar (registo → login →
-`/dashboard` protegido → criar/listar/revogar token → expirar
-`access_token` e confirmar que o middleware renova via `refresh_token` →
-logout → `/dashboard` volta a redirecionar para `/login`) contra o auth
-service real (Postgres + `authd` via Docker) e contra a imagem Docker do
-próprio portal. Não foi testado num browser de verdade — antes de dar
-como pronto para uso real, abra `/login` num browser e percorra o mesmo
-fluxo visualmente.
+Fluxo completo validado via `curl` com cookie jar contra o stack real
+(Postgres + `authd` + `portal`, todos via Docker, ver
+`demo/docker-compose.yml`):
+- registo → login → `/dashboard` protegido → criar/listar/revogar token
+  → expirar `access_token` e confirmar que o middleware renova via
+  `refresh_token` (inclusive que o Route Handler do MESMO pedido já vê o
+  token novo, não só o próximo) → logout → `/dashboard` volta a
+  redirecionar para `/login`.
+- bootstrap do primeiro super-admin (`AUTH_BOOTSTRAP_SUPERADMIN_EMAIL`)
+  → login como super-admin → `/admin/users` acessível, criar utilizador
+  `infra-admin`, listar, promover a `admin` → confirmado que um
+  utilizador comum recebe 403 do auth service ao tentar o mesmo endpoint
+  diretamente, e que `/admin/users` no portal mostra "só para
+  super-admin" em vez da tabela.
+
+Não foi testado num browser de verdade — antes de dar como pronto para
+uso real, abra `/login` num browser e percorra os mesmos fluxos
+visualmente.
 
 ## Limitações conhecidas
 
@@ -112,3 +139,7 @@ fluxo visualmente.
   `curl` (ver secção acima). Para um serviço piloto está OK; antes de
   produção, vale adicionar pelo menos testes e2e do fluxo de login/tokens
   (Playwright, por exemplo).
+- `/admin/users` não impede um super-admin de despromover a própria
+  conta pela UI (o auth service também não bloqueia isso, ver
+  `services/auth/README.md`) -- cuidado ao testar com a única conta
+  super-admin que existir.

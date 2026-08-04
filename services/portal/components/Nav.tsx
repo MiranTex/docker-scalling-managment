@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import LogoutButton from "./LogoutButton";
 
-export default function Nav({ email }: { email?: string }) {
+export default function Nav({ email, role }: { email?: string; role?: string }) {
   const pathname = usePathname();
   return (
     <nav className="topbar">
@@ -15,6 +15,11 @@ export default function Nav({ email }: { email?: string }) {
         <Link href="/tokens" className={pathname === "/tokens" ? "active" : ""}>
           API tokens
         </Link>
+        {role === "super-admin" && (
+          <Link href="/admin/users" className={pathname === "/admin/users" ? "active" : ""}>
+            Utilizadores
+          </Link>
+        )}
       </div>
       <div className="row">
         {email && <span className="muted">{email}</span>}

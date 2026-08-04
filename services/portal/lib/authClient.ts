@@ -30,6 +30,14 @@ export type ApiKeyCreated = {
 
 export type AuthApiError = { error: string; message: string };
 
+export type AdminUser = {
+  id: string;
+  email: string;
+  role: string;
+  created_at: string;
+  email_verified_at?: string;
+};
+
 async function authFetch(path: string, init?: RequestInit): Promise<Response> {
   return fetch(`${AUTH_SERVICE_URL}${path}`, {
     ...init,
@@ -73,5 +81,29 @@ export function revokeApiKey(accessToken: string, id: string) {
   return authFetch(`/v1/api-keys/${id}`, {
     method: "DELETE",
     headers: { Authorization: `Bearer ${accessToken}` },
+  });
+}
+
+// Gestão de utilizadores -- só super-admin (ver services/auth,
+// requireRole em Routes). accessToken precisa ter a claim role ==
+// "super-admin", senão o auth service responde 403.
+
+export function listUsers(accessToken: string) {
+  return authFetch("/v1/admin/users", { headers: { Authorization: `Bearer ${accessToken}` } });
+}
+
+export function createUser(accessToken: string, email: string, password: string, role: string) {
+  return authFetch("/v1/admin/users", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}` },
+    body: JSON.stringify({ email, password, role }),
+  });
+}
+
+export function updateUserRole(accessToken: string, id: string, role: string) {
+  return authFetch(`/v1/admin/users/${id}/role`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${accessToken}` },
+    body: JSON.stringify({ role }),
   });
 }
