@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"autoscaler/internal/adminapi"
 	"autoscaler/internal/discovery"
 	"autoscaler/internal/loadbalancer"
 
@@ -198,14 +199,19 @@ func readyzHandler(balancer *loadbalancer.RoundRobin) http.Handler {
 }
 
 // newAdminServer monta o servidor HTTP separado (porta própria) que expõe
-// /healthz, /readyz e /metrics. Fica fora do listener principal (que só
-// serve o proxy) pra esses endpoints não colidirem com o roteamento
-// "qualquer caminho vai pro backend" do load balancer.
-func newAdminServer(addr string, metrics *groupMetrics, balancer *loadbalancer.RoundRobin) *http.Server {
+// /healthz, /readyz, /metrics e as rotas administrativas autenticadas
+// (/v1/status, /v1/policy, /v1/restart -- ver internal/adminapi). Fica fora
+// do listener principal (que só serve o proxy) pra esses endpoints não
+// colidirem com o roteamento "qualquer caminho vai pro backend" do load
+// balancer. As rotas admin exigem role infra-admin; healthz/readyz/metrics
+// continuam sem autenticação, como já dependem Prometheus e o healthcheck
+// do próprio container.
+func newAdminServer(addr string, metrics *groupMetrics, balancer *loadbalancer.RoundRobin, admin *adminapi.Handler) *http.Server {
 	mux := http.NewServeMux()
 	mux.Handle("/healthz", healthzHandler())
 	mux.Handle("/readyz", readyzHandler(balancer))
 	mux.Handle("/metrics", promhttp.HandlerFor(metrics.registry, promhttp.HandlerOpts{}))
+	admin.Register(mux)
 
 	return &http.Server{Addr: addr, Handler: mux}
 }

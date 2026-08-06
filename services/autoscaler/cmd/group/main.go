@@ -21,9 +21,12 @@ import (
 	"syscall"
 	"time"
 
+	"autoscaler/internal/adminapi"
+	"autoscaler/internal/audit"
 	"autoscaler/internal/discovery"
 	"autoscaler/internal/dockerclient"
 	"autoscaler/internal/executor"
+	"autoscaler/internal/jwtverify"
 	"autoscaler/internal/loadbalancer"
 	"autoscaler/internal/scaler"
 
@@ -48,14 +51,19 @@ func main() {
 	evaluator := scaler.NewEvaluator(cfg.policy)
 	draining := newDrainSet()
 	metrics := newGroupMetrics()
+	restartMu := &sync.Mutex{}
 
-	go reconcileLoop(ctx, cfg, client, logger, balancer, evaluator, draining, metrics)
+	adapter := newGroupAdapter(cfg, client, logger, balancer, evaluator, draining, metrics, restartMu)
+	tokens := jwtverify.NewVerifier(cfg.authServiceURL, cfg.authIssuer, cfg.authAudience, cfg.jwksRefresh)
+	adminHandler := adminapi.NewHandler(tokens, adapter, audit.NewLogger(logger))
+
+	go reconcileLoop(ctx, cfg, client, logger, balancer, evaluator, draining, metrics, restartMu, adapter)
 
 	srv := &http.Server{
 		Addr:    cfg.listenAddr,
 		Handler: metrics.instrumentProxy(cfg.targetService, loadbalancer.NewProxy(balancer)),
 	}
-	adminSrv := newAdminServer(cfg.metricsAddr, metrics, balancer)
+	adminSrv := newAdminServer(cfg.metricsAddr, metrics, balancer, adminHandler)
 
 	go func() {
 		logger.Info("group iniciado", cfg.logAttrs()...)
@@ -151,12 +159,12 @@ func validateLaunchTemplateImage(ctx context.Context, client *dockerclient.Clien
 // reconcileLoop é o coração do grupo: a cada tick, lê o estado atual dos
 // containers do serviço UMA vez e usa essa mesma leitura tanto pra decidir
 // se escala quanto para atualizar a lista de backends do load balancer.
-func reconcileLoop(ctx context.Context, cfg config, client *dockerclient.Client, logger *slog.Logger, balancer *loadbalancer.RoundRobin, evaluator *scaler.Evaluator, draining *drainSet, metrics *groupMetrics) {
+func reconcileLoop(ctx context.Context, cfg config, client *dockerclient.Client, logger *slog.Logger, balancer *loadbalancer.RoundRobin, evaluator *scaler.Evaluator, draining *drainSet, metrics *groupMetrics, restartMu *sync.Mutex, sink snapshotSink) {
 	ticker := time.NewTicker(cfg.reconcileTick)
 	defer ticker.Stop()
 
 	for {
-		reconcile(ctx, cfg, client, logger, balancer, evaluator, draining, metrics)
+		reconcile(ctx, cfg, client, logger, balancer, evaluator, draining, metrics, restartMu, sink)
 		select {
 		case <-ticker.C:
 		case <-ctx.Done():
@@ -166,7 +174,15 @@ func reconcileLoop(ctx context.Context, cfg config, client *dockerclient.Client,
 	}
 }
 
-func reconcile(ctx context.Context, cfg config, client *dockerclient.Client, logger *slog.Logger, balancer *loadbalancer.RoundRobin, evaluator *scaler.Evaluator, draining *drainSet, metrics *groupMetrics) {
+// reconcile faz uma passagem completa de avaliação/aplicação de scaling.
+// restartMu é adquirido durante todo o corpo -- serializa isto contra um
+// restart pedido via API admin (ver restart.go), que também usa este mutex
+// em torno de terminateAllReplicas, evitando que um tick recrie uma réplica
+// enquanto o restart ainda está a removê-las (ou vice-versa).
+func reconcile(ctx context.Context, cfg config, client *dockerclient.Client, logger *slog.Logger, balancer *loadbalancer.RoundRobin, evaluator *scaler.Evaluator, draining *drainSet, metrics *groupMetrics, restartMu *sync.Mutex, sink snapshotSink) {
+	restartMu.Lock()
+	defer restartMu.Unlock()
+
 	logger = logger.With("service", cfg.targetService)
 
 	filters := map[string][]string{
@@ -208,6 +224,7 @@ func reconcile(ctx context.Context, cfg config, client *dockerclient.Client, log
 		metrics.replicas.WithLabelValues(cfg.targetService).Set(float64(svcMetrics.Replicas))
 		metrics.avgCPUPercent.WithLabelValues(cfg.targetService).Set(svcMetrics.AvgCPUPercent)
 		metrics.updateContainerStats(cfg.targetService, containerStats)
+		sink.recordSnapshot(containers, containerStats, decision)
 
 		switch decision.Action {
 		case scaler.ScaleUp:

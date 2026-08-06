@@ -54,6 +54,24 @@ type config struct {
 	// comando, env, labels, binds, rede). Carregado de um arquivo JSON —
 	// ver LAUNCH_TEMPLATE_FILE e loadLaunchTemplate.
 	launchTemplate executor.LaunchTemplate
+	// launchTemplatePath é o caminho de onde launchTemplate foi lido --
+	// guardado separadamente (loadLaunchTemplate só devolve a struct já
+	// parseada) para a API admin poder reportar em GET /v1/status se o
+	// ficheiro em disco mudou desde o último restart (hash + mtime), sem
+	// expor o conteúdo do template (imagem/env/binds) por essa API.
+	launchTemplatePath string
+
+	// authServiceURL/authIssuer/authAudience configuram a verificação dos
+	// access tokens (JWT RS256, via JWKS) aceites pela API admin deste
+	// group -- mesmos nomes de variável já usados por
+	// services/database/dbadmin, reaproveitados aqui para o mesmo auth
+	// service.
+	authServiceURL string
+	authIssuer     string
+	authAudience   string
+	// jwksRefresh controla de quanto em quanto tempo o cache de chaves
+	// públicas do auth service é revalidado (ver internal/jwtverify).
+	jwksRefresh time.Duration
 }
 
 // loadConfig lê a configuração das variáveis de ambiente, aplicando defaults
@@ -82,6 +100,11 @@ func loadConfig() config {
 			SustainedTicks:      envInt("SUSTAINED_TICKS", 2),
 			Cooldown:            envSeconds("COOLDOWN_SECONDS", 30),
 		},
+
+		authServiceURL: envString("AUTH_SERVICE_URL", "http://localhost:8081"),
+		authIssuer:     envString("AUTH_ISSUER", "auth-service"),
+		authAudience:   envString("AUTH_AUDIENCE", "base-stack"),
+		jwksRefresh:    envSeconds("GROUP_JWKS_REFRESH_SECONDS", 300),
 	}
 
 	if cfg.targetService == "" {
@@ -109,6 +132,7 @@ func loadConfig() config {
 	}
 	template.Labels[cfg.serviceLabel] = cfg.targetService
 	cfg.launchTemplate = template
+	cfg.launchTemplatePath = templatePath
 
 	return cfg
 }
@@ -199,5 +223,8 @@ func (c config) logAttrs() []any {
 		"shutdown_timeout", c.shutdownTimeout.String(),
 		"health_check", healthCheck,
 		"launch_template_image", c.launchTemplate.Image,
+		"auth_service_url", c.authServiceURL,
+		"auth_issuer", c.authIssuer,
+		"auth_audience", c.authAudience,
 	}
 }

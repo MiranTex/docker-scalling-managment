@@ -56,6 +56,10 @@ services:
   #     # inclusive a primeira -- não precisa de nenhum container "molde"
   #     # bootstrap antes de subir o group.
   #     LAUNCH_TEMPLATE_FILE: "/etc/autoscaler/launch-template.json"
+  #     # Se descomentado, precisaria também das mesmas três env vars de
+  #     # group-authd (AUTH_SERVICE_URL/AUTH_ISSUER/AUTH_AUDIENCE) para a
+  #     # sua própria API admin (/v1/status, /v1/policy, /v1/restart)
+  #     # aceitar tokens infra-admin.
   #   labels:
   #     # É isto que faz o Prometheus da plataforma descobrir este container
   #     # sozinho (docker_sd_configs), sem precisar editar prometheus.yml.
@@ -166,6 +170,16 @@ services:
       LOG_LEVEL: "info"
       METRICS_ADDR: ":9090"
       LAUNCH_TEMPLATE_FILE: "/etc/autoscaler/launch-template.auth.json"
+      # A API de administração deste group (GET/PUT /v1/policy, POST
+      # /v1/restart, ver services/autoscaler/internal/adminapi) valida
+      # tokens do auth service via JWKS -- exatamente como o dbadmin da BD
+      # já faz acima. Auto-referencial de propósito: este group aponta
+      # para o MESMO auth service que ele próprio gere/expõe, porque quem
+      # chama esta API admin usa um token emitido por esse auth service,
+      # não um outro.
+      AUTH_SERVICE_URL: "http://group-authd:8090"
+      AUTH_ISSUER: "auth.base-stack.local"
+      AUTH_AUDIENCE: "base-stack"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./launch-template.auth.json:/etc/autoscaler/launch-template.auth.json:ro
@@ -194,6 +208,13 @@ services:
       # porta publicada no host de propósito, só acessível dentro da
       # rede auth-net.
       DBADMIN_SERVICE_URL: "http://database:8091"
+      # Lista estática (JSON) de todos os autoscalers deste ambiente que a
+      # UI /admin/autoscaler deve mostrar -- sem registo central: cada
+      # ambiente do portal só conhece os group instances que lhe
+      # pertencem (ver services/autoscaler/internal/adminapi). Cada
+      # entrada usa o endereço interno do servidor admin desse group
+      # (METRICS_ADDR), não o proxy (LISTEN_ADDR).
+      AUTOSCALER_ADMIN_INSTANCES: '[{"id":"authd","label":"Auth","url":"http://group-authd:9090"}]'
     ports:
       # 3100 no host, não 3000 -- o Grafana da plataforma de observabilidade
       # já usa 3000 (ver services/monitoring).

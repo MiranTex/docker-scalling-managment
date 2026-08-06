@@ -1,6 +1,7 @@
 package scaler
 
 import (
+	"sync"
 	"testing"
 	"time"
 )
@@ -181,5 +182,65 @@ func TestEvaluatorCooldown(t *testing.T) {
 	d = e.Evaluate(high, t0.Add(31*time.Second))
 	if d.Action != ScaleUp {
 		t.Fatalf("após cooldown: action = %v, want ScaleUp (reason: %s)", d.Action, d.Reason)
+	}
+}
+
+// TestEvaluatorSetPolicyIsRaceFree é a regressão concreta para a API admin
+// poder chamar SetPolicy/Policy a partir de uma goroutine HTTP separada
+// enquanto o reconcile loop chama Evaluate continuamente -- corra com
+// `go test -race` para isto valer alguma coisa. Também confere que Policy()
+// nunca devolve uma leitura torn (todos os campos sempre vêm da mesma
+// escrita, nunca uma mistura de duas).
+func TestEvaluatorSetPolicyIsRaceFree(t *testing.T) {
+	e := NewEvaluator(Policy{MinReplicas: 1, MaxReplicas: 5, CPUScaleUpPercent: 70, CPUScaleDownPercent: 20})
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		now := time.Unix(0, 0)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				e.Evaluate(ServiceMetrics{Replicas: 2, AvgCPUPercent: 90}, now)
+			}
+		}
+	}()
+
+	for i := 0; i < 200; i++ {
+		maxReplicas := 3 + (i % 5)
+		e.SetPolicy(Policy{MinReplicas: 1, MaxReplicas: maxReplicas, CPUScaleUpPercent: 70, CPUScaleDownPercent: 20})
+
+		got := e.Policy()
+		if got.MaxReplicas < got.MinReplicas {
+			t.Fatalf("leitura inconsistente: min_replicas=%d > max_replicas=%d", got.MinReplicas, got.MaxReplicas)
+		}
+	}
+
+	close(stop)
+	wg.Wait()
+}
+
+// TestEvaluatorSetPolicyAppliesToNextEvaluate confirma que mudar
+// MinReplicas via SetPolicy é visto pela chamada a Evaluate imediatamente
+// seguinte, sem precisar reconstruir o Evaluator -- é isto que torna a
+// policy editável a quente pela API admin.
+func TestEvaluatorSetPolicyAppliesToNextEvaluate(t *testing.T) {
+	e := NewEvaluator(Policy{MinReplicas: 1, MaxReplicas: 5, CPUScaleUpPercent: 70, CPUScaleDownPercent: 20})
+	now := time.Unix(0, 0)
+
+	if d := e.Evaluate(ServiceMetrics{Replicas: 1, AvgCPUPercent: 0}, now); d.Action != NoAction {
+		t.Fatalf("antes do SetPolicy: action = %v, want NoAction (replicas já no mínimo de 1) (reason: %s)", d.Action, d.Reason)
+	}
+
+	e.SetPolicy(Policy{MinReplicas: 3, MaxReplicas: 5, CPUScaleUpPercent: 70, CPUScaleDownPercent: 20})
+
+	d := e.Evaluate(ServiceMetrics{Replicas: 1, AvgCPUPercent: 0}, now)
+	if d.Action != ScaleUp || d.Delta != 1 {
+		t.Fatalf("após SetPolicy: action = %v delta = %d, want ScaleUp/1 (novo mínimo de 3) (reason: %s)", d.Action, d.Delta, d.Reason)
 	}
 }

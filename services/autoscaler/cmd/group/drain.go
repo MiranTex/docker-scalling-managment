@@ -45,6 +45,16 @@ func (d *drainSet) len() int {
 	return len(d.ids)
 }
 
+// clear esvazia o conjunto -- usado por restartGroup depois de
+// terminateAllReplicas: os containers que este set rastreava já não
+// existem, e mantê-los aqui só acumularia entradas nunca mais referenciadas
+// por um reconcile futuro.
+func (d *drainSet) clear() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.ids = make(map[string]struct{})
+}
+
 // excludeDraining devolve members sem os containers que já estão em
 // drenagem — usados para não escalar para baixo o mesmo container duas
 // vezes e para não oferecê-lo mais como backend do load balancer.

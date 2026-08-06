@@ -6,6 +6,7 @@ package scaler
 
 import (
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -128,6 +129,12 @@ func Evaluate(policy Policy, metrics ServiceMetrics) Decision {
 // histerese (limiares separados), dependem do histórico de avaliações e por
 // isso não cabem numa função pura.
 type Evaluator struct {
+	// mu protege policy e o estado de ticks/cooldown abaixo: Evaluate roda
+	// no reconcile loop, enquanto Policy/SetPolicy agora também podem ser
+	// chamados a partir da API admin (goroutine HTTP separada) para permitir
+	// edição a quente da policy sem reiniciar o processo.
+	mu sync.RWMutex
+
 	policy Policy
 
 	consecutiveUp   int
@@ -142,11 +149,32 @@ func NewEvaluator(policy Policy) *Evaluator {
 	return &Evaluator{policy: policy}
 }
 
+// Policy devolve a policy em vigor neste momento.
+func (e *Evaluator) Policy() Policy {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.policy
+}
+
+// SetPolicy substitui a policy em vigor, aplicada já na próxima chamada a
+// Evaluate. Deliberadamente não reseta consecutiveUp/consecutiveDown/
+// lastAction: uma sequência de ticks já contada ou um cooldown já em
+// andamento continuam válidos sob os novos limiares -- mudar um threshold a
+// meio de uma janela não deveria descartar o progresso já observado.
+func (e *Evaluator) SetPolicy(p Policy) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.policy = p
+}
+
 // Evaluate aplica a policy às métricas atuais, mas só devolve uma ação de
 // scale up/down depois que ela se repetir por SustainedTicks avaliações
 // consecutivas e o Cooldown desde a última ação já tiver passado. Nos
 // demais casos devolve NoAction com o motivo do bloqueio.
 func (e *Evaluator) Evaluate(metrics ServiceMetrics, now time.Time) Decision {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
 	raw := Evaluate(e.policy, metrics)
 
 	if raw.Action == NoAction {
