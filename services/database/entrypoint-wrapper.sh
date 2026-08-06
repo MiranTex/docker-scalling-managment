@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
-# ENTRYPOINT desta imagem -- substitui o entrypoint.sh oficial do Postgres
-# (que continuamos a chamar no fim, via `exec`, pra não perder nenhum
-# comportamento de arranque do image original: criação do PGDATA na
-# primeira vez, /docker-entrypoint-initdb.d, etc).
+# ENTRYPOINT desta imagem. Corre como PID 1 do container, mas só até ao
+# fim deste script: a partir do `exec dbadmin` no fim, é o dbadmin quem
+# passa a ser o PID 1 (ver services/database/dbadmin) -- ele é quem
+# efetivamente arranca o Postgres (como seu processo FILHO, via
+# docker-entrypoint.sh) e o entrega o controlo. Isto existe por causa do
+# PITR: dbadmin precisa conseguir parar/arrancar o Postgres outra vez sem
+# derrubar o container inteiro, o que só é possível se o Postgres NÃO for
+# o PID 1.
 #
-# Corre como PID 1 do container. Faz 4 coisas ANTES de entregar o
-# controlo ao Postgres:
+# Este script faz 4 coisas ANTES de entregar o controlo ao dbadmin:
 #   1. gera /etc/pgbackrest/pgbackrest.conf a partir do template +
 #      variáveis de ambiente (é aqui que "storage do backup trocável"
 #      vira realidade -- ver bloco REPO1 abaixo)
@@ -15,9 +18,6 @@
 #      arranca o cron em background
 #   4. dispara ensure-stanza.sh em background (não bloqueia o boot --
 #      ele mesmo espera o Postgres responder antes de agir)
-#
-# Só DEPOIS disso é que fazemos exec do entrypoint real do Postgres, já
-# com os -c extra que ligam o WAL archiving pro pgBackRest.
 set -euo pipefail
 
 : "${PGBACKREST_STANZA:=shared}"
@@ -52,19 +52,17 @@ cron
 # script). Rodar em background aqui evita atrasar o boot do container.
 PGBACKREST_STANZA="$PGBACKREST_STANZA" ensure-stanza.sh &
 
-# A partir daqui, quem manda é o entrypoint oficial do Postgres. Os -c
-# extra ligam o WAL continuamente para o pgBackRest (arquivamento
-# contínuo é o que torna PITR possível -- sem isto, pgBackRest só teria
-# os backups full/incr, sem conseguir restaurar para um instante entre
-# dois backups).
-# "$@" vem do CMD da imagem (["postgres"], ver Dockerfile) -- vai
-# PRIMEIRO, e os -c extra depois, porque o binário postgres só aceita
-# -c/outras opções depois do comando "postgres" em si; repetir "postgres"
-# de novo no fim (como uma versão anterior deste script fazia) faz o
-# binário tratá-lo como um argumento posicional inválido.
-exec docker-entrypoint.sh "$@" \
-  -c archive_mode=on \
-  -c "archive_command=pgbackrest --stanza=${PGBACKREST_STANZA} archive-push %p" \
-  -c wal_level=replica \
-  -c max_wal_senders=3 \
-  -c archive_timeout=60
+# --- dbadmin: PID 1 a partir daqui -----------------------------------
+# dbadmin é quem arranca o Postgres de verdade (como seu processo
+# filho, com os -c que ligam o WAL archiving pro pgBackRest -- ver
+# cmd/dbadmin/main.go, postgresArgs) e expõe a API interna de
+# administração (estado, backups, PITR) usada pelo portal. "$@" vem do
+# CMD da imagem (["postgres"], ver Dockerfile) -- dbadmin repassa isto a
+# docker-entrypoint.sh, exatamente como este script fazia antes
+# diretamente.
+: "${DBADMIN_LISTEN_ADDR:=:8091}"
+DBADMIN_DATABASE_URL="postgres://${POSTGRES_USER:-app}:${POSTGRES_PASSWORD}@localhost:5432/${POSTGRES_DB:-app}?sslmode=disable"
+echo "[entrypoint-wrapper] entregando controlo ao dbadmin (${DBADMIN_LISTEN_ADDR}), que arranca o Postgres"
+export DBADMIN_LISTEN_ADDR
+export DBADMIN_DATABASE_URL
+exec dbadmin "$@"

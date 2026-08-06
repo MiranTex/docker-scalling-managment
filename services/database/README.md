@@ -13,11 +13,17 @@ cliente nenhum na tua máquina.
 - Imagem custom (`Dockerfile`) = Postgres oficial + `pgbackrest` + `cron`
   no mesmo container. `entrypoint-wrapper.sh` roda antes do Postgres:
   gera a config do pgBackRest a partir de variáveis de ambiente, agenda
-  os backups no cron, e só depois entrega o controlo ao
+  os backups no cron, e só depois entrega o controlo ao `dbadmin`
+  (ver abaixo), que é quem efetivamente arranca o
   `docker-entrypoint.sh postgres` original, já com `-c archive_command=...`
   ligado -- é isso que arquiva o WAL continuamente e torna PITR possível
   (sem arquivamento contínuo, só dava pra restaurar exatamente no
   instante de um backup, nunca entre dois).
+- O Postgres NÃO é o PID 1 deste container -- é o `dbadmin` (ver
+  "API de administração" abaixo), que o arranca como seu processo filho.
+  É o que permite ao `dbadmin` parar e voltar a arrancar o Postgres (para
+  um PITR disparado pela API) sem derrubar o container inteiro a meio da
+  operação.
 - `ensure-stanza.sh` corre em background no arranque: espera o Postgres
   responder e cria a stanza do pgBackRest se ainda não existir (idempotente
   -- não recria numa reinicialização normal do container).
@@ -41,6 +47,45 @@ cliente nenhum na tua máquina.
 | `PGBACKREST_PROCESS_MAX` | `1` | Paralelismo do backup/restore. Sobe se tiveres CPU sobrando. |
 | `BACKUP_SCHEDULE_FULL` | `0 2 * * 0` | Cron (UTC) do backup full -- default domingo 02:00. |
 | `BACKUP_SCHEDULE_INCR` | `0 2 * * 1-6` | Cron (UTC) do backup incremental -- default todo dia menos domingo, 02:00. |
+| `DBADMIN_LISTEN_ADDR` | `:8091` | Porta interna da API de administração (`dbadmin`, ver abaixo). Nunca publique esta porta no host em produção. |
+| `AUTH_SERVICE_URL` | `http://localhost:8081` | Onde o `dbadmin` busca as chaves públicas (JWKS) para validar quem chama a API. |
+| `AUTH_ISSUER` / `AUTH_AUDIENCE` | `auth-service` / `base-stack` | Têm de bater exatamente com os mesmos valores configurados no `services/auth` que emite os tokens. |
+
+## API de administração (dbadmin)
+
+`dbadmin` (ver `dbadmin/`) é o PID 1 deste container -- expõe uma API
+HTTP interna para o portal gerir esta base de dados sem precisar de
+`docker exec`: estado do Postgres (versão, tamanho, ligações), histórico
+de backups, disparar um backup manual, e PITR (parar o Postgres, restaurar
+via pgBackRest, e arrancá-lo de novo em recovery pausado à espera de
+confirmação). Protegida por access token do `services/auth` — só aceita
+chamadas cuja claim `role` seja `infra-admin` (ver
+`dbadmin/internal/httpapi`). Comandos de manutenção (VACUUM, terminar
+ligações, ...) ficam para uma fase seguinte.
+
+```sh
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8091/v1/status
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8091/v1/backups
+curl -X POST -H "Authorization: Bearer $TOKEN" -d '{"type":"full"}' http://localhost:8091/v1/backups
+
+# PITR -- ver aviso em "Backups e PITR" abaixo, isto é tão destrutivo
+# quanto o restore-pitr.sh manual, só que sem o prompt interativo (a
+# confirmação acontece na UI do portal antes deste pedido existir).
+curl -X POST -H "Authorization: Bearer $TOKEN" \
+  -d '{"type":"time","target":"2026-08-04 10:00:00"}' \
+  http://localhost:8091/v1/restore
+# {"id":"restore-1","status":"running",...}
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8091/v1/restore/jobs/restore-1
+# depois de "status":"awaiting_confirmation", inspeciona os dados e só
+# depois confirma (isto promove -- ver aviso sobre timeline nova abaixo):
+curl -X POST -H "Authorization: Bearer $TOKEN" http://localhost:8091/v1/restore/jobs/restore-1/confirm
+```
+
+Não há endpoint de "cancelar" um restore a meio -- uma vez que
+`pgbackrest restore` já reescreveu o PGDATA, a única forma de "desistir"
+é fazer outro restore, não existe um desfazer seguro nesse ponto.
+
+No portal, isto aparece em `/admin/database` (ver `services/portal`).
 
 ## Subir
 

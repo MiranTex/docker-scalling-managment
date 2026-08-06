@@ -20,6 +20,11 @@ export default function Nav({ email, role }: { email?: string; role?: string }) 
             Utilizadores
           </Link>
         )}
+        {role === "infra-admin" && (
+          <Link href="/admin/database" className={pathname === "/admin/database" ? "active" : ""}>
+            Base de dados
+          </Link>
+        )}
       </div>
       <div className="row">
         {email && <span className="muted">{email}</span>}

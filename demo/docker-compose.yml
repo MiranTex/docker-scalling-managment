@@ -39,40 +39,40 @@ networks:
     name: auth-net
 
 services:
-  group-demo:
-    image: autoscaler-group:latest
-    environment:
-      TARGET_SERVICE: demo
-      BACKEND_PORT: "80"
-      MIN_REPLICAS: "1"
-      MAX_REPLICAS: "5"
-      CPU_SCALE_UP_PERCENT: "50"
-      CPU_SCALE_DOWN_PERCENT: "20"
-      RECONCILE_TICK_SECONDS: "3"
-      LOG_FORMAT: "json"
-      LOG_LEVEL: "debug"
-      METRICS_ADDR: ":9090"
-      # A partir daqui é criada toda réplica nova do serviço "demo",
-      # inclusive a primeira -- não precisa de nenhum container "molde"
-      # bootstrap antes de subir o group.
-      LAUNCH_TEMPLATE_FILE: "/etc/autoscaler/launch-template.json"
-    labels:
-      # É isto que faz o Prometheus da plataforma descobrir este container
-      # sozinho (docker_sd_configs), sem precisar editar prometheus.yml.
-      prometheus.scrape: "true"
-      prometheus.port: "9090"
-    ports:
-      # Proxy (pra você bater requisições reais no serviço "demo").
-      # Usa 8095 no host porque a 8090 já está ocupada por outro projeto teu.
-      - "8095:8090"
-      # /healthz, /readyz, /metrics. Usa 9095 no host pelo mesmo motivo
-      # (9090 já está ocupada por outro projeto teu).
-      - "9095:9090"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - ./launch-template.json:/etc/autoscaler/launch-template.json:ro
-    networks:
-      - observability-net
+  # group-demo:
+  #   image: autoscaler-group:latest
+  #   environment:
+  #     TARGET_SERVICE: demo
+  #     BACKEND_PORT: "80"
+  #     MIN_REPLICAS: "1"
+  #     MAX_REPLICAS: "5"
+  #     CPU_SCALE_UP_PERCENT: "50"
+  #     CPU_SCALE_DOWN_PERCENT: "20"
+  #     RECONCILE_TICK_SECONDS: "3"
+  #     LOG_FORMAT: "json"
+  #     LOG_LEVEL: "debug"
+  #     METRICS_ADDR: ":9090"
+  #     # A partir daqui é criada toda réplica nova do serviço "demo",
+  #     # inclusive a primeira -- não precisa de nenhum container "molde"
+  #     # bootstrap antes de subir o group.
+  #     LAUNCH_TEMPLATE_FILE: "/etc/autoscaler/launch-template.json"
+  #   labels:
+  #     # É isto que faz o Prometheus da plataforma descobrir este container
+  #     # sozinho (docker_sd_configs), sem precisar editar prometheus.yml.
+  #     prometheus.scrape: "true"
+  #     prometheus.port: "9090"
+  #   ports:
+  #     # Proxy (pra você bater requisições reais no serviço "demo").
+  #     # Usa 8095 no host porque a 8090 já está ocupada por outro projeto teu.
+  #     - "8095:8090"
+  #     # /healthz, /readyz, /metrics. Usa 9095 no host pelo mesmo motivo
+  #     # (9090 já está ocupada por outro projeto teu).
+  #     - "9095:9090"
+  #   volumes:
+  #     - /var/run/docker.sock:/var/run/docker.sock
+  #     - ./launch-template.json:/etc/autoscaler/launch-template.json:ro
+  #   networks:
+  #     - observability-net
 
   # Postgres partilhado (services/database) -- substitui o
   # `postgres:16-alpine` ad-hoc que este demo subia antes só pro auth.
@@ -86,6 +86,16 @@ services:
       POSTGRES_USER: app
       POSTGRES_PASSWORD: app # dev only -- ver services/database/README.md
       PGBACKREST_STANZA: demo
+      # dbadmin (API de administração desta BD, ver
+      # services/database/README.md) valida tokens do auth service via
+      # JWKS -- por isso ele fala com group-authd, não com o Postgres
+      # diretamente, para saber quem está autorizado a chamá-lo.
+      AUTH_SERVICE_URL: "http://group-authd:8090"
+      # Têm de bater exatamente com o AUTH_ISSUER/AUTH_AUDIENCE deste demo
+      # (ver launch-template.auth.json) -- senão todo token é rejeitado
+      # por issuer inesperado, mesmo com assinatura e role corretas.
+      AUTH_ISSUER: "auth.base-stack.local"
+      AUTH_AUDIENCE: "base-stack"
     volumes:
       - demo-database-data:/var/lib/postgresql/data
       - demo-database-backup-repo:/var/lib/pgbackrest
@@ -179,12 +189,18 @@ services:
       # Aponta pro PROXY do group-authd, não direto pra uma réplica --
       # é o group quem passa a ser o endpoint estável do auth service.
       AUTH_SERVICE_URL: "http://group-authd:8090"
+      # dbadmin corre dentro do próprio container "database" (ver
+      # services/database/README.md, "API de administração") -- não tem
+      # porta publicada no host de propósito, só acessível dentro da
+      # rede auth-net.
+      DBADMIN_SERVICE_URL: "http://database:8091"
     ports:
       # 3100 no host, não 3000 -- o Grafana da plataforma de observabilidade
       # já usa 3000 (ver services/monitoring).
       - "3100:3000"
     depends_on:
       - group-authd
+      - database
     mem_limit: 256m
     cpus: 0.5
     networks:

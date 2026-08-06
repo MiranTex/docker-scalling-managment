@@ -4,6 +4,17 @@
 # produção, mas exige protocolo remoto SSH/TLS; fica pra uma fase
 # futura).
 #
+# Stage separado só para compilar o dbadmin (API interna de
+# administração -- estado, backups, e nas próximas fases PITR/manutenção,
+# ver dbadmin/README) -- assim o binário final não carrega toolchain Go
+# nenhuma, só o binário estático já compilado.
+FROM golang:1.22-bookworm AS dbadmin-build
+WORKDIR /src
+COPY dbadmin/go.mod dbadmin/go.sum ./
+RUN go mod download
+COPY dbadmin/ ./
+RUN CGO_ENABLED=0 go build -o /out/dbadmin ./cmd/dbadmin
+
 # Base é `bookworm` (Debian), não `alpine`: o pacote `pgbackrest` oficial
 # do PGDG (apt.postgresql.org, já vem pré-configurado nesta imagem) só
 # publica pacotes .deb -- é o caminho testado e documentado pelo próprio
@@ -21,8 +32,10 @@ RUN apt-get update \
 COPY config/pgbackrest.conf.template /etc/pgbackrest/pgbackrest.conf.template
 COPY scripts/generate-pgbackrest-conf.sh scripts/ensure-stanza.sh scripts/run-backup.sh scripts/restore-pitr.sh /usr/local/bin/
 COPY entrypoint-wrapper.sh /usr/local/bin/entrypoint-wrapper.sh
+COPY --from=dbadmin-build /out/dbadmin /usr/local/bin/dbadmin
 RUN chmod +x /usr/local/bin/entrypoint-wrapper.sh /usr/local/bin/generate-pgbackrest-conf.sh \
-      /usr/local/bin/ensure-stanza.sh /usr/local/bin/run-backup.sh /usr/local/bin/restore-pitr.sh
+      /usr/local/bin/ensure-stanza.sh /usr/local/bin/run-backup.sh /usr/local/bin/restore-pitr.sh \
+      /usr/local/bin/dbadmin
 
 ENTRYPOINT ["entrypoint-wrapper.sh"]
 CMD ["postgres"]
