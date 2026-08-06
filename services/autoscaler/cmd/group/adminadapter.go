@@ -14,6 +14,7 @@ import (
 	"autoscaler/internal/dockerclient"
 	"autoscaler/internal/loadbalancer"
 	"autoscaler/internal/scaler"
+	"autoscaler/internal/secretsclient"
 )
 
 // groupAdapter implementa adminapi.GroupControl fechando sobre exatamente
@@ -30,6 +31,7 @@ type groupAdapter struct {
 	draining  *drainSet
 	metrics   *groupMetrics
 	restartMu *sync.Mutex
+	secrets   *secretsclient.Client
 	startedAt time.Time
 
 	snapMu         sync.RWMutex
@@ -39,7 +41,7 @@ type groupAdapter struct {
 	lastActionAt   time.Time
 }
 
-func newGroupAdapter(cfg config, client *dockerclient.Client, logger *slog.Logger, balancer *loadbalancer.RoundRobin, evaluator *scaler.Evaluator, draining *drainSet, metrics *groupMetrics, restartMu *sync.Mutex) *groupAdapter {
+func newGroupAdapter(cfg config, client *dockerclient.Client, logger *slog.Logger, balancer *loadbalancer.RoundRobin, evaluator *scaler.Evaluator, draining *drainSet, metrics *groupMetrics, restartMu *sync.Mutex, secrets *secretsclient.Client) *groupAdapter {
 	return &groupAdapter{
 		cfg:       cfg,
 		client:    client,
@@ -49,6 +51,7 @@ func newGroupAdapter(cfg config, client *dockerclient.Client, logger *slog.Logge
 		draining:  draining,
 		metrics:   metrics,
 		restartMu: restartMu,
+		secrets:   secrets,
 		startedAt: time.Now(),
 	}
 }
@@ -74,7 +77,7 @@ func (a *groupAdapter) SetPolicy(p scaler.Policy) (scaler.Policy, error) {
 }
 
 func (a *groupAdapter) Restart(ctx context.Context) error {
-	restartGroup(ctx, a.cfg, a.client, a.logger, a.balancer, a.evaluator, a.draining, a.metrics, a.restartMu, a)
+	restartGroup(ctx, a.cfg, a.client, a.logger, a.balancer, a.evaluator, a.draining, a.metrics, a.restartMu, a, a.secrets)
 	return nil
 }
 

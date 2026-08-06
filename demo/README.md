@@ -134,6 +134,65 @@ primeira réplica ter subido pelo menos uma vez), subir `MAX_REPLICAS`
 (hoje `3`) e deixar o autoscaler escalar por CPU é seguro — todas as
 réplicas novas só leem a chave já existente.
 
+## Segredos (secretsadmin) e a conta de serviço do autoscaler
+
+[services/secretsadmin](../services/secretsadmin) guarda valores cifrados
+(AES-256-GCM) referenciados por nome dentro do `env` de um launch template
+via `${secret:NOME}` — ex: em vez de
+`"AUTH_DATABASE_URL=postgres://auth:auth@database:5432/app"` (senha em
+claro no ficheiro), `"AUTH_DATABASE_URL=postgres://auth:${secret:auth-db-password}@database:5432/app"`.
+Humanos (role `infra-admin`, via `/admin/secrets` no portal) gerem
+nomes/valores mas nunca conseguem voltar a ler um valor depois de o
+gravarem; só uma conta de MÁQUINA (role `service`) consegue resolver um
+nome para o valor em claro (`POST /v1/secrets/resolve`), e só o
+`cmd/group` do autoscaler faz isso, na altura de cada scale up (ver
+`services/autoscaler/internal/secretsclient`).
+
+1. Construa e suba o secretsadmin:
+   ```sh
+   docker build -t secretsadmin:latest services/secretsadmin
+   docker compose -f demo/docker-compose.yml up -d secretsadmin
+   ```
+2. Bootstrap da conta de serviço (uma vez só) — nenhum destes passos tem
+   UI ainda, é `curl` direto contra o auth service:
+   ```sh
+   # 1. Regista a conta (role nasce "user")
+   curl -X POST http://localhost:8081/v1/register \
+     -H "Content-Type: application/json" \
+     -d '{"email":"svc-group-authd@service.test","password":"não-vai-ser-usada"}'
+   # 2. Promove a "service" (precisa de um super-admin já existente --
+   #    ver "promoção a super-admin" mais acima)
+   curl -X PATCH http://localhost:8081/v1/admin/users/<ID>/role \
+     -H "Authorization: Bearer <TOKEN_SUPER_ADMIN>" -H "Content-Type: application/json" \
+     -d '{"role":"service"}'
+   # 3. Emite o par access+refresh token (só um super-admin pode)
+   curl -X POST http://localhost:8081/v1/admin/users/<ID>/tokens \
+     -H "Authorization: Bearer <TOKEN_SUPER_ADMIN>"
+   ```
+   Guarda o `refresh_token` da resposta -- é o `SECRETS_REFRESH_TOKEN` do
+   `group-authd` (ou de qualquer outro group que precise de segredos):
+   ```sh
+   export GROUP_AUTHD_SECRETS_REFRESH_TOKEN="<refresh_token>"
+   docker compose -f demo/docker-compose.yml up -d group-authd
+   ```
+3. Cria um segredo via portal (`/admin/secrets`, role `infra-admin`) e
+   referencia-o em `${secret:NOME}` dentro do `env` de um launch template.
+
+### Cuidado real: não referencies segredos no launch template do PRÓPRIO auth
+
+Isto foi reproduzido manualmente durante o desenvolvimento desta feature:
+o `secretsclient` do `group-authd` autentica-se contra `AUTH_SERVICE_URL`,
+que aqui aponta para o **próprio** `group-authd` (é ele quem serve o auth
+service que gere). Se `launch-template.auth.json` referenciar
+`${secret:...}` e as réplicas do `auth` caírem a zero (ex: depois de um
+`POST /v1/restart`, que termina TODAS as réplicas antes de recriar),
+resolver o segredo passa a exigir um access token válido -- que exige
+chamar `.../v1/token/refresh` contra um auth service que não tem nenhuma
+réplica de pé para responder. Deadlock: a réplica nunca sobe, porque
+resolvê-la depende de ela já estar de pé. Usa `${secret:...}` nos launch
+templates de OUTROS serviços (cujo `AUTH_SERVICE_URL` aponta a um auth
+service independente, já de pé) — não no do próprio `auth`.
+
 ## Derrubar
 
 ```sh

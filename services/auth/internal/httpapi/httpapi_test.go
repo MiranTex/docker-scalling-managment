@@ -654,6 +654,71 @@ func TestSuperAdminCanCreateListAndPromoteUsers(t *testing.T) {
 	}
 }
 
+func TestMintServiceTokenIssuesTokenPairForServiceAccount(t *testing.T) {
+	deps := newTestDeps()
+	mux := deps.handler.Routes()
+	superToken := loginAndGetAccessTokenWithRole(t, mux, deps.users, "root@example.test", store.RoleSuperAdmin)
+
+	createRec := doAuthedRequest(t, mux, http.MethodPost, "/v1/admin/users", superToken,
+		createUserRequest{Email: "svc-group-authd@service.test", Password: "não-vai-ser-usada-1", Role: store.RoleService})
+	if createRec.Code != http.StatusCreated {
+		t.Fatalf("create: status = %d, want 201, body=%s", createRec.Code, createRec.Body.String())
+	}
+	created := decodeBody[userListItem](t, createRec)
+
+	mintRec := doAuthedRequest(t, mux, http.MethodPost, "/v1/admin/users/"+created.ID+"/tokens", superToken, nil)
+	if mintRec.Code != http.StatusCreated {
+		t.Fatalf("mint: status = %d, want 201, body=%s", mintRec.Code, mintRec.Body.String())
+	}
+	pair := decodeBody[tokenPair](t, mintRec)
+	if pair.AccessToken == "" || pair.RefreshToken == "" {
+		t.Fatalf("tokens vazios: %+v", pair)
+	}
+
+	// O refresh token emitido tem de funcionar como qualquer outro.
+	refreshRec := doRequest(t, mux, http.MethodPost, "/v1/token/refresh", refreshRequest{RefreshToken: pair.RefreshToken})
+	if refreshRec.Code != http.StatusOK {
+		t.Fatalf("refresh do token emitido: status = %d, want 200, body=%s", refreshRec.Code, refreshRec.Body.String())
+	}
+}
+
+func TestMintServiceTokenRejectsNonServiceAccount(t *testing.T) {
+	deps := newTestDeps()
+	mux := deps.handler.Routes()
+	superToken := loginAndGetAccessTokenWithRole(t, mux, deps.users, "root@example.test", store.RoleSuperAdmin)
+
+	createRec := doAuthedRequest(t, mux, http.MethodPost, "/v1/admin/users", superToken,
+		createUserRequest{Email: "humana@example.test", Password: "senha-forte", Role: store.RoleInfraAdmin})
+	created := decodeBody[userListItem](t, createRec)
+
+	mintRec := doAuthedRequest(t, mux, http.MethodPost, "/v1/admin/users/"+created.ID+"/tokens", superToken, nil)
+	if mintRec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 (conta não é \"service\")", mintRec.Code)
+	}
+}
+
+func TestMintServiceTokenRejectsUnknownID(t *testing.T) {
+	deps := newTestDeps()
+	mux := deps.handler.Routes()
+	superToken := loginAndGetAccessTokenWithRole(t, mux, deps.users, "root@example.test", store.RoleSuperAdmin)
+
+	mintRec := doAuthedRequest(t, mux, http.MethodPost, "/v1/admin/users/00000000-0000-0000-0000-000000000000/tokens", superToken, nil)
+	if mintRec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", mintRec.Code)
+	}
+}
+
+func TestMintServiceTokenRejectsNonSuperAdmin(t *testing.T) {
+	deps := newTestDeps()
+	mux := deps.handler.Routes()
+	userToken := loginAndGetAccessToken(t, mux, "ana@example.test")
+
+	rec := doAuthedRequest(t, mux, http.MethodPost, "/v1/admin/users/whatever/tokens", userToken, nil)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+}
+
 func TestCreateUserRejectsInvalidRole(t *testing.T) {
 	deps := newTestDeps()
 	mux := deps.handler.Routes()

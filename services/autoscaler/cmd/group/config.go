@@ -72,6 +72,13 @@ type config struct {
 	// jwksRefresh controla de quanto em quanto tempo o cache de chaves
 	// públicas do auth service é revalidado (ver internal/jwtverify).
 	jwksRefresh time.Duration
+
+	// secretsAdminServiceURL/secretsRefreshToken configuram a resolução
+	// de referências ${secret:NOME} dentro do "env" do launch template
+	// (ver internal/secretsclient) -- ambos podem ficar vazios se o
+	// template não usa nenhuma referência desse tipo.
+	secretsAdminServiceURL string
+	secretsRefreshToken    string
 }
 
 // loadConfig lê a configuração das variáveis de ambiente, aplicando defaults
@@ -105,6 +112,9 @@ func loadConfig() config {
 		authIssuer:     envString("AUTH_ISSUER", "auth-service"),
 		authAudience:   envString("AUTH_AUDIENCE", "base-stack"),
 		jwksRefresh:    envSeconds("GROUP_JWKS_REFRESH_SECONDS", 300),
+
+		secretsAdminServiceURL: os.Getenv("SECRETSADMIN_SERVICE_URL"),
+		secretsRefreshToken:    os.Getenv("SECRETS_REFRESH_TOKEN"),
 	}
 
 	if cfg.targetService == "" {

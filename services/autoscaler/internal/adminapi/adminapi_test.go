@@ -90,6 +90,7 @@ func newTestHandler(group GroupControl) (*Handler, *fakeVerifier) {
 	verifier := &fakeVerifier{tokens: map[string]jwtverify.Claims{
 		"infra-admin-token": {Subject: "operator@example.com", Role: RoleInfraAdmin},
 		"user-token":        {Subject: "user@example.com", Role: "user"},
+		"super-admin-token": {Subject: "root@example.com", Role: RoleSuperAdmin},
 	}}
 	auditLogger := audit.NewLogger(slog.Default())
 	return NewHandler(verifier, group, auditLogger), verifier
@@ -127,6 +128,20 @@ func TestRequireRoleRejectsMissingToken(t *testing.T) {
 		if rec.Code != http.StatusUnauthorized {
 			t.Errorf("%s %s sem token: status = %d, want 401", route.method, route.path, rec.Code)
 		}
+	}
+}
+
+// TestSuperAdminBypassesRequireRole confirma o bypass universal (ver
+// services/auth/internal/store/role.go): super-admin acede aos endpoints
+// desta API mesmo eles exigindo explicitamente RoleInfraAdmin.
+func TestSuperAdminBypassesRequireRole(t *testing.T) {
+	h, _ := newTestHandler(newFakeGroupControl())
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	rec := doRequest(t, mux, "GET", "/v1/status", "super-admin-token", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
 	}
 }
 

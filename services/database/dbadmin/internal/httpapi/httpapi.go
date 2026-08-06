@@ -20,7 +20,13 @@ import (
 	"dbadmin/internal/restorejob"
 )
 
-// RoleInfraAdmin é a única role aceite pelos endpoints administrativos --
+// RoleSuperAdmin funciona como bypass universal em todo requireRole desta
+// API -- ver services/auth/internal/store/role.go, onde esse
+// comportamento é o mesmo em qualquer serviço de recursos.
+const RoleSuperAdmin = "super-admin"
+
+// RoleInfraAdmin é a única role, além de super-admin, aceite pelos
+// endpoints administrativos --
 // ver services/auth/internal/store/role.go, onde já existe explicitamente
 // para "gestão de infraestrutura (ex: autoscaler)". Esta API de
 // administração da base de dados é mais um consumidor dessa mesma role,
@@ -95,7 +101,7 @@ func (h *Handler) requireRole(role string, next func(w http.ResponseWriter, r *h
 			writeError(w, http.StatusUnauthorized, "invalid_token", "access token inválido ou expirado")
 			return
 		}
-		if claims.Role != role {
+		if claims.Role != role && claims.Role != RoleSuperAdmin {
 			writeError(w, http.StatusForbidden, "forbidden", "esta ação exige a role "+role)
 			return
 		}

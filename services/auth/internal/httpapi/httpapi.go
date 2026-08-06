@@ -136,6 +136,7 @@ func (h *Handler) Routes() *http.ServeMux {
 	mux.HandleFunc("GET /v1/admin/users", h.requireRole(store.RoleSuperAdmin, h.handleListUsers))
 	mux.HandleFunc("POST /v1/admin/users", h.requireRole(store.RoleSuperAdmin, h.handleCreateUser))
 	mux.HandleFunc("PATCH /v1/admin/users/{id}/role", h.requireRole(store.RoleSuperAdmin, h.handleUpdateUserRole))
+	mux.HandleFunc("POST /v1/admin/users/{id}/tokens", h.requireRole(store.RoleSuperAdmin, h.handleMintServiceToken))
 	// Introspecção não exige um access token do chamador -- é chamado por
 	// OUTRO serviço, de posse só da API key que quer validar, não de uma
 	// sessão de utilizador. Ver limitação na documentação: hoje qualquer
@@ -200,7 +201,10 @@ func (h *Handler) requireRole(role string, next func(w http.ResponseWriter, r *h
 			writeError(w, http.StatusUnauthorized, "invalid_token", "access token inválido ou expirado")
 			return
 		}
-		if claims.Role != role {
+		// super-admin passa em qualquer requireRole, independente da role
+		// pedida -- é a única conta com esse bypass; todas as outras
+		// continuam exigindo a role exata (ver internal/store/role.go).
+		if claims.Role != role && claims.Role != store.RoleSuperAdmin {
 			writeError(w, http.StatusForbidden, "forbidden", "esta ação exige a role "+role)
 			return
 		}
@@ -567,6 +571,45 @@ func (h *Handler) handleUpdateUserRole(w http.ResponseWriter, r *http.Request, _
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleMintServiceToken emite um par access+refresh token para uma conta
+// de MÁQUINA (role "service", ver internal/store/role.go) já existente --
+// é o único caminho de emitir tokens para essas contas, já que
+// password_credentials nunca existe para elas (não fazem login por
+// email/password via POST /v1/login). Reaproveita issueTokenPair, o mesmo
+// código usado por login/refresh: quem verificar o token resultante não
+// consegue distinguir "veio de login" de "veio daqui", só a claim role
+// (que já era "service" desde a criação da conta, ver handleCreateUser).
+//
+// Cada chamada gera um par NOVO (nova family_id no refresh -- ver
+// internal/refresh); não invalida pares emitidos antes. Rodar o
+// refresh token de uma conta de serviço é chamar isto de novo e
+// atualizar onde o token antigo estava configurado (ex: env var do
+// container que o usa) -- não há endpoint de revogação dedicado além do
+// POST /v1/logout genérico, que também serve para isso.
+func (h *Handler) handleMintServiceToken(w http.ResponseWriter, r *http.Request, _ string) {
+	id := r.PathValue("id")
+	user, found, err := h.users.FindUserByID(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "erro procurando utilizador")
+		return
+	}
+	if !found {
+		writeError(w, http.StatusNotFound, "not_found", "utilizador não encontrado")
+		return
+	}
+	if user.Role != store.RoleService {
+		writeError(w, http.StatusConflict, "not_a_service_account", "esta conta não tem a role \"service\" -- emitir tokens administrativamente assim é só para contas de máquina")
+		return
+	}
+
+	pair, err := h.issueTokenPair(r.Context(), user.ID, user.Role)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "erro emitindo tokens")
+		return
+	}
+	writeJSON(w, http.StatusCreated, pair)
 }
 
 type createAPIKeyRequest struct {

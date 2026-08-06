@@ -26,6 +26,11 @@ import (
 // consumidor dessa mesma role, não um novo conceito de autorização.
 const RoleInfraAdmin = "infra-admin"
 
+// RoleSuperAdmin funciona como bypass universal em todo requireRole desta
+// API -- ver services/auth/internal/store/role.go, onde esse
+// comportamento é o mesmo em qualquer serviço de recursos.
+const RoleSuperAdmin = "super-admin"
+
 // TokenVerifier valida o access token do auth service -- implementado por
 // *jwtverify.Verifier.
 type TokenVerifier interface {
@@ -210,7 +215,7 @@ func (h *Handler) requireRole(role string, next func(w http.ResponseWriter, r *h
 			writeError(w, http.StatusUnauthorized, "invalid_token", "access token inválido ou expirado")
 			return
 		}
-		if claims.Role != role {
+		if claims.Role != role && claims.Role != RoleSuperAdmin {
 			writeError(w, http.StatusForbidden, "forbidden", "esta ação exige a role "+role)
 			return
 		}

@@ -29,6 +29,7 @@ import (
 	"autoscaler/internal/jwtverify"
 	"autoscaler/internal/loadbalancer"
 	"autoscaler/internal/scaler"
+	"autoscaler/internal/secretsclient"
 
 	"github.com/joho/godotenv"
 )
@@ -53,11 +54,12 @@ func main() {
 	metrics := newGroupMetrics()
 	restartMu := &sync.Mutex{}
 
-	adapter := newGroupAdapter(cfg, client, logger, balancer, evaluator, draining, metrics, restartMu)
+	secrets := secretsclient.New(cfg.secretsAdminServiceURL, cfg.authServiceURL, cfg.secretsRefreshToken)
+	adapter := newGroupAdapter(cfg, client, logger, balancer, evaluator, draining, metrics, restartMu, secrets)
 	tokens := jwtverify.NewVerifier(cfg.authServiceURL, cfg.authIssuer, cfg.authAudience, cfg.jwksRefresh)
 	adminHandler := adminapi.NewHandler(tokens, adapter, audit.NewLogger(logger))
 
-	go reconcileLoop(ctx, cfg, client, logger, balancer, evaluator, draining, metrics, restartMu, adapter)
+	go reconcileLoop(ctx, cfg, client, logger, balancer, evaluator, draining, metrics, restartMu, adapter, secrets)
 
 	srv := &http.Server{
 		Addr:    cfg.listenAddr,
@@ -159,12 +161,12 @@ func validateLaunchTemplateImage(ctx context.Context, client *dockerclient.Clien
 // reconcileLoop é o coração do grupo: a cada tick, lê o estado atual dos
 // containers do serviço UMA vez e usa essa mesma leitura tanto pra decidir
 // se escala quanto para atualizar a lista de backends do load balancer.
-func reconcileLoop(ctx context.Context, cfg config, client *dockerclient.Client, logger *slog.Logger, balancer *loadbalancer.RoundRobin, evaluator *scaler.Evaluator, draining *drainSet, metrics *groupMetrics, restartMu *sync.Mutex, sink snapshotSink) {
+func reconcileLoop(ctx context.Context, cfg config, client *dockerclient.Client, logger *slog.Logger, balancer *loadbalancer.RoundRobin, evaluator *scaler.Evaluator, draining *drainSet, metrics *groupMetrics, restartMu *sync.Mutex, sink snapshotSink, secrets *secretsclient.Client) {
 	ticker := time.NewTicker(cfg.reconcileTick)
 	defer ticker.Stop()
 
 	for {
-		reconcile(ctx, cfg, client, logger, balancer, evaluator, draining, metrics, restartMu, sink)
+		reconcile(ctx, cfg, client, logger, balancer, evaluator, draining, metrics, restartMu, sink, secrets)
 		select {
 		case <-ticker.C:
 		case <-ctx.Done():
@@ -179,7 +181,7 @@ func reconcileLoop(ctx context.Context, cfg config, client *dockerclient.Client,
 // restart pedido via API admin (ver restart.go), que também usa este mutex
 // em torno de terminateAllReplicas, evitando que um tick recrie uma réplica
 // enquanto o restart ainda está a removê-las (ou vice-versa).
-func reconcile(ctx context.Context, cfg config, client *dockerclient.Client, logger *slog.Logger, balancer *loadbalancer.RoundRobin, evaluator *scaler.Evaluator, draining *drainSet, metrics *groupMetrics, restartMu *sync.Mutex, sink snapshotSink) {
+func reconcile(ctx context.Context, cfg config, client *dockerclient.Client, logger *slog.Logger, balancer *loadbalancer.RoundRobin, evaluator *scaler.Evaluator, draining *drainSet, metrics *groupMetrics, restartMu *sync.Mutex, sink snapshotSink, secrets *secretsclient.Client) {
 	restartMu.Lock()
 	defer restartMu.Unlock()
 
@@ -228,7 +230,7 @@ func reconcile(ctx context.Context, cfg config, client *dockerclient.Client, log
 
 		switch decision.Action {
 		case scaler.ScaleUp:
-			if err := executor.ApplyWithTemplate(ctx, client, decision, cfg.launchTemplate, containers); err != nil {
+			if err := applyScaleUp(ctx, client, decision, cfg.launchTemplate, containers, secrets); err != nil {
 				logger.Error("erro aplicando scale up", "err", err)
 			} else {
 				metrics.scaleActions.WithLabelValues(cfg.targetService, "scale_up").Inc()
@@ -254,6 +256,23 @@ func reconcile(ctx context.Context, cfg config, client *dockerclient.Client, log
 	balancer.SetBackends(backends)
 	logger.Debug("backends atualizados", "healthy", len(backends), "total", len(active))
 	metrics.healthyBackends.WithLabelValues(cfg.targetService).Set(float64(len(backends)))
+}
+
+// applyScaleUp resolve qualquer referência ${secret:NOME} no "env" do
+// launch template (ver internal/secretsclient) antes de criar a réplica --
+// feito aqui, a cada scale up, e não uma vez no arranque, para que
+// atualizar o VALOR de um segredo já existente se reflita na próxima
+// réplica criada sem precisar de restart nenhum (só um segredo novo,
+// referenciado por um launch template que ainda não o usava, exigiria
+// editar o ficheiro + restart -- ver POST /v1/restart).
+func applyScaleUp(ctx context.Context, client *dockerclient.Client, decision scaler.Decision, template executor.LaunchTemplate, members []dockerclient.Container, secrets *secretsclient.Client) error {
+	resolvedEnv, err := secrets.ResolveEnv(ctx, template.Env)
+	if err != nil {
+		return fmt.Errorf("resolvendo segredos do launch template: %w", err)
+	}
+	resolvedTemplate := template
+	resolvedTemplate.Env = resolvedEnv
+	return executor.ApplyWithTemplate(ctx, client, decision, resolvedTemplate, members)
 }
 
 // startDrain escolhe um alvo de scale down entre os containers que ainda
