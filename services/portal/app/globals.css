@@ -45,6 +45,100 @@ body {
   padding: 2rem 1rem;
 }
 
+/* Shell autenticado: sidebar fixa à esquerda + topbar/conteúdo à direita.
+   Só usado dentro de app/(protected) -- login/registo continuam a usar
+   .page sozinho, centrado, sem sidebar nenhuma. */
+.app-shell {
+  min-height: 100vh;
+  display: flex;
+}
+
+.sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  padding: 1.5rem 1rem;
+  background: var(--card);
+  border-right: 1px solid var(--border);
+}
+
+.sidebar-brand {
+  font-weight: 700;
+  font-size: 1rem;
+  padding: 0 0.5rem;
+}
+
+.sidebar nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.sidebar nav a {
+  display: block;
+  color: var(--fg);
+  text-decoration: none;
+  padding: 0.55rem 0.7rem;
+  border-radius: 8px;
+  font-size: 0.9rem;
+}
+
+.sidebar nav a:hover {
+  background: var(--bg);
+}
+
+.sidebar nav a.active {
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-weight: 600;
+}
+
+.app-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-topbar {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.9rem 1.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.app-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 1.5rem;
+  overflow-y: auto;
+}
+
+@media (max-width: 720px) {
+  .app-shell {
+    flex-direction: column;
+  }
+
+  .sidebar {
+    width: 100%;
+    flex-direction: row;
+    align-items: center;
+    overflow-x: auto;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .sidebar nav {
+    flex-direction: row;
+  }
+}
+
 .card {
   width: 100%;
   max-width: 420px;
@@ -144,27 +238,6 @@ button:disabled {
   justify-content: space-between;
   align-items: center;
   gap: 1rem;
-}
-
-nav.topbar {
-  width: 100%;
-  max-width: 720px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 0.5rem 0;
-}
-
-nav.topbar a {
-  color: var(--fg);
-  text-decoration: none;
-  margin-right: 1rem;
-  font-size: 0.9rem;
-}
-
-nav.topbar a.active {
-  font-weight: 600;
-  color: var(--accent);
 }
 
 table {

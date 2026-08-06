@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
-import Nav from "@/components/Nav";
+import Sidebar from "@/components/Sidebar";
+import Topbar from "@/components/Topbar";
 import { decodeJwtPayload } from "@/lib/jwt";
 import { ACCESS_COOKIE, EMAIL_COOKIE } from "@/lib/session";
 
@@ -9,9 +10,12 @@ export default async function ProtectedLayout({ children }: { children: React.Re
   const accessToken = cookieStore.get(ACCESS_COOKIE)?.value;
   const role = accessToken ? (decodeJwtPayload(accessToken)?.role as string | undefined) : undefined;
   return (
-    <main className="page">
-      <Nav email={email} role={role} />
-      {children}
-    </main>
+    <div className="app-shell">
+      <Sidebar role={role} />
+      <div className="app-main">
+        <Topbar email={email} />
+        <div className="app-content">{children}</div>
+      </div>
+    </div>
   );
 }
