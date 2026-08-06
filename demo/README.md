@@ -154,12 +154,17 @@ nome para o valor em claro (`POST /v1/secrets/resolve`), e só o
    docker compose -f demo/docker-compose.yml up -d secretsadmin
    ```
 2. Bootstrap da conta de serviço (uma vez só) — nenhum destes passos tem
-   UI ainda, é `curl` direto contra o auth service:
+   UI ainda, é `curl` direto contra o auth service. Exemplo com
+   `group-demo` (descomenta o serviço `group-demo` em
+   `demo/docker-compose.yml` e adiciona-lhe `AUTH_SERVICE_URL`/
+   `AUTH_ISSUER`/`AUTH_AUDIENCE` a apontar para `group-authd` +
+   `SECRETSADMIN_SERVICE_URL`/`SECRETS_REFRESH_TOKEN`, e a rede
+   `auth-net` -- ver abaixo porquê NÃO usar `group-authd` para isto):
    ```sh
    # 1. Regista a conta (role nasce "user")
    curl -X POST http://localhost:8081/v1/register \
      -H "Content-Type: application/json" \
-     -d '{"email":"svc-group-authd@service.test","password":"não-vai-ser-usada"}'
+     -d '{"email":"svc-group-demo@service.test","password":"não-vai-ser-usada"}'
    # 2. Promove a "service" (precisa de um super-admin já existente --
    #    ver "promoção a super-admin" mais acima)
    curl -X PATCH http://localhost:8081/v1/admin/users/<ID>/role \
@@ -169,14 +174,21 @@ nome para o valor em claro (`POST /v1/secrets/resolve`), e só o
    curl -X POST http://localhost:8081/v1/admin/users/<ID>/tokens \
      -H "Authorization: Bearer <TOKEN_SUPER_ADMIN>"
    ```
-   Guarda o `refresh_token` da resposta -- é o `SECRETS_REFRESH_TOKEN` do
-   `group-authd` (ou de qualquer outro group que precise de segredos):
+   Guarda o `refresh_token` da resposta -- é o `SECRETS_REFRESH_TOKEN` de
+   `group-demo` (ou de qualquer outro group que precise de segredos):
    ```sh
-   export GROUP_AUTHD_SECRETS_REFRESH_TOKEN="<refresh_token>"
-   docker compose -f demo/docker-compose.yml up -d group-authd
+   export GROUP_DEMO_SECRETS_REFRESH_TOKEN="<refresh_token>"
+   docker compose -f demo/docker-compose.yml up -d group-demo
    ```
 3. Cria um segredo via portal (`/admin/secrets`, role `infra-admin`) e
-   referencia-o em `${secret:NOME}` dentro do `env` de um launch template.
+   referencia-o em `${secret:NOME}` dentro do `env` de um launch template
+   (já feito em [launch-template.json](launch-template.json), campo
+   `DEMO_SECRET_VALUE`, referenciando o segredo `auth-db-password` só
+   para ilustrar o mecanismo). Confirma que resolveu de verdade:
+   ```sh
+   docker inspect $(docker ps --filter "label=autoscaler.service=demo" -q) \
+     --format '{{range .Config.Env}}{{println .}}{{end}}' | grep DEMO_SECRET_VALUE
+   ```
 
 ### Cuidado real: não referencies segredos no launch template do PRÓPRIO auth
 
