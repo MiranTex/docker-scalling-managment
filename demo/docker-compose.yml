@@ -18,6 +18,7 @@
 #   docker build -t portal:latest services/portal
 #   docker build -t database-service:latest services/database
 #   docker build -t secretsadmin:latest services/secretsadmin
+#   docker build -t templatesadmin:latest services/templatesadmin
 # Depois suba isto:
 #   docker compose -f demo/docker-compose.yml up -d
 #
@@ -144,6 +145,32 @@ services:
     networks:
       - auth-net
 
+  # Gerador de configuração para novos serviços autoscalados: guarda
+  # "modelos de serviço" (launch template + config de grupo) num
+  # Postgres próprio e devolve, prontos, o launch-template.json e o
+  # bloco YAML do group correspondente -- ver
+  # services/templatesadmin/README.md e demo/README.md, "Criar um novo
+  # serviço autoscalado". NÃO cria containers sozinho (por isso o mount
+  # do docker.sock abaixo é só para listar imagens via GET /v1/images,
+  # nunca para criar/remover nada).
+  templatesadmin:
+    build: ../services/templatesadmin
+    image: templatesadmin:latest
+    environment:
+      TEMPLATESADMIN_DATABASE_URL: "postgres://templatesadmin:templatesadmin@database:5432/app?sslmode=disable"
+      AUTH_SERVICE_URL: "http://group-authd:8090"
+      AUTH_ISSUER: "auth.base-stack.local"
+      AUTH_AUDIENCE: "base-stack"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      database:
+        condition: service_healthy
+    mem_limit: 128m
+    cpus: 0.25
+    networks:
+      - auth-net
+
   # Só para dev: browser de tabelas + SQL ad-hoc contra o Postgres
   # partilhado. Nunca exponha esta porta fora da tua máquina/rede de
   # confiança (Adminer não tem rate-limit nem MFA próprios).
@@ -254,6 +281,9 @@ services:
       # secretsadmin corre dentro da rede auth-net só, sem porta
       # publicada no host, mesmo espírito do DBADMIN_SERVICE_URL acima.
       SECRETSADMIN_SERVICE_URL: "http://secretsadmin:8092"
+      # Idem para templatesadmin -- ver /admin/templates e
+      # demo/README.md, "Criar um novo serviço autoscalado".
+      TEMPLATESADMIN_SERVICE_URL: "http://templatesadmin:8093"
     ports:
       # 3100 no host, não 3000 -- o Grafana da plataforma de observabilidade
       # já usa 3000 (ver services/monitoring).
@@ -262,6 +292,7 @@ services:
       - group-authd
       - database
       - secretsadmin
+      - templatesadmin
     mem_limit: 256m
     cpus: 0.5
     networks:

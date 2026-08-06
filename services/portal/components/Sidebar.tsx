@@ -38,6 +38,11 @@ export default function Sidebar({ role }: { role?: string }) {
             Segredos
           </Link>
         )}
+        {hasInfraAdminAccess(role) && (
+          <Link href="/admin/templates" className={linkClass("/admin/templates")}>
+            Modelos de serviço
+          </Link>
+        )}
       </nav>
     </aside>
   );

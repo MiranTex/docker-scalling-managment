@@ -166,7 +166,8 @@ label {
 }
 
 input,
-select {
+select,
+textarea {
   width: 100%;
   padding: 0.6rem 0.7rem;
   margin-bottom: 1rem;
@@ -175,6 +176,17 @@ select {
   background: var(--bg);
   color: var(--fg);
   font-size: 0.95rem;
+  font-family: inherit;
+}
+
+pre.generated {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.8rem;
+  overflow-x: auto;
+  font-size: 0.8rem;
+  white-space: pre;
 }
 
 button {

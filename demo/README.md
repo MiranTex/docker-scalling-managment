@@ -205,6 +205,50 @@ resolvê-la depende de ela já estar de pé. Usa `${secret:...}` nos launch
 templates de OUTROS serviços (cujo `AUTH_SERVICE_URL` aponta a um auth
 service independente, já de pé) — não no do próprio `auth`.
 
+## Criar um novo serviço autoscalado (templatesadmin)
+
+[services/templatesadmin](../services/templatesadmin) é um gerador de
+configuração persistido: guarda, por nome, um "modelo de serviço" (a
+imagem, `cmd`, `env`, `labels`, `binds`, `network`, `extraHosts` de um
+launch template, mais os campos de grupo que hoje só existem como env
+vars de um `group-*` no Compose -- `target_service`, réplicas mín/máx,
+`backend_port`, portas de host). Não sobe nem gere nenhum container --
+o `/admin/templates` do portal só produz o `launch-template.<nome>.json`
+e o bloco YAML do `group-<nome>` prontos para você aplicar à mão (ver
+"Fora de escopo" abaixo).
+
+1. Construa e suba o templatesadmin:
+   ```sh
+   docker build -t templatesadmin:latest services/templatesadmin
+   docker compose -f demo/docker-compose.yml up -d templatesadmin
+   ```
+2. No portal (`/admin/templates`, role `infra-admin`): escolha uma
+   imagem já buildada/pulled no Docker do host (populado via
+   `GET /v1/images`, que fala com o Engine API local -- por isso este
+   serviço também monta `/var/run/docker.sock`, mesma superfície de
+   risco que `group-authd` já tem), preencha as variáveis de ambiente
+   (estáticas ou `${secret:NOME}`, escolhendo um nome já criado em
+   `/admin/secrets`) e os campos de grupo (nome do serviço, réplicas,
+   portas).
+3. Clique em "Gerar": copie o JSON para
+   `demo/launch-template.<nome>.json` e cole o bloco YAML gerado como um
+   novo serviço `group-<nome>` em `demo/docker-compose.yml` (mesmo
+   formato do bloco comentado `group-demo`).
+4. Suba o serviço novo:
+   ```sh
+   docker compose -f demo/docker-compose.yml up -d group-<nome>
+   ```
+
+### Fora de escopo (por agora)
+
+Isto é um gerador, não um orquestrador: nenhum container é criado a
+partir da UI. Para isso acontecer "ao vivo" seria preciso mudar o
+`cmd/group` do autoscaler para aceitar um template vindo de uma chamada
+de rede (hoje só lê de um ficheiro local, ver
+`services/autoscaler/cmd/group/config.go`, `loadLaunchTemplate`) e trocar
+o `AUTOSCALER_ADMIN_INSTANCES` estático do portal por um registo
+dinâmico de grupos -- nenhuma das duas coisas existe ainda.
+
 ## Derrubar
 
 ```sh
