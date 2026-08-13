@@ -1,13 +1,11 @@
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
-import { findGroup, restart } from "@/lib/autoscalerAdminClient";
+import { addReplica, findGroup } from "@/lib/autoscalerAdminClient";
 import { ACCESS_COOKIE } from "@/lib/session";
 
-// Proxy fino para POST /v1/restart de UM group (instanceId = containerId,
-// resolvido dinamicamente contra o launcher). O restart é síncrono do
-// lado da instância (bloqueia até terminar, ver
-// services/autoscaler/cmd/group/restart.go) -- este pedido também fica à
-// espera, não há job/polling para esta ação.
+// Proxy fino para POST /v1/replicas de UM group -- cria uma réplica extra
+// imediatamente, fora do ciclo normal do scaler (ver
+// services/autoscaler/internal/adminapi.handleAddReplica).
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ instanceId: string }> }) {
   const { instanceId } = await params;
   const cookieStore = await cookies();
@@ -18,7 +16,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ in
     return NextResponse.json({ error: "unknown_instance", message: `instância desconhecida: ${instanceId}` }, { status: 404 });
   }
 
-  const res = await restart(group.adminUrl, accessToken);
+  const res = await addReplica(group.adminUrl, accessToken);
   const data = await res.json().catch(() => ({}));
   return NextResponse.json(data, { status: res.status });
 }

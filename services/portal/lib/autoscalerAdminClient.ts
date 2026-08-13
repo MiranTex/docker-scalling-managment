@@ -5,13 +5,12 @@
 // expostos ao browser.
 //
 // Ao contrário do dbadmin (uma BD partilhada só, um URL fixo), pode haver
-// VÁRIAS instâncias de autoscaler no sistema -- uma por serviço gerido,
-// possivelmente em ambientes/hosts diferentes. Sem registo central (ver
-// plano): cada ambiente do portal só conhece as instâncias que lhe
-// pertencem, configuradas como uma lista estática em
-// AUTOSCALER_ADMIN_INSTANCES (JSON).
+// VÁRIAS instâncias de autoscaler no sistema -- uma por serviço gerido.
+// Descobertas dinamicamente contra o launcher (ver
+// lib/launcherClient.listGroups, GET /v1/groups) -- não há mais lista
+// estática (AUTOSCALER_ADMIN_INSTANCES foi retirado).
 
-export type AutoscalerInstance = { id: string; label: string; url: string };
+import { listGroups, type DiscoveredGroup } from "./launcherClient";
 
 export type AutoscalerApiError = { error: string; message: string };
 
@@ -54,27 +53,21 @@ export type AutoscalerStatus = {
   uptime_seconds: number;
 };
 
-// getInstances lê a lista estática de instâncias configuradas para este
-// ambiente do portal. JSON inválido/ausente resulta em lista vazia (a UI
-// mostra "nenhum autoscaler configurado"), não num erro 500 -- um erro de
-// configuração aqui não deveria derrubar o resto do painel admin.
-export function getInstances(): AutoscalerInstance[] {
-  const raw = process.env.AUTOSCALER_ADMIN_INSTANCES;
-  if (!raw) return [];
+// findGroup pergunta ao launcher quais groups estão vivos agora (GET
+// /v1/groups) e devolve o que tem este containerId -- é assim que as
+// rotas de UMA instância (policy/restart/réplicas) resolvem o
+// "instanceId" da URL para o adminUrl real a chamar, sem depender de
+// nenhuma lista estática. undefined se não existir/launcher inalcançável
+// -- quem chama decide responder 404.
+export async function findGroup(accessToken: string, containerId: string): Promise<DiscoveredGroup | undefined> {
   try {
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (v): v is AutoscalerInstance =>
-        typeof v === "object" && v !== null && typeof v.id === "string" && typeof v.label === "string" && typeof v.url === "string"
-    );
+    const res = await listGroups(accessToken);
+    if (!res.ok) return undefined;
+    const groups: DiscoveredGroup[] = await res.json();
+    return groups.find((g) => g.containerId === containerId);
   } catch {
-    return [];
+    return undefined;
   }
-}
-
-export function getInstance(instanceId: string): AutoscalerInstance | undefined {
-  return getInstances().find((i) => i.id === instanceId);
 }
 
 async function autoscalerFetch(instanceUrl: string, path: string, accessToken: string, init?: RequestInit): Promise<Response> {
@@ -107,4 +100,15 @@ export function updatePolicy(instanceUrl: string, accessToken: string, patch: Po
 // mesma forma em qualquer ambiente. Ver services/autoscaler/cmd/group/restart.go.
 export function restart(instanceUrl: string, accessToken: string) {
   return autoscalerFetch(instanceUrl, "/v1/restart", accessToken, { method: "POST" });
+}
+
+// addReplica/removeReplica são ações manuais sobre UMA réplica específica
+// -- ao contrário do scaler automático, aqui é quem chama que escolhe
+// (ver services/autoscaler/internal/adminapi, POST/DELETE /v1/replicas).
+export function addReplica(instanceUrl: string, accessToken: string) {
+  return autoscalerFetch(instanceUrl, "/v1/replicas", accessToken, { method: "POST" });
+}
+
+export function removeReplica(instanceUrl: string, accessToken: string, replicaId: string) {
+  return autoscalerFetch(instanceUrl, `/v1/replicas/${encodeURIComponent(replicaId)}`, accessToken, { method: "DELETE" });
 }

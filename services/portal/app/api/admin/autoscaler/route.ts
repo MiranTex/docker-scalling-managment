@@ -1,33 +1,46 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import { getInstances, getStatus } from "@/lib/autoscalerAdminClient";
+import { getStatus } from "@/lib/autoscalerAdminClient";
+import { listGroups, type DiscoveredGroup } from "@/lib/launcherClient";
 import { ACCESS_COOKIE } from "@/lib/session";
 
-// Lista o estado de todas as instâncias de autoscaler configuradas para
-// este ambiente (ver AUTOSCALER_ADMIN_INSTANCES). Cada instância é a API
-// de administração de cada respetivo group -- é ela quem faz a
-// autorização de verdade (requireRole em
-// services/autoscaler/internal/adminapi), este handler é só um proxy
-// fino, igual a app/api/admin/database/route.ts.
+// Lista o estado de todos os autoscaler-groups vivos, descobertos
+// dinamicamente contra o launcher (GET /v1/groups) -- não há mais lista
+// estática (AUTOSCALER_ADMIN_INSTANCES foi retirado). Cada group é a sua
+// própria API de administração -- é ela quem faz a autorização de
+// verdade (requireRole em services/autoscaler/internal/adminapi), este
+// handler é só um proxy fino, igual a app/api/admin/database/route.ts.
 //
-// Uma instância inalcançável não falha a lista inteira -- devolve-se o
-// erro dessa instância isolado, para as outras continuarem visíveis.
+// Um group inalcançável não falha a lista inteira -- devolve-se o erro
+// desse group isolado, para os outros continuarem visíveis.
 export async function GET() {
   const cookieStore = await cookies();
   const accessToken = cookieStore.get(ACCESS_COOKIE)!.value;
-  const instances = getInstances();
+
+  const groupsRes = await listGroups(accessToken);
+  if (!groupsRes.ok) {
+    const data = await groupsRes.json().catch(() => ({}));
+    return NextResponse.json(data, { status: groupsRes.status });
+  }
+  const groups: DiscoveredGroup[] = await groupsRes.json();
 
   const results = await Promise.all(
-    instances.map(async (instance) => {
+    groups.map(async (group) => {
+      const base = {
+        id: group.containerId,
+        label: group.targetService || group.name,
+        url: group.adminUrl,
+        network: group.network,
+      };
       try {
-        const res = await getStatus(instance.url, accessToken);
+        const res = await getStatus(group.adminUrl, accessToken);
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
-          return { id: instance.id, label: instance.label, url: instance.url, error: data.message ?? `erro ${res.status}` };
+          return { ...base, error: data.message ?? `erro ${res.status}` };
         }
-        return { id: instance.id, label: instance.label, url: instance.url, status: data };
+        return { ...base, status: data };
       } catch {
-        return { id: instance.id, label: instance.label, url: instance.url, error: "instância inalcançável" };
+        return { ...base, error: "instância inalcançável" };
       }
     })
   );

@@ -1,0 +1,112 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import type { DockerNetwork } from "@/lib/launcherClient";
+
+// Seletor de rede Docker reaproveitado em /admin/launcher (lançar
+// instância) e /admin/autoscaler (criar grupo) -- lista as redes já
+// existentes (ver services/launcher/internal/dockerclient.ListNetworks)
+// e permite criar uma nova sem saltar para o /admin/launcher só para
+// isso. Vazio = "usa a rede definida no modelo".
+export default function NetworkPicker({
+  id,
+  value,
+  onChange,
+}: {
+  id: string;
+  value: string;
+  onChange: (network: string) => void;
+}) {
+  const [networks, setNetworks] = useState<DockerNetwork[] | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  async function loadNetworks() {
+    try {
+      const res = await fetch("/api/admin/launcher/networks");
+      if (res.ok) setNetworks(await res.json());
+    } catch {
+      // A lista só ajuda a preencher o <select> -- se falhar, ainda dá
+      // para escrever o nome da rede à mão.
+    }
+  }
+
+  useEffect(() => {
+    loadNetworks();
+  }, []);
+
+  async function handleCreate() {
+    const name = newName.trim();
+    if (!name) return;
+    setError(null);
+    try {
+      const res = await fetch("/api/admin/launcher/networks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.message ?? "erro ao criar rede");
+        return;
+      }
+      onChange(name);
+      setNewName("");
+      setCreating(false);
+      await loadNetworks();
+    } catch {
+      setError("erro ao criar rede");
+    }
+  }
+
+  if (creating) {
+    return (
+      <div className="row" style={{ gap: "0.5rem" }}>
+        {error && <div className="error">{error}</div>}
+        <input
+          type="text"
+          value={newName}
+          onChange={(e) => setNewName(e.target.value)}
+          placeholder="nome-da-rede-nova"
+          style={{ marginBottom: 0 }}
+          autoFocus
+        />
+        <button className="secondary" onClick={handleCreate}>
+          Criar
+        </button>
+        <button className="secondary" onClick={() => setCreating(false)}>
+          Cancelar
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="row" style={{ gap: "0.5rem" }}>
+      {error && <div className="error">{error}</div>}
+      {networks && networks.length > 0 ? (
+        <select id={id} value={value} onChange={(e) => onChange(e.target.value)} style={{ marginBottom: 0 }}>
+          <option value="">-- nenhuma (usa a do modelo) --</option>
+          {networks.map((n) => (
+            <option key={n.Id} value={n.Name}>
+              {n.Name}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <input
+          id={id}
+          type="text"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="auth-net"
+          style={{ marginBottom: 0 }}
+        />
+      )}
+      <button className="secondary" onClick={() => setCreating(true)}>
+        + Nova rede
+      </button>
+    </div>
+  );
+}

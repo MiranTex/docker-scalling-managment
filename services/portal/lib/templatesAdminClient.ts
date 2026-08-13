@@ -6,6 +6,12 @@
 
 export const TEMPLATESADMIN_SERVICE_URL = process.env.TEMPLATESADMIN_SERVICE_URL ?? "http://localhost:8093";
 
+// Só o que o container da aplicação precisa -- sem nenhum campo de
+// autoscaling (réplicas, thresholds de CPU, target service, portas de
+// host). Essa config passou a ser preenchida no momento de criar um
+// group a partir de um modelo (ver "Criar grupo" em /admin/autoscaler),
+// não a viver junto do modelo -- ver
+// services/templatesadmin/internal/store/store.go.
 export type ServiceTemplate = {
   name: string;
   image: string;
@@ -15,15 +21,6 @@ export type ServiceTemplate = {
   binds: string[];
   network: string;
   extraHosts: string[];
-
-  targetService: string;
-  backendPort: number;
-  minReplicas: number;
-  maxReplicas: number;
-  cpuScaleUpPercent: number;
-  cpuScaleDownPercent: number;
-  hostProxyPort?: number;
-  hostMetricsPort?: number;
 
   createdAt: string;
   updatedAt: string;

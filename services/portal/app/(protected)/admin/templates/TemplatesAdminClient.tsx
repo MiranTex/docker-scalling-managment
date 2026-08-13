@@ -21,14 +21,6 @@ const EMPTY_FORM = {
   network: "",
   labelsText: "",
   envRows: [] as EnvRow[],
-  targetService: "",
-  backendPort: "80",
-  minReplicas: "1",
-  maxReplicas: "3",
-  cpuScaleUpPercent: "50",
-  cpuScaleDownPercent: "20",
-  hostProxyPort: "",
-  hostMetricsPort: "",
 };
 
 const SECRET_REF_RE = /^\$\{secret:(.+)\}$/;
@@ -86,20 +78,14 @@ function templateToForm(t: ServiceTemplate): typeof EMPTY_FORM {
     network: t.network,
     labelsText: labelsToText(t.labels),
     envRows: envToRows(t.env),
-    targetService: t.targetService,
-    backendPort: String(t.backendPort),
-    minReplicas: String(t.minReplicas),
-    maxReplicas: String(t.maxReplicas),
-    cpuScaleUpPercent: String(t.cpuScaleUpPercent),
-    cpuScaleDownPercent: String(t.cpuScaleDownPercent),
-    hostProxyPort: t.hostProxyPort != null ? String(t.hostProxyPort) : "",
-    hostMetricsPort: t.hostMetricsPort != null ? String(t.hostMetricsPort) : "",
   };
 }
 
 // Monta o corpo enviado a PUT /v1/templates/{name} a partir do estado do
 // formulário -- espelha store.Template do lado do templatesadmin (ver
-// services/templatesadmin/internal/store/store.go).
+// services/templatesadmin/internal/store/store.go). Só o que o container
+// da aplicação precisa -- config de autoscaling não faz parte disto, ver
+// "Criar grupo" em /admin/autoscaler.
 function formToBody(form: typeof EMPTY_FORM) {
   return {
     image: form.image,
@@ -109,21 +95,15 @@ function formToBody(form: typeof EMPTY_FORM) {
     binds: linesToArray(form.bindsText),
     network: form.network.trim(),
     extraHosts: linesToArray(form.extraHostsText),
-    targetService: form.targetService.trim(),
-    backendPort: Number(form.backendPort) || 80,
-    minReplicas: Number(form.minReplicas) || 0,
-    maxReplicas: Number(form.maxReplicas) || 0,
-    cpuScaleUpPercent: Number(form.cpuScaleUpPercent) || 0,
-    cpuScaleDownPercent: Number(form.cpuScaleDownPercent) || 0,
-    hostProxyPort: form.hostProxyPort.trim() ? Number(form.hostProxyPort) : undefined,
-    hostMetricsPort: form.hostMetricsPort.trim() ? Number(form.hostMetricsPort) : undefined,
   };
 }
 
-// Gera o launch-template.json tal como services/autoscaler/cmd/group o
-// espera (ver executor.LaunchTemplate) -- omite arrays/mapas vazios,
-// igual às tags `json:"...,omitempty"` do lado do Go.
-function generateLaunchTemplateJSON(form: typeof EMPTY_FORM): string {
+// Pré-visualização do launch template tal como services/autoscaler/cmd/group
+// o espera (ver executor.LaunchTemplate) -- omite arrays/mapas vazios,
+// igual às tags `json:"...,omitempty"` do lado do Go. Só para conferir o
+// resultado; não é preciso copiar isto para nenhum lado -- ver "Lançar
+// containers sem autoscaling (launcher)" em demo/README.md.
+function previewLaunchTemplateJSON(form: typeof EMPTY_FORM): string {
   const body = formToBody(form);
   const out: Record<string, unknown> = { image: body.image };
   if (body.cmd.length) out.cmd = body.cmd;
@@ -133,49 +113,6 @@ function generateLaunchTemplateJSON(form: typeof EMPTY_FORM): string {
   if (body.network) out.network = body.network;
   if (body.extraHosts.length) out.extraHosts = body.extraHosts;
   return JSON.stringify(out, null, 2);
-}
-
-// Gera o bloco docker-compose do group correspondente -- mesmo formato
-// do "group-demo" comentado em demo/docker-compose.yml.
-function generateComposeBlock(form: typeof EMPTY_FORM): string {
-  const name = form.name.trim() || form.targetService.trim() || "<nome>";
-  const templateFile = `launch-template.${name}.json`;
-  const usesSecrets = form.envRows.some((r) => r.kind === "secret");
-
-  const lines: string[] = [];
-  lines.push(`  group-${name}:`);
-  lines.push(`    image: autoscaler-group:latest`);
-  lines.push(`    environment:`);
-  lines.push(`      TARGET_SERVICE: ${form.targetService.trim() || name}`);
-  lines.push(`      BACKEND_PORT: "${form.backendPort || "80"}"`);
-  lines.push(`      MIN_REPLICAS: "${form.minReplicas || "1"}"`);
-  lines.push(`      MAX_REPLICAS: "${form.maxReplicas || "3"}"`);
-  lines.push(`      CPU_SCALE_UP_PERCENT: "${form.cpuScaleUpPercent || "50"}"`);
-  lines.push(`      CPU_SCALE_DOWN_PERCENT: "${form.cpuScaleDownPercent || "20"}"`);
-  lines.push(`      RECONCILE_TICK_SECONDS: "3"`);
-  lines.push(`      LOG_FORMAT: "json"`);
-  lines.push(`      LOG_LEVEL: "info"`);
-  lines.push(`      METRICS_ADDR: ":9090"`);
-  lines.push(`      LAUNCH_TEMPLATE_FILE: "/etc/autoscaler/${templateFile}"`);
-  if (usesSecrets) {
-    lines.push(`      # Este modelo referencia \${secret:NOME} -- preencha também`);
-    lines.push(`      # AUTH_SERVICE_URL/AUTH_ISSUER/AUTH_AUDIENCE, SECRETSADMIN_SERVICE_URL`);
-    lines.push(`      # e SECRETS_REFRESH_TOKEN (ver demo/README.md, secção de segredos).`);
-  }
-  lines.push(`    labels:`);
-  lines.push(`      prometheus.scrape: "true"`);
-  lines.push(`      prometheus.port: "9090"`);
-  if (form.hostProxyPort.trim() || form.hostMetricsPort.trim()) {
-    lines.push(`    ports:`);
-    if (form.hostProxyPort.trim()) lines.push(`      - "${form.hostProxyPort.trim()}:8090"`);
-    if (form.hostMetricsPort.trim()) lines.push(`      - "${form.hostMetricsPort.trim()}:9090"`);
-  }
-  lines.push(`    volumes:`);
-  lines.push(`      - /var/run/docker.sock:/var/run/docker.sock`);
-  lines.push(`      - ./${templateFile}:/etc/autoscaler/${templateFile}:ro`);
-  lines.push(`    networks:`);
-  lines.push(`      - observability-net`);
-  return lines.join("\n");
 }
 
 async function copyToClipboard(text: string) {
@@ -198,7 +135,7 @@ export default function TemplatesAdminClient() {
   const [editingName, setEditingName] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [generated, setGenerated] = useState<{ json: string; compose: string } | null>(null);
+  const [preview, setPreview] = useState<string | null>(null);
 
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -236,14 +173,14 @@ export default function TemplatesAdminClient() {
   function resetForm() {
     setForm(EMPTY_FORM);
     setEditingName(null);
-    setGenerated(null);
+    setPreview(null);
     setFormError(null);
   }
 
   function startEdit(t: ServiceTemplate) {
     setForm(templateToForm(t));
     setEditingName(t.name);
-    setGenerated(null);
+    setPreview(null);
     setFormError(null);
   }
 
@@ -274,10 +211,6 @@ export default function TemplatesAdminClient() {
       setFormError("imagem é obrigatória");
       return;
     }
-    if (!form.targetService.trim()) {
-      setFormError("nome do serviço (targetService) é obrigatório");
-      return;
-    }
     setSaving(true);
     try {
       const res = await fetch(`/api/admin/templates/${encodeURIComponent(nameForSave)}`, {
@@ -298,13 +231,6 @@ export default function TemplatesAdminClient() {
     } finally {
       setSaving(false);
     }
-  }
-
-  function handleGenerate() {
-    setGenerated({
-      json: generateLaunchTemplateJSON(form),
-      compose: generateComposeBlock({ ...form, name: nameForSave }),
-    });
   }
 
   async function handleDelete() {
@@ -337,12 +263,12 @@ export default function TemplatesAdminClient() {
       <div className="card wide">
         <h1>Modelos de serviço</h1>
         <p className="muted">
-          Cada modelo guarda o launch template (imagem, env, binds, rede -- ver{" "}
-          <code>services/autoscaler/internal/executor.LaunchTemplate</code>) e a configuração do group
-          correspondente (réplicas, portas). Isto é um <strong>gerador</strong>: gravar aqui não sobe
-          nenhum container -- use o botão &quot;Gerar&quot; para obter o JSON e o bloco docker-compose e
-          aplique-os você mesmo (ver <code>demo/README.md</code>, &quot;Criar um novo serviço
-          autoscalado&quot;).
+          Só o que o container da aplicação precisa -- imagem, comando, variáveis de ambiente,
+          labels, volumes, rede (ver <code>services/autoscaler/internal/executor.LaunchTemplate</code>).
+          Não inclui réplicas nem thresholds de CPU: essa config é decidida ao lançar um group a
+          partir de um modelo, em <a href="/admin/autoscaler">/admin/autoscaler</a> ("Criar grupo").
+          Para lançar uma instância "solo" (sem autoscaling nenhum), ver{" "}
+          <a href="/admin/launcher">/admin/launcher</a>.
         </p>
         {listError && <div className="error">{listError}</div>}
         {deleteError && <div className="error">{deleteError}</div>}
@@ -357,8 +283,6 @@ export default function TemplatesAdminClient() {
               <tr>
                 <th>Nome</th>
                 <th>Imagem</th>
-                <th>Serviço</th>
-                <th>Réplicas</th>
                 <th></th>
               </tr>
             </thead>
@@ -369,10 +293,6 @@ export default function TemplatesAdminClient() {
                     <code>{t.name}</code>
                   </td>
                   <td>{t.image}</td>
-                  <td>{t.targetService}</td>
-                  <td>
-                    {t.minReplicas}-{t.maxReplicas}
-                  </td>
                   <td>
                     <button className="secondary" onClick={() => startEdit(t)}>
                       Editar
@@ -429,15 +349,6 @@ export default function TemplatesAdminClient() {
             placeholder="sail-8.4/app"
           />
         )}
-
-        <label htmlFor="tpl-target-service">Nome do serviço (TARGET_SERVICE)</label>
-        <input
-          id="tpl-target-service"
-          type="text"
-          value={form.targetService}
-          onChange={(e) => setForm((f) => ({ ...f, targetService: e.target.value }))}
-          placeholder="laravel-app"
-        />
 
         <label>Variáveis de ambiente</label>
         {form.envRows.map((row, i) => (
@@ -519,7 +430,7 @@ export default function TemplatesAdminClient() {
           type="text"
           value={form.network}
           onChange={(e) => setForm((f) => ({ ...f, network: e.target.value }))}
-          placeholder="observability-net"
+          placeholder="auth-net"
         />
 
         <label htmlFor="tpl-extra-hosts">Extra hosts (uma entrada por linha, formato host:ip)</label>
@@ -539,84 +450,12 @@ export default function TemplatesAdminClient() {
           onChange={(e) => setForm((f) => ({ ...f, labelsText: e.target.value }))}
         />
 
-        <div className="row" style={{ gap: "1rem" }}>
-          <div style={{ flex: 1 }}>
-            <label htmlFor="tpl-backend-port">Porta do backend</label>
-            <input
-              id="tpl-backend-port"
-              type="number"
-              value={form.backendPort}
-              onChange={(e) => setForm((f) => ({ ...f, backendPort: e.target.value }))}
-            />
-          </div>
-          <div style={{ flex: 1 }}>
-            <label htmlFor="tpl-min">Réplicas mín.</label>
-            <input
-              id="tpl-min"
-              type="number"
-              value={form.minReplicas}
-              onChange={(e) => setForm((f) => ({ ...f, minReplicas: e.target.value }))}
-            />
-          </div>
-          <div style={{ flex: 1 }}>
-            <label htmlFor="tpl-max">Réplicas máx.</label>
-            <input
-              id="tpl-max"
-              type="number"
-              value={form.maxReplicas}
-              onChange={(e) => setForm((f) => ({ ...f, maxReplicas: e.target.value }))}
-            />
-          </div>
-        </div>
-
-        <div className="row" style={{ gap: "1rem" }}>
-          <div style={{ flex: 1 }}>
-            <label htmlFor="tpl-cpu-up">Escalar acima de (% CPU)</label>
-            <input
-              id="tpl-cpu-up"
-              type="number"
-              value={form.cpuScaleUpPercent}
-              onChange={(e) => setForm((f) => ({ ...f, cpuScaleUpPercent: e.target.value }))}
-            />
-          </div>
-          <div style={{ flex: 1 }}>
-            <label htmlFor="tpl-cpu-down">Escalar abaixo de (% CPU)</label>
-            <input
-              id="tpl-cpu-down"
-              type="number"
-              value={form.cpuScaleDownPercent}
-              onChange={(e) => setForm((f) => ({ ...f, cpuScaleDownPercent: e.target.value }))}
-            />
-          </div>
-        </div>
-
-        <div className="row" style={{ gap: "1rem" }}>
-          <div style={{ flex: 1 }}>
-            <label htmlFor="tpl-host-proxy-port">Porta de host (proxy, opcional)</label>
-            <input
-              id="tpl-host-proxy-port"
-              type="number"
-              value={form.hostProxyPort}
-              onChange={(e) => setForm((f) => ({ ...f, hostProxyPort: e.target.value }))}
-            />
-          </div>
-          <div style={{ flex: 1 }}>
-            <label htmlFor="tpl-host-metrics-port">Porta de host (métricas, opcional)</label>
-            <input
-              id="tpl-host-metrics-port"
-              type="number"
-              value={form.hostMetricsPort}
-              onChange={(e) => setForm((f) => ({ ...f, hostMetricsPort: e.target.value }))}
-            />
-          </div>
-        </div>
-
         <div className="row" style={{ gap: "0.5rem" }}>
           <button className="secondary" disabled={saving} onClick={handleSave}>
             {saving ? "A gravar..." : editingName ? "Gravar alterações" : "Criar modelo"}
           </button>
-          <button className="secondary" onClick={handleGenerate} disabled={!form.image.trim()}>
-            Gerar
+          <button className="secondary" onClick={() => setPreview(previewLaunchTemplateJSON(form))} disabled={!form.image.trim()}>
+            Ver JSON
           </button>
           {editingName && (
             <button className="secondary" onClick={resetForm}>
@@ -626,34 +465,22 @@ export default function TemplatesAdminClient() {
         </div>
       </div>
 
-      {generated && (
+      {preview && (
         <div className="card wide">
-          <h1>Ficheiros gerados</h1>
-
           <div className="row">
-            <label style={{ marginBottom: 0 }}>
-              launch-template.{nameForSave || "<nome>"}.json
-            </label>
-            <button className="secondary" onClick={() => copyToClipboard(generated.json)}>
+            <h1 style={{ marginBottom: 0 }}>Launch template (pré-visualização)</h1>
+            <button className="secondary" onClick={() => copyToClipboard(preview)}>
               Copiar
             </button>
           </div>
-          <pre className="generated">{generated.json}</pre>
-
-          <div className="row" style={{ marginTop: "1rem" }}>
-            <label style={{ marginBottom: 0 }}>Bloco docker-compose (demo/docker-compose.yml)</label>
-            <button className="secondary" onClick={() => copyToClipboard(generated.compose)}>
-              Copiar
-            </button>
-          </div>
-          <pre className="generated">{generated.compose}</pre>
+          <pre className="generated">{preview}</pre>
         </div>
       )}
 
       {deleteTarget && (
         <ConfirmModal
           title="Confirmar remoção"
-          message={`Isto apaga o modelo "${deleteTarget}" -- não afeta nenhum group já a correr a partir de um launch template já gerado/copiado a partir dele.`}
+          message={`Isto apaga o modelo "${deleteTarget}" -- não afeta nenhuma instância já lançada a partir dele.`}
           expectedText={deleteTarget}
           confirmLabel="Apagar"
           onConfirm={handleDelete}

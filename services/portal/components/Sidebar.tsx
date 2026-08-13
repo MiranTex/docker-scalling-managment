@@ -43,6 +43,16 @@ export default function Sidebar({ role }: { role?: string }) {
             Modelos de serviço
           </Link>
         )}
+        {hasInfraAdminAccess(role) && (
+          <Link href="/admin/launcher" className={linkClass("/admin/launcher")}>
+            Instâncias
+          </Link>
+        )}
+        {hasInfraAdminAccess(role) && (
+          <Link href="/admin/networks" className={linkClass("/admin/networks")}>
+            Redes
+          </Link>
+        )}
       </nav>
     </aside>
   );
