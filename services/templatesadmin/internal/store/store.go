@@ -53,27 +53,29 @@ func (db *DB) Ping(ctx context.Context) error {
 // -- não há nada cifrado nem oculto aqui (ao contrário de secretsadmin):
 // qualquer infra-admin que consiga listar também consegue ver o
 // conteúdo inteiro.
+//
+// Contém só o que o CONTAINER da aplicação precisa (imagem, comando, env,
+// labels, volumes, rede) -- nunca config de autoscaling (réplicas,
+// thresholds de CPU, target service, portas de host). Essa distinção
+// existia misturada aqui até esta versão; separou-se porque são
+// preocupações diferentes (o mesmo template pode ser lançado como
+// instância "solo", sem nenhum autoscaler, via services/launcher) e
+// porque a config de grupo pertence ao momento de CRIAR um group, não ao
+// template em si -- ver services/launcher/internal/httpapi, POST
+// /v1/instances com kind="group", e o formulário "Criar grupo" em
+// /admin/autoscaler no portal.
 type Template struct {
 	Name  string   `json:"name"`
 	Image string   `json:"image"`
 	Cmd   []string `json:"cmd"`
 	// Env pode conter referências "${secret:NOME}" -- resolvidas pelo
-	// autoscaler no arranque de cada réplica, nunca por este serviço
-	// (ver services/autoscaler/internal/secretsclient).
+	// launcher no momento de criar cada container (ver
+	// services/launcher/internal/secretsclient), nunca por este serviço.
 	Env        []string          `json:"env"`
 	Labels     map[string]string `json:"labels"`
 	Binds      []string          `json:"binds"`
 	Network    string            `json:"network"`
 	ExtraHosts []string          `json:"extraHosts"`
-
-	TargetService       string  `json:"targetService"`
-	BackendPort         int     `json:"backendPort"`
-	MinReplicas         int     `json:"minReplicas"`
-	MaxReplicas         int     `json:"maxReplicas"`
-	CPUScaleUpPercent   float64 `json:"cpuScaleUpPercent"`
-	CPUScaleDownPercent float64 `json:"cpuScaleDownPercent"`
-	HostProxyPort       *int    `json:"hostProxyPort,omitempty"`
-	HostMetricsPort     *int    `json:"hostMetricsPort,omitempty"`
 
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
@@ -81,8 +83,6 @@ type Template struct {
 }
 
 const listColumns = `name, image, cmd, env, labels, binds, network, extra_hosts,
-	target_service, backend_port, min_replicas, max_replicas,
-	cpu_scale_up_percent, cpu_scale_down_percent, host_proxy_port, host_metrics_port,
 	created_at, updated_at, updated_by`
 
 func scanTemplate(row interface{ Scan(...any) error }) (Template, error) {
@@ -92,23 +92,12 @@ func scanTemplate(row interface{ Scan(...any) error }) (Template, error) {
 		labelsRaw, bindsRaw []byte
 		extraHostsRaw       []byte
 	)
-	var hostProxyPort, hostMetricsPort sql.NullInt64
 	err := row.Scan(
 		&t.Name, &t.Image, &cmdRaw, &envRaw, &labelsRaw, &bindsRaw, &t.Network, &extraHostsRaw,
-		&t.TargetService, &t.BackendPort, &t.MinReplicas, &t.MaxReplicas,
-		&t.CPUScaleUpPercent, &t.CPUScaleDownPercent, &hostProxyPort, &hostMetricsPort,
 		&t.CreatedAt, &t.UpdatedAt, &t.UpdatedBy,
 	)
 	if err != nil {
 		return Template{}, err
-	}
-	if hostProxyPort.Valid {
-		v := int(hostProxyPort.Int64)
-		t.HostProxyPort = &v
-	}
-	if hostMetricsPort.Valid {
-		v := int(hostMetricsPort.Int64)
-		t.HostMetricsPort = &v
 	}
 	if err := json.Unmarshal(cmdRaw, &t.Cmd); err != nil {
 		return Template{}, fmt.Errorf("store: decodificando cmd: %w", err)
@@ -194,10 +183,8 @@ func (db *DB) Upsert(ctx context.Context, t Template, updatedBy string) error {
 	_, err = db.sql.ExecContext(ctx, `
 		INSERT INTO service_templates.templates (
 			name, image, cmd, env, labels, binds, network, extra_hosts,
-			target_service, backend_port, min_replicas, max_replicas,
-			cpu_scale_up_percent, cpu_scale_down_percent, host_proxy_port, host_metrics_port,
 			updated_by
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		ON CONFLICT (name) DO UPDATE SET
 			image = EXCLUDED.image,
 			cmd = EXCLUDED.cmd,
@@ -206,20 +193,10 @@ func (db *DB) Upsert(ctx context.Context, t Template, updatedBy string) error {
 			binds = EXCLUDED.binds,
 			network = EXCLUDED.network,
 			extra_hosts = EXCLUDED.extra_hosts,
-			target_service = EXCLUDED.target_service,
-			backend_port = EXCLUDED.backend_port,
-			min_replicas = EXCLUDED.min_replicas,
-			max_replicas = EXCLUDED.max_replicas,
-			cpu_scale_up_percent = EXCLUDED.cpu_scale_up_percent,
-			cpu_scale_down_percent = EXCLUDED.cpu_scale_down_percent,
-			host_proxy_port = EXCLUDED.host_proxy_port,
-			host_metrics_port = EXCLUDED.host_metrics_port,
 			updated_by = EXCLUDED.updated_by,
 			updated_at = now()
 	`,
 		t.Name, t.Image, cmd, env, labelsJSON, binds, t.Network, extraHosts,
-		t.TargetService, t.BackendPort, t.MinReplicas, t.MaxReplicas,
-		t.CPUScaleUpPercent, t.CPUScaleDownPercent, t.HostProxyPort, t.HostMetricsPort,
 		updatedBy,
 	)
 	if err != nil {

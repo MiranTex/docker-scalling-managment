@@ -1,13 +1,14 @@
-// Package httpapi expõe a API de administração de modelos de serviço:
-// o launch template (imagem, cmd, env, labels, binds, network,
-// extraHosts -- ver services/autoscaler/internal/executor.LaunchTemplate)
-// e a configuração de grupo (target service, réplicas, portas) que hoje
-// só existiam escritos à mão num ficheiro JSON + num bloco
-// docker-compose (ver demo/docker-compose.yml, bloco comentado
-// "group-demo"). Só role infra-admin (humanos, via portal); não há role
-// "service" aqui -- ao contrário do secretsadmin, nada neste serviço é
-// segredo, então não faz sentido nenhuma conta de máquina "resolver" um
-// modelo em runtime.
+// Package httpapi expõe a API de administração de modelos de serviço: o
+// launch template (imagem, cmd, env, labels, binds, network, extraHosts
+// -- ver services/autoscaler/internal/executor.LaunchTemplate) de um
+// container de aplicação, nada mais. NÃO inclui config de autoscaling
+// (réplicas, thresholds de CPU, target service, portas de host) -- essa
+// config passou a ser preenchida no momento de CRIAR um group a partir
+// de um modelo, não a viver junto dele (ver services/launcher/internal/httpapi,
+// POST /v1/instances com kind="group"). Só role infra-admin (humanos, via
+// portal); não há role "service" aqui -- ao contrário do secretsadmin,
+// nada neste serviço é segredo, então não faz sentido nenhuma conta de
+// máquina "resolver" um modelo em runtime.
 package httpapi
 
 import (
@@ -32,8 +33,7 @@ const (
 )
 
 // nameRe é o charset aceite para o nome de um modelo -- mesmo padrão de
-// services/secretsadmin/internal/httpapi (nomes usados em caminhos de
-// URL e, no caso de target_service, também como label do autoscaler).
+// services/secretsadmin/internal/httpapi (nome usado em caminhos de URL).
 var nameRe = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,128}$`)
 
 type TokenVerifier interface {
@@ -151,14 +151,6 @@ func (h *Handler) handleUpsert(w http.ResponseWriter, r *http.Request, subject s
 
 	if t.Image == "" {
 		writeError(w, http.StatusBadRequest, "empty_image", "\"image\" não pode ser vazio")
-		return
-	}
-	if t.TargetService == "" {
-		writeError(w, http.StatusBadRequest, "empty_target_service", "\"targetService\" não pode ser vazio")
-		return
-	}
-	if t.MinReplicas < 0 || t.MaxReplicas < t.MinReplicas {
-		writeError(w, http.StatusBadRequest, "invalid_replicas", "\"maxReplicas\" tem de ser >= \"minReplicas\" >= 0")
 		return
 	}
 
