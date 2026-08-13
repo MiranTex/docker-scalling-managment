@@ -6,33 +6,38 @@
 // -- só que aqui o "login" nunca acontece (não há password), o processo
 // arranca já com um refresh token emitido administrativamente
 // (POST /v1/admin/users/{id}/tokens no auth service) e passado via
-// SECRETS_REFRESH_TOKEN.
+// LAUNCHER_SECRETS_REFRESH_TOKEN.
 //
-// Cuidado arquitetural real (confirmado na prática, não só teórico): NÃO
-// referencies ${secret:NOME} no launch template do PRÓPRIO auth service
-// gerido por um group cujo AUTH_SERVICE_URL apunta pra ele mesmo (caso de
-// group-authd no demo). Se as réplicas desse serviço chegarem a zero (ex:
-// depois de um restart via POST /v1/restart, que termina TODAS as
-// réplicas antes de recriar), resolver o segredo exige um access token
-// válido, que exige chamar .../v1/token/refresh contra esse MESMO auth
-// service -- que não tem nenhuma réplica de pé pra responder. Deadlock:
-// a réplica nunca sobe, porque resolver o segredo dela depende dela já
-// estar de pé. Isto foi reproduzido manualmente durante o desenvolvimento
-// desta feature (ver histórico). Para OUTROS serviços (cujo
-// AUTH_SERVICE_URL aponta a um auth service diferente, já de pé,
-// independente do próprio group), este problema não existe.
+// Movido de services/autoscaler/internal/secretsclient: antes, era cada
+// cmd/group (um processo POR serviço autoscalado) que precisava da sua
+// própria conta de máquina e do seu próprio SECRETS_REFRESH_TOKEN para
+// resolver segredos antes de criar uma réplica. Agora só o launcher tem
+// essa credencial -- é ele quem efetivamente cria o container (ver
+// services/launcher/internal/httpapi, POST /v1/replicas), então só ele
+// precisa saber falar com o secretsadmin. Um cmd/group que precise de uma
+// réplica nova manda o launch template (ainda com ${secret:...} por
+// resolver) para o launcher via services/autoscaler/internal/launcherclient,
+// em vez de resolver ele mesmo.
+//
+// Isto também elimina o deadlock que existia antes: um group cujas
+// réplicas dependessem dele mesmo para obter token (ex: group-authd, cujo
+// AUTH_SERVICE_URL aponta pra ele próprio) só conseguia resolver segredos
+// se já tivesse pelo menos uma réplica de pé -- e criar essa réplica
+// dependia de resolver os segredos primeiro. Como o launcher é um
+// processo separado, sempre de pé independente de qualquer group, esse
+// ciclo não existe mais para a operação de CRIAR uma réplica (o launcher
+// ainda depende do auth service estar alcançável para renovar o SEU
+// próprio token, mas essa é uma dependência normal, não circular).
 //
 // Limitação aceite (documentada, não resolvida nesta iteração): o refresh
 // token roda a cada uso (rotate-on-use, ver services/auth/internal/refresh)
 // -- o valor novo só existe em memória deste processo. Se o CONTAINER do
-// group for recriado (não confundir com o restart lógico interno de
-// cmd/group/restart.go, que não reinicia este processo) depois de já ter
-// rodado o token pelo menos uma vez, o SECRETS_REFRESH_TOKEN original já
-// não é válido e a resolução de segredos passa a falhar até alguém emitir
-// um token novo. Persistir o refresh token mais recente num ficheiro em
-// volume (mesmo padrão de services/auth/internal/keystore) resolveria
-// isto; fica para quando isso se mostrar um problema real, não
-// preventivamente.
+// launcher for recriado depois de já ter rodado o token pelo menos uma
+// vez, o LAUNCHER_SECRETS_REFRESH_TOKEN original já não é válido e a
+// resolução de segredos passa a falhar até alguém emitir um token novo.
+// Persistir o refresh token mais recente num ficheiro em volume (mesmo
+// padrão de services/auth/internal/keystore) resolveria isto; fica para
+// quando isso se mostrar um problema real, não preventivamente.
 package secretsclient
 
 import (
@@ -124,7 +129,7 @@ func (c *Client) ResolveEnv(ctx context.Context, env []string) ([]string, error)
 		return env, nil
 	}
 	if c.secretsAdminURL == "" || c.refreshToken == "" {
-		return nil, fmt.Errorf("secretsclient: %d referência(s) a segredo em env, mas SECRETSADMIN_SERVICE_URL/SECRETS_REFRESH_TOKEN não configurados", len(names))
+		return nil, fmt.Errorf("secretsclient: %d referência(s) a segredo em env, mas SECRETSADMIN_SERVICE_URL/LAUNCHER_SECRETS_REFRESH_TOKEN não configurados", len(names))
 	}
 
 	values, err := c.resolve(ctx, names)
@@ -200,7 +205,7 @@ func (c *Client) accessTokenFor(ctx context.Context) (string, error) {
 	defer res.Body.Close()
 
 	if res.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("auth service respondeu %d ao renovar o token -- SECRETS_REFRESH_TOKEN pode estar expirado/revogado, ver limitação de rotação documentada no package doc", res.StatusCode)
+		return "", fmt.Errorf("auth service respondeu %d ao renovar o token -- LAUNCHER_SECRETS_REFRESH_TOKEN pode estar expirado/revogado, ver limitação de rotação documentada no package doc", res.StatusCode)
 	}
 
 	var pair tokenPair
