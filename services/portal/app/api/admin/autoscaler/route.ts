@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import { getStatus } from "@/lib/autoscalerAdminClient";
+import { getStatus, type InstanceSummary } from "@/lib/autoscalerAdminClient";
 import { listGroups, type DiscoveredGroup } from "@/lib/launcherClient";
 import { ACCESS_COOKIE } from "@/lib/session";
 
@@ -24,7 +24,7 @@ export async function GET() {
   }
   const groups: DiscoveredGroup[] = await groupsRes.json();
 
-  const results = await Promise.all(
+  const results: InstanceSummary[] = await Promise.all(
     groups.map(async (group) => {
       const base = {
         id: group.containerId,

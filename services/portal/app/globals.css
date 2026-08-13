@@ -189,28 +189,36 @@ pre.generated {
   white-space: pre;
 }
 
-button {
+button,
+a.primary,
+a.secondary,
+a.danger {
+  display: inline-block;
   cursor: pointer;
   border: none;
   border-radius: 8px;
   padding: 0.6rem 1rem;
   font-size: 0.95rem;
   font-weight: 500;
+  text-decoration: none;
 }
 
-button.primary {
+button.primary,
+a.primary {
   width: 100%;
   background: var(--accent);
   color: var(--accent-fg);
 }
 
-button.secondary {
+button.secondary,
+a.secondary {
   background: transparent;
   border: 1px solid var(--border);
   color: var(--fg);
 }
 
-button.danger {
+button.danger,
+a.danger {
   background: transparent;
   border: 1px solid var(--danger);
   color: var(--danger);

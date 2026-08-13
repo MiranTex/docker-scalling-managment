@@ -53,6 +53,20 @@ export type AutoscalerStatus = {
   uptime_seconds: number;
 };
 
+// InstanceSummary é uma linha de GET /api/admin/autoscaler (todos os
+// groups) e o corpo de GET /api/admin/autoscaler/{instanceId} (um só) --
+// mesma forma nos dois, para a página de detalhe conseguir reaproveitar o
+// tipo da listagem. id é o containerId (ver findGroup), nunca um id
+// gerado por este portal.
+export type InstanceSummary = {
+  id: string;
+  label: string;
+  url: string;
+  network: string;
+  status?: AutoscalerStatus;
+  error?: string;
+};
+
 // findGroup pergunta ao launcher quais groups estão vivos agora (GET
 // /v1/groups) e devolve o que tem este containerId -- é assim que as
 // rotas de UMA instância (policy/restart/réplicas) resolvem o

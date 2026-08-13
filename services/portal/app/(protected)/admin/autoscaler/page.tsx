@@ -2,7 +2,7 @@ import { cookies } from "next/headers";
 import { decodeJwtPayload } from "@/lib/jwt";
 import { hasInfraAdminAccess } from "@/lib/roles";
 import { ACCESS_COOKIE } from "@/lib/session";
-import AutoscalerAdminClient from "./AutoscalerAdminClient";
+import AutoscalerListClient from "./AutoscalerListClient";
 
 // A checagem de role aqui é só UX (evita mostrar o ecrã e depois um erro
 // 403 vindo do fetch) -- a autorização de verdade é feita por cada
@@ -24,5 +24,5 @@ export default async function AdminAutoscalerPage() {
     );
   }
 
-  return <AutoscalerAdminClient />;
+  return <AutoscalerListClient />;
 }
