@@ -7,9 +7,9 @@ import (
 
 	"autoscaler/internal/discovery"
 	"autoscaler/internal/dockerclient"
+	"autoscaler/internal/launcherclient"
 	"autoscaler/internal/loadbalancer"
 	"autoscaler/internal/scaler"
-	"autoscaler/internal/secretsclient"
 )
 
 // snapshotSink recebe, depois de cada reconcile, o estado mais recente
@@ -32,16 +32,17 @@ type snapshotSink interface {
 // group inteiro (docker compose up --force-recreate ou equivalente), não
 // só este restart lógico. O que este restart resolve de fresco é o VALOR
 // de cada referência ${secret:NOME} no "env" (ver applyScaleUp/
-// internal/secretsclient) -- mas isso já acontece em TODO scale up, não
-// só num restart; nesse sentido, um restart não é mais necessário do que
-// qualquer outro scale up para um segredo já referenciado ficar
-// atualizado, só é útil se quiseres forçar a recriação de réplicas já
-// existentes agora, em vez de esperar o próximo scale down/up natural.
+// services/launcher/internal/secretsclient) -- mas isso já acontece em
+// TODO scale up, não só num restart; nesse sentido, um restart não é mais
+// necessário do que qualquer outro scale up para um segredo já
+// referenciado ficar atualizado, só é útil se quiseres forçar a
+// recriação de réplicas já existentes agora, em vez de esperar o próximo
+// scale down/up natural.
 //
 // restartMu serializa isto contra reconcile(): sem essa serialização, um
 // tick concorrente poderia recriar uma réplica enquanto terminateAllReplicas
 // ainda está a removê-las, ou vice-versa.
-func restartGroup(ctx context.Context, cfg config, client *dockerclient.Client, logger *slog.Logger, balancer *loadbalancer.RoundRobin, evaluator *scaler.Evaluator, draining *drainSet, metrics *groupMetrics, restartMu *sync.Mutex, sink snapshotSink, secrets *secretsclient.Client) {
+func restartGroup(ctx context.Context, cfg config, client *dockerclient.Client, logger *slog.Logger, balancer *loadbalancer.RoundRobin, evaluator *scaler.Evaluator, draining *drainSet, metrics *groupMetrics, restartMu *sync.Mutex, sink snapshotSink, launcher *launcherclient.Client) {
 	shutdownCtx, cancel := context.WithTimeout(ctx, cfg.shutdownTimeout)
 	defer cancel()
 
@@ -56,6 +57,6 @@ func restartGroup(ctx context.Context, cfg config, client *dockerclient.Client, 
 	// (reconcile() volta a pegar restartMu por conta própria) -- em vez de
 	// duplicar a lógica de bootstrap, reaproveita o comportamento já testado
 	// de "réplicas=0 -> scaler decide ScaleUp até MinReplicas".
-	reconcile(ctx, cfg, client, logger, balancer, evaluator, draining, metrics, restartMu, sink, secrets)
+	reconcile(ctx, cfg, client, logger, balancer, evaluator, draining, metrics, restartMu, sink, launcher)
 	logger.Info("restart concluído")
 }

@@ -73,12 +73,15 @@ type config struct {
 	// públicas do auth service é revalidado (ver internal/jwtverify).
 	jwksRefresh time.Duration
 
-	// secretsAdminServiceURL/secretsRefreshToken configuram a resolução
-	// de referências ${secret:NOME} dentro do "env" do launch template
-	// (ver internal/secretsclient) -- ambos podem ficar vazios se o
-	// template não usa nenhuma referência desse tipo.
-	secretsAdminServiceURL string
-	secretsRefreshToken    string
+	// launcherServiceURL/launcherRefreshToken configuram o cliente que
+	// pede réplicas novas ao services/launcher (ver internal/launcherclient)
+	// -- é o launcher, não mais este processo, quem resolve ${secret:NOME}
+	// dentro do "env" do launch template antes de criar o container. Ambos
+	// são obrigatórios: ao contrário da resolução de segredos de antes (que
+	// só falhava se o template REALMENTE usasse ${secret:...}), criar uma
+	// réplica agora depende do launcher em todo scale up, sempre.
+	launcherServiceURL   string
+	launcherRefreshToken string
 }
 
 // loadConfig lê a configuração das variáveis de ambiente, aplicando defaults
@@ -113,8 +116,8 @@ func loadConfig() config {
 		authAudience:   envString("AUTH_AUDIENCE", "base-stack"),
 		jwksRefresh:    envSeconds("GROUP_JWKS_REFRESH_SECONDS", 300),
 
-		secretsAdminServiceURL: os.Getenv("SECRETSADMIN_SERVICE_URL"),
-		secretsRefreshToken:    os.Getenv("SECRETS_REFRESH_TOKEN"),
+		launcherServiceURL:   envString("LAUNCHER_SERVICE_URL", "http://localhost:8094"),
+		launcherRefreshToken: os.Getenv("LAUNCHER_REFRESH_TOKEN"),
 	}
 
 	if cfg.targetService == "" {
@@ -122,12 +125,25 @@ func loadConfig() config {
 		os.Exit(1)
 	}
 
+	// O template chega por ficheiro (LAUNCH_TEMPLATE_FILE, o caso normal --
+	// um bind mount no docker-compose) ou inline por variável de ambiente
+	// (LAUNCH_TEMPLATE_JSON) -- esta segunda forma é a que o launcher usa
+	// ao lançar um group novo sem docker-compose nenhum (ver
+	// services/launcher/internal/httpapi.launchGroup): não há ficheiro
+	// nenhum pra montar num container criado dinamicamente.
 	templatePath := os.Getenv("LAUNCH_TEMPLATE_FILE")
-	if templatePath == "" {
-		slog.Error("configuração inválida: LAUNCH_TEMPLATE_FILE é obrigatória (de onde tirar imagem/config das réplicas novas)")
+	templateJSON := os.Getenv("LAUNCH_TEMPLATE_JSON")
+	if templatePath == "" && templateJSON == "" {
+		slog.Error("configuração inválida: defina LAUNCH_TEMPLATE_FILE ou LAUNCH_TEMPLATE_JSON (de onde tirar imagem/config das réplicas novas)")
 		os.Exit(1)
 	}
-	template, err := loadLaunchTemplate(templatePath)
+	var template executor.LaunchTemplate
+	var err error
+	if templatePath != "" {
+		template, err = loadLaunchTemplate(templatePath)
+	} else {
+		template, err = parseLaunchTemplate([]byte(templateJSON))
+	}
 	if err != nil {
 		slog.Error("erro carregando launch template", "file", templatePath, "err", err)
 		os.Exit(1)
@@ -147,15 +163,21 @@ func loadConfig() config {
 	return cfg
 }
 
-// loadLaunchTemplate lê e valida o JSON do launch template. Só confere a
-// forma (campo "image" presente); se a imagem existe/é alcançável de
-// verdade é responsabilidade de quem chama, validando contra o Docker.
+// loadLaunchTemplate lê o launch template de um ficheiro em disco (o caso
+// normal, um bind mount no docker-compose).
 func loadLaunchTemplate(path string) (executor.LaunchTemplate, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return executor.LaunchTemplate{}, fmt.Errorf("lendo arquivo: %w", err)
 	}
+	return parseLaunchTemplate(raw)
+}
 
+// parseLaunchTemplate valida o JSON do launch template, venha ele de um
+// ficheiro ou de LAUNCH_TEMPLATE_JSON. Só confere a forma (campo "image"
+// presente); se a imagem existe/é alcançável de verdade é responsabilidade
+// de quem chama, validando contra o Docker.
+func parseLaunchTemplate(raw []byte) (executor.LaunchTemplate, error) {
 	var template executor.LaunchTemplate
 	if err := json.Unmarshal(raw, &template); err != nil {
 		return executor.LaunchTemplate{}, fmt.Errorf("parseando JSON: %w", err)
@@ -236,5 +258,6 @@ func (c config) logAttrs() []any {
 		"auth_service_url", c.authServiceURL,
 		"auth_issuer", c.authIssuer,
 		"auth_audience", c.authAudience,
+		"launcher_service_url", c.launcherServiceURL,
 	}
 }

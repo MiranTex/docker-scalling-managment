@@ -36,13 +36,17 @@ func (f *fakeVerifier) Verify(ctx context.Context, tokenString string) (jwtverif
 // testar tanto a lógica de validação/handlers quanto concorrência de
 // pedidos HTTP simultâneos sem depender de Docker nenhum.
 type fakeGroupControl struct {
-	mu           sync.Mutex
-	policy       scaler.Policy
-	setPolicyErr error
-	restartErr   error
-	restarts     int
-	status       Status
-	statusErr    error
+	mu            sync.Mutex
+	policy        scaler.Policy
+	setPolicyErr  error
+	restartErr    error
+	restarts      int
+	status        Status
+	statusErr     error
+	addReplicaErr error
+	addedReplicas []string
+	removeErr     error
+	removedIDs    []string
 }
 
 func newFakeGroupControl() *fakeGroupControl {
@@ -86,6 +90,27 @@ func (f *fakeGroupControl) Restart(ctx context.Context) error {
 	return nil
 }
 
+func (f *fakeGroupControl) AddReplica(ctx context.Context) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.addReplicaErr != nil {
+		return "", f.addReplicaErr
+	}
+	id := "replica-" + strconv.Itoa(len(f.addedReplicas)+1)
+	f.addedReplicas = append(f.addedReplicas, id)
+	return id, nil
+}
+
+func (f *fakeGroupControl) RemoveReplica(ctx context.Context, containerID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.removeErr != nil {
+		return f.removeErr
+	}
+	f.removedIDs = append(f.removedIDs, containerID)
+	return nil
+}
+
 func newTestHandler(group GroupControl) (*Handler, *fakeVerifier) {
 	verifier := &fakeVerifier{tokens: map[string]jwtverify.Claims{
 		"infra-admin-token": {Subject: "operator@example.com", Role: RoleInfraAdmin},
@@ -123,6 +148,8 @@ func TestRequireRoleRejectsMissingToken(t *testing.T) {
 		{"GET", "/v1/policy"},
 		{"PUT", "/v1/policy"},
 		{"POST", "/v1/restart"},
+		{"POST", "/v1/replicas"},
+		{"DELETE", "/v1/replicas/abc123"},
 	} {
 		rec := doRequest(t, mux, route.method, route.path, "", "")
 		if rec.Code != http.StatusUnauthorized {
@@ -286,6 +313,62 @@ func TestHandleRestartReturnsGroupControlError(t *testing.T) {
 	h.Register(mux)
 
 	rec := doRequest(t, mux, "POST", "/v1/restart", "infra-admin-token", "")
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502 (body: %s)", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleAddReplicaSuccess(t *testing.T) {
+	fake := newFakeGroupControl()
+	h, _ := newTestHandler(fake)
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	rec := doRequest(t, mux, "POST", "/v1/replicas", "infra-admin-token", "")
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201 (body: %s)", rec.Code, rec.Body.String())
+	}
+	if len(fake.addedReplicas) != 1 {
+		t.Fatalf("addedReplicas = %v, want 1 entrada", fake.addedReplicas)
+	}
+}
+
+func TestHandleAddReplicaReturnsGroupControlError(t *testing.T) {
+	fake := newFakeGroupControl()
+	fake.addReplicaErr = errors.New("launcher inalcançável")
+	h, _ := newTestHandler(fake)
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	rec := doRequest(t, mux, "POST", "/v1/replicas", "infra-admin-token", "")
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502 (body: %s)", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleRemoveReplicaSuccess(t *testing.T) {
+	fake := newFakeGroupControl()
+	h, _ := newTestHandler(fake)
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	rec := doRequest(t, mux, "DELETE", "/v1/replicas/abc123", "infra-admin-token", "")
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204 (body: %s)", rec.Code, rec.Body.String())
+	}
+	if len(fake.removedIDs) != 1 || fake.removedIDs[0] != "abc123" {
+		t.Fatalf("removedIDs = %v, want [abc123]", fake.removedIDs)
+	}
+}
+
+func TestHandleRemoveReplicaReturnsGroupControlError(t *testing.T) {
+	fake := newFakeGroupControl()
+	fake.removeErr = errors.New("container inexistente")
+	h, _ := newTestHandler(fake)
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	rec := doRequest(t, mux, "DELETE", "/v1/replicas/abc123", "infra-admin-token", "")
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("status = %d, want 502 (body: %s)", rec.Code, rec.Body.String())
 	}

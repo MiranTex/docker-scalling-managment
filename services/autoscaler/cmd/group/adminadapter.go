@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"log/slog"
 	"os"
 	"sync"
@@ -12,9 +13,10 @@ import (
 	"autoscaler/internal/adminapi"
 	"autoscaler/internal/discovery"
 	"autoscaler/internal/dockerclient"
+	"autoscaler/internal/executor"
+	"autoscaler/internal/launcherclient"
 	"autoscaler/internal/loadbalancer"
 	"autoscaler/internal/scaler"
-	"autoscaler/internal/secretsclient"
 )
 
 // groupAdapter implementa adminapi.GroupControl fechando sobre exatamente
@@ -31,7 +33,7 @@ type groupAdapter struct {
 	draining  *drainSet
 	metrics   *groupMetrics
 	restartMu *sync.Mutex
-	secrets   *secretsclient.Client
+	launcher  *launcherclient.Client
 	startedAt time.Time
 
 	snapMu         sync.RWMutex
@@ -41,7 +43,7 @@ type groupAdapter struct {
 	lastActionAt   time.Time
 }
 
-func newGroupAdapter(cfg config, client *dockerclient.Client, logger *slog.Logger, balancer *loadbalancer.RoundRobin, evaluator *scaler.Evaluator, draining *drainSet, metrics *groupMetrics, restartMu *sync.Mutex, secrets *secretsclient.Client) *groupAdapter {
+func newGroupAdapter(cfg config, client *dockerclient.Client, logger *slog.Logger, balancer *loadbalancer.RoundRobin, evaluator *scaler.Evaluator, draining *drainSet, metrics *groupMetrics, restartMu *sync.Mutex, launcher *launcherclient.Client) *groupAdapter {
 	return &groupAdapter{
 		cfg:       cfg,
 		client:    client,
@@ -51,7 +53,7 @@ func newGroupAdapter(cfg config, client *dockerclient.Client, logger *slog.Logge
 		draining:  draining,
 		metrics:   metrics,
 		restartMu: restartMu,
-		secrets:   secrets,
+		launcher:  launcher,
 		startedAt: time.Now(),
 	}
 }
@@ -77,7 +79,59 @@ func (a *groupAdapter) SetPolicy(p scaler.Policy) (scaler.Policy, error) {
 }
 
 func (a *groupAdapter) Restart(ctx context.Context) error {
-	restartGroup(ctx, a.cfg, a.client, a.logger, a.balancer, a.evaluator, a.draining, a.metrics, a.restartMu, a, a.secrets)
+	restartGroup(ctx, a.cfg, a.client, a.logger, a.balancer, a.evaluator, a.draining, a.metrics, a.restartMu, a, a.launcher)
+	return nil
+}
+
+// AddReplica cria uma réplica extra imediatamente, fora do ciclo normal do
+// scaler -- mesmo caminho (local ou via launcher) que applyScaleUp usaria
+// num scale up automático, ver cmd/group/main.go. restartMu serializa
+// isto contra reconcile()/Restart(), pela mesma razão de sempre: evitar
+// que um tick concorrente crie/remova réplicas ao mesmo tempo que uma
+// ação manual.
+func (a *groupAdapter) AddReplica(ctx context.Context) (string, error) {
+	a.restartMu.Lock()
+	defer a.restartMu.Unlock()
+
+	id, err := applyScaleUp(ctx, a.client, a.launcher, a.cfg.launchTemplate)
+	if err != nil {
+		return "", err
+	}
+	a.metrics.scaleActions.WithLabelValues(a.cfg.targetService, "manual_scale_up").Inc()
+	a.logger.Info("réplica adicionada manualmente via API admin", "container_id", id[:12])
+	return id, nil
+}
+
+// RemoveReplica para e remove uma réplica específica -- confirma primeiro
+// que o container pertence de facto a este group (mesma label de
+// serviço), para um id errado/de outro serviço nunca ser aceite.
+func (a *groupAdapter) RemoveReplica(ctx context.Context, containerID string) error {
+	a.restartMu.Lock()
+	defer a.restartMu.Unlock()
+
+	filters := map[string][]string{
+		"label": {fmt.Sprintf("%s=%s", a.cfg.serviceLabel, a.cfg.targetService)},
+	}
+	containers, err := a.client.ListContainers(ctx, true, filters)
+	if err != nil {
+		return fmt.Errorf("listando réplicas: %w", err)
+	}
+	found := false
+	for _, c := range containers {
+		if c.ID == containerID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("container %s não é uma réplica gerida por este group", containerID)
+	}
+
+	if err := executor.Remove(ctx, a.client, containerID); err != nil {
+		return err
+	}
+	a.metrics.scaleActions.WithLabelValues(a.cfg.targetService, "manual_scale_down").Inc()
+	a.logger.Info("réplica removida manualmente via API admin", "container_id", containerID[:12])
 	return nil
 }
 
@@ -106,12 +160,12 @@ func (a *groupAdapter) Status(ctx context.Context) (adminapi.Status, error) {
 	}
 
 	status := adminapi.Status{
-		TargetService: a.cfg.targetService,
-		ReplicaCount:  len(containers),
-		Replicas:      replicas,
-		Policy:        adminapi.PolicyToDTO(a.evaluator.Policy()),
+		TargetService:  a.cfg.targetService,
+		ReplicaCount:   len(containers),
+		Replicas:       replicas,
+		Policy:         adminapi.PolicyToDTO(a.evaluator.Policy()),
 		LaunchTemplate: launchTemplateInfo(a.cfg.launchTemplatePath),
-		UptimeSeconds: time.Since(a.startedAt).Seconds(),
+		UptimeSeconds:  time.Since(a.startedAt).Seconds(),
 	}
 	if decision.Action != scaler.NoAction && !lastActionAt.IsZero() {
 		status.LastAction = &adminapi.ScaleAction{

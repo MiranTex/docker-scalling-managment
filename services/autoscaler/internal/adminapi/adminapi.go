@@ -65,13 +65,13 @@ type ScaleAction struct {
 
 // Status é a resposta completa de GET /v1/status.
 type Status struct {
-	TargetService  string              `json:"target_service"`
-	ReplicaCount   int                 `json:"replica_count"`
-	Replicas       []Replica           `json:"replicas"`
-	Policy         PolicyDTO           `json:"policy"`
-	LaunchTemplate LaunchTemplateInfo  `json:"launch_template"`
-	LastAction     *ScaleAction        `json:"last_scale_action,omitempty"`
-	UptimeSeconds  float64             `json:"uptime_seconds"`
+	TargetService  string             `json:"target_service"`
+	ReplicaCount   int                `json:"replica_count"`
+	Replicas       []Replica          `json:"replicas"`
+	Policy         PolicyDTO          `json:"policy"`
+	LaunchTemplate LaunchTemplateInfo `json:"launch_template"`
+	LastAction     *ScaleAction       `json:"last_scale_action,omitempty"`
+	UptimeSeconds  float64            `json:"uptime_seconds"`
 }
 
 // GroupControl é a ponte para o estado vivo do processo cmd/group --
@@ -84,6 +84,16 @@ type GroupControl interface {
 	Policy() scaler.Policy
 	SetPolicy(p scaler.Policy) (scaler.Policy, error)
 	Restart(ctx context.Context) error
+	// AddReplica cria uma réplica extra imediatamente, fora do ciclo normal
+	// do scaler (ex: pedido manual via UI) -- mesmo caminho que um scale up
+	// automático usaria (local ou via launcher, ver cmd/group/main.go,
+	// applyScaleUp), só que disparado a pedido em vez de por decisão do
+	// scaler.Evaluator.
+	AddReplica(ctx context.Context) (string, error)
+	// RemoveReplica para e remove imediatamente UMA réplica específica,
+	// escolhida por quem chama (não pelo critério de "menos carregada" que
+	// SelectScaleDownTarget usaria num scale down automático).
+	RemoveReplica(ctx context.Context, containerID string) error
 }
 
 // PolicyDTO é a policy exposta pela API, em snake_case e com ponteiros para
@@ -185,6 +195,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/policy", h.requireRole(RoleInfraAdmin, h.handleGetPolicy))
 	mux.HandleFunc("PUT /v1/policy", h.requireRole(RoleInfraAdmin, h.handlePutPolicy))
 	mux.HandleFunc("POST /v1/restart", h.requireRole(RoleInfraAdmin, h.handleRestart))
+	mux.HandleFunc("POST /v1/replicas", h.requireRole(RoleInfraAdmin, h.handleAddReplica))
+	mux.HandleFunc("DELETE /v1/replicas/{id}", h.requireRole(RoleInfraAdmin, h.handleRemoveReplica))
 }
 
 var errMissingToken = errors.New("adminapi: cabeçalho Authorization ausente")
@@ -273,6 +285,32 @@ func (h *Handler) handleRestart(w http.ResponseWriter, r *http.Request, subject 
 		"status":       "restarted",
 		"restarted_at": time.Now(),
 	})
+}
+
+// handleAddReplica cria uma réplica extra imediatamente -- ação manual,
+// não passa pelo scaler.Evaluator (ver GroupControl.AddReplica).
+func (h *Handler) handleAddReplica(w http.ResponseWriter, r *http.Request, subject string) {
+	containerID, err := h.group.AddReplica(r.Context())
+	if err != nil {
+		h.audit.Log(subject, "replica.add", "", "falhou: "+err.Error())
+		writeError(w, http.StatusBadGateway, "add_replica_failed", err.Error())
+		return
+	}
+	h.audit.Log(subject, "replica.add", containerID, "concluído")
+	writeJSON(w, http.StatusCreated, map[string]string{"container_id": containerID})
+}
+
+// handleRemoveReplica para e remove uma réplica específica, escolhida por
+// quem chama -- ação manual, ver GroupControl.RemoveReplica.
+func (h *Handler) handleRemoveReplica(w http.ResponseWriter, r *http.Request, subject string) {
+	id := r.PathValue("id")
+	if err := h.group.RemoveReplica(r.Context(), id); err != nil {
+		h.audit.Log(subject, "replica.remove", id, "falhou: "+err.Error())
+		writeError(w, http.StatusBadGateway, "remove_replica_failed", err.Error())
+		return
+	}
+	h.audit.Log(subject, "replica.remove", id, "concluído")
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

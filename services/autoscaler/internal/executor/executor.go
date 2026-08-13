@@ -69,11 +69,23 @@ func scaleUp(ctx context.Context, client *dockerclient.Client, members []dockerc
 
 // LaunchTemplate descreve como criar uma réplica nova do zero: imagem,
 // comando, env, labels e config de rede/volumes. Ao contrário de scaleUp
-// (que clona um container já rodando, escolhido meio arbitrariamente),
-// ApplyWithTemplate cria toda réplica nova a partir daqui -- inclusive a
+// (que clona um container já rodando, escolhido meio arbitrariamente), é
+// a partir daqui que cmd/group monta o pedido que manda ao launcher (ver
+// internal/launcherclient) para criar toda réplica nova -- inclusive a
 // primeira, quando ainda não existe nenhum container do serviço. Também
 // significa que mudar o template (ex: nova versão da imagem) só afeta as
 // PRÓXIMAS réplicas criadas, não substitui as que já estão rodando.
+//
+// Criar a partir daqui tem dois caminhos possíveis, escolhidos por
+// cmd/group (ver applyScaleUp): se o "env" não referencia nenhum
+// ${secret:NOME}, CreateFromTemplate cria localmente, sem precisar do
+// launcher -- é o que mantém um group auto-referencial (ex: group-authd,
+// cujo AUTH_SERVICE_URL aponta pra ele mesmo) capaz de arrancar a
+// PRIMEIRA réplica sozinho, sem depender de um access token que só essa
+// réplica poderia emitir. Só quando o "env" tem segredos de verdade é que
+// vale a pena depender do launcher (ver
+// services/launcher/internal/httpapi, POST /v1/replicas) -- ele é quem
+// tem a credencial para o secretsadmin.
 type LaunchTemplate struct {
 	Image   string            `json:"image"`
 	Cmd     []string          `json:"cmd,omitempty"`
@@ -89,24 +101,13 @@ type LaunchTemplate struct {
 	ExtraHosts []string `json:"extraHosts,omitempty"`
 }
 
-// ApplyWithTemplate é a versão de Apply usada pelo cmd/group: o scale up
-// cria sempre a partir do LaunchTemplate, nunca clonando um container já
-// existente -- isso é o que permite escalar a partir de zero réplicas.
-// O scale down continua igual (escolhe entre os containers existentes).
-func ApplyWithTemplate(ctx context.Context, client *dockerclient.Client, decision scaler.Decision, template LaunchTemplate, members []dockerclient.Container) error {
-	switch decision.Action {
-	case scaler.ScaleUp:
-		return scaleUpFromTemplate(ctx, client, template)
-	case scaler.ScaleDown:
-		return scaleDown(ctx, client, members)
-	default:
-		return nil
-	}
-}
-
-func scaleUpFromTemplate(ctx context.Context, client *dockerclient.Client, template LaunchTemplate) error {
+// CreateFromTemplate cria+inicia um container diretamente a partir de
+// template, sem passar pelo launcher -- só seguro de chamar quando
+// template.Env não tem nenhuma referência ${secret:NOME} (quem decide
+// isso é cmd/group.applyScaleUp, não este pacote).
+func CreateFromTemplate(ctx context.Context, client *dockerclient.Client, template LaunchTemplate) (string, error) {
 	if template.Image == "" {
-		return errors.New("executor: launch template sem \"image\" definida")
+		return "", errors.New("executor: launch template sem \"image\" definida")
 	}
 
 	id, err := client.CreateContainer(ctx, "", dockerclient.CreateContainerRequest{
@@ -121,13 +122,13 @@ func scaleUpFromTemplate(ctx context.Context, client *dockerclient.Client, templ
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("executor: criando container a partir do launch template: %w", err)
+		return "", fmt.Errorf("executor: criando container a partir do launch template: %w", err)
 	}
 
 	if err := client.StartContainer(ctx, id); err != nil {
-		return fmt.Errorf("executor: iniciando container %s: %w", id[:12], err)
+		return "", fmt.Errorf("executor: iniciando container %s: %w", id[:12], err)
 	}
-	return nil
+	return id, nil
 }
 
 // scaleDown escolhe e remove imediatamente um container do grupo. Usado
