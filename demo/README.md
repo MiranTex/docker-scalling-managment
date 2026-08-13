@@ -1,72 +1,41 @@
 # demo
 
-Demo end-to-end do base-stack: [services/autoscaler](../services/autoscaler)
-+ [services/monitoring](../services/monitoring) (um serviço "demo" escalando
-de verdade, com métricas e logs no Grafana) e, à parte,
+Demo end-to-end dos serviços BASE do base-stack:
 [services/auth](../services/auth) + [services/portal](../services/portal) +
-[services/database](../services/database) — com o próprio `auth` também
-gerido pelo autoscaler (`group-authd`), não como um container estático, e o
-Postgres do auth vindo do `database` (Postgres partilhado com backups/PITR),
-não de um `postgres:16-alpine` ad-hoc só deste demo. As duas partes
-(demo/monitoring e auth/portal/database) são independentes uma da outra —
-pode subir só a que precisa.
+[services/database](../services/database) +
+[services/secretsadmin](../services/secretsadmin) +
+[services/templatesadmin](../services/templatesadmin) +
+[services/launcher](../services/launcher), com o próprio `auth` gerido pelo
+autoscaler (`group-authd`), não como um container estático, e o Postgres do
+auth vindo do `database` (Postgres partilhado com backups/PITR), não de um
+`postgres:16-alpine` ad-hoc só deste demo.
 
-## Autoscaler + monitoring (nginx de exemplo)
+Isto é a PLATAFORMA -- depois de subir, novos serviços não se escrevem à
+mão neste `docker-compose.yml`: criam-se um modelo no templatesadmin e
+lançam-se a partir dele via launcher (ver "Criar um novo serviço
+autoscalado" e "Lançar containers sem autoscaling (launcher)" abaixo).
+[services/monitoring](../services/monitoring) (Prometheus/Grafana) é uma
+plataforma separada e opcional que qualquer serviço criado a partir daqui
+já sabe anunciar-se a (labels `prometheus.scrape`/`prometheus.port`).
 
-1. Suba a plataforma de observabilidade (uma vez só):
-   ```sh
-   docker compose -f services/monitoring/docker-compose.yml up -d
-   ```
-2. Construa a imagem do autoscaler (repita sempre que mudar o código):
-   ```sh
-   docker build -t autoscaler-group:latest services/autoscaler
-   ```
-3. Suba o demo:
-   ```sh
-   docker compose -f demo/docker-compose.yml up -d group-demo
-   ```
+## Subir a plataforma base (auth gerido pelo autoscaler, Postgres partilhado)
 
-O `group-demo` já nasce configurado com `LAUNCH_TEMPLATE_FILE` apontando
-pra [launch-template.json](launch-template.json) (deste diretório) — cria
-sozinho a(s) réplica(s) do serviço "demo" (nginx:alpine), inclusive a
-primeira, sem precisar de bootstrap manual.
-
-### Onde olhar
-
-- **Proxy do serviço demo**: `http://localhost:8095`
-- **Health/métricas do group**: `http://localhost:9095/healthz`,
-  `/readyz`, `/metrics`
-- **Grafana**: `http://localhost:3000` (dashboard "Autoscaler" já
-  provisionado — métricas de réplicas, CPU, scale up/down, e logs)
-- **Prometheus**: `http://localhost:9091` (confira em Status → Targets que
-  `group-demo` está `UP`)
-
-### Portas 8095/9095 (não 8090/9090)
-
-Ajustadas pra não colidir com outro projeto rodando no mesmo host — se não
-for o teu caso, pode simplificar de volta pra 8090/9090 em
-`demo/docker-compose.yml`.
-
-## Auth + portal + database (auth gerido pelo autoscaler, Postgres partilhado)
-
-Não precisa da plataforma de observabilidade — fica numa rede própria
-(`auth-net`, nome fixo) dentro do mesmo `docker-compose.yml`. Duas
-diferenças em relação a uma instalação "normal" do `auth` (ver
+Fica numa rede própria (`auth-net`, nome fixo) dentro do mesmo
+`docker-compose.yml`. Duas diferenças em relação a uma instalação "normal"
+do `auth` (ver
 [services/auth/docker-compose.yml](../services/auth/docker-compose.yml)):
 
 - Não existe um serviço Compose `authd` — quem cria/escala/remove os
-  containers do auth é o **`group-authd`**, uma instância do autoscaler
-  (mesmo binário do `group-demo`, outro `TARGET_SERVICE`), a partir de
-  [launch-template.auth.json](launch-template.auth.json). É o autoscaler a
-  gerir um serviço real, não só o nginx de exemplo.
+  containers do auth é o **`group-authd`**, uma instância do autoscaler, a
+  partir de [launch-template.auth.json](launch-template.auth.json) (pedindo
+  cada réplica nova ao **`launcher`**, ver "Segredos" abaixo).
 - O Postgres não é um `postgres:16-alpine` dedicado ao auth — é o
   **`database`** ([services/database](../services/database)), o Postgres
   partilhado do base-stack (um schema por serviço, backups em rotina +
-  PITR via pgBackRest). `demo/db-init/01-auth-role.sql` provisiona a role
-  `auth` nele na primeira inicialização; o próprio `authd` cria o seu
-  schema (`auth`) sozinho no arranque (ver
-  `services/auth/internal/store/migrate.go`) — o `database` não precisa
-  saber nada sobre o schema de ninguém.
+  PITR via pgBackRest). `demo/db-init/*.sql` provisiona a role de cada
+  serviço nele na primeira inicialização; cada serviço cria o seu próprio
+  schema sozinho no arranque (ver `internal/store/migrate.go` de cada um)
+  — o `database` não precisa saber nada sobre o schema de ninguém.
 
 1. Construa as imagens:
    ```sh
@@ -74,13 +43,16 @@ diferenças em relação a uma instalação "normal" do `auth` (ver
    docker build -t auth-service:latest services/auth
    docker build -t portal:latest services/portal
    docker build -t database-service:latest services/database
+   docker build -t secretsadmin:latest services/secretsadmin
+   docker build -t templatesadmin:latest services/templatesadmin
+   docker build -t launcher:latest services/launcher
    ```
-2. Suba:
+2. Suba tudo:
    ```sh
-   docker compose -f demo/docker-compose.yml up -d database group-authd portal
+   docker compose -f demo/docker-compose.yml up -d
    ```
-   O `group-authd` cria a primeira réplica do `authd` sozinho (mesmo
-   princípio do `group-demo`) — confira com
+   O `group-authd` cria a primeira réplica do `authd` sozinho (pedindo-a
+   ao `launcher`) — confira com
    `docker ps --filter label=autoscaler.service=auth`.
 
    Opcional: `docker compose -f demo/docker-compose.yml up -d adminer`
@@ -145,26 +117,28 @@ Humanos (role `infra-admin`, via `/admin/secrets` no portal) gerem
 nomes/valores mas nunca conseguem voltar a ler um valor depois de o
 gravarem; só uma conta de MÁQUINA (role `service`) consegue resolver um
 nome para o valor em claro (`POST /v1/secrets/resolve`), e só o
-`cmd/group` do autoscaler faz isso, na altura de cada scale up (ver
-`services/autoscaler/internal/secretsclient`).
+[services/launcher](../services/launcher) faz isso -- é ele quem, de
+facto, cria todo container novo (ver "Lançar containers sem autoscaling
+(launcher)" abaixo), na altura de cada scale up pedido por um group ou de
+cada instância "solo" pedida via `POST /v1/instances`.
 
-1. Construa e suba o secretsadmin:
+1. Construa e suba o secretsadmin e o launcher:
    ```sh
    docker build -t secretsadmin:latest services/secretsadmin
-   docker compose -f demo/docker-compose.yml up -d secretsadmin
+   docker build -t launcher:latest services/launcher
+   docker compose -f demo/docker-compose.yml up -d secretsadmin launcher
    ```
 2. Bootstrap da conta de serviço (uma vez só) — nenhum destes passos tem
-   UI ainda, é `curl` direto contra o auth service. Exemplo com
-   `group-demo` (descomenta o serviço `group-demo` em
-   `demo/docker-compose.yml` e adiciona-lhe `AUTH_SERVICE_URL`/
-   `AUTH_ISSUER`/`AUTH_AUDIENCE` a apontar para `group-authd` +
-   `SECRETSADMIN_SERVICE_URL`/`SECRETS_REFRESH_TOKEN`, e a rede
-   `auth-net` -- ver abaixo porquê NÃO usar `group-authd` para isto):
+   UI ainda, é `curl` direto contra o auth service. O launcher (serviço
+   `launcher` em `demo/docker-compose.yml`) precisa da sua própria conta
+   `service` para falar com o secretsadmin, e cada group precisa de OUTRA
+   conta `service` para falar com o launcher (ver abaixo porquê NÃO usar
+   `group-authd` para testar isto):
    ```sh
    # 1. Regista a conta (role nasce "user")
    curl -X POST http://localhost:8081/v1/register \
      -H "Content-Type: application/json" \
-     -d '{"email":"svc-group-demo@service.test","password":"não-vai-ser-usada"}'
+     -d '{"email":"svc-launcher@service.test","password":"não-vai-ser-usada"}'
    # 2. Promove a "service" (precisa de um super-admin já existente --
    #    ver "promoção a super-admin" mais acima)
    curl -X PATCH http://localhost:8081/v1/admin/users/<ID>/role \
@@ -174,48 +148,62 @@ nome para o valor em claro (`POST /v1/secrets/resolve`), e só o
    curl -X POST http://localhost:8081/v1/admin/users/<ID>/tokens \
      -H "Authorization: Bearer <TOKEN_SUPER_ADMIN>"
    ```
-   Guarda o `refresh_token` da resposta -- é o `SECRETS_REFRESH_TOKEN` de
-   `group-demo` (ou de qualquer outro group que precise de segredos):
+   Guarda o `refresh_token` da resposta -- é o `LAUNCHER_SECRETS_REFRESH_TOKEN`
+   do launcher:
    ```sh
-   export GROUP_DEMO_SECRETS_REFRESH_TOKEN="<refresh_token>"
-   docker compose -f demo/docker-compose.yml up -d group-demo
+   export LAUNCHER_SECRETS_REFRESH_TOKEN="<refresh_token>"
+   docker compose -f demo/docker-compose.yml up -d launcher
    ```
-3. Cria um segredo via portal (`/admin/secrets`, role `infra-admin`) e
-   referencia-o em `${secret:NOME}` dentro do `env` de um launch template
-   (já feito em [launch-template.json](launch-template.json), campo
-   `DEMO_SECRET_VALUE`, referenciando o segredo `auth-db-password` só
-   para ilustrar o mecanismo). Confirma que resolveu de verdade:
+   Repita os 3 passos com outra conta (ex: `svc-group-authd@service.test`)
+   para obter o `GROUP_AUTHD_LAUNCHER_REFRESH_TOKEN` de `group-authd` (ver
+   serviço `group-authd` em `demo/docker-compose.yml`):
    ```sh
-   docker inspect $(docker ps --filter "label=autoscaler.service=demo" -q) \
-     --format '{{range .Config.Env}}{{println .}}{{end}}' | grep DEMO_SECRET_VALUE
+   export GROUP_AUTHD_LAUNCHER_REFRESH_TOKEN="<refresh_token>"
+   docker compose -f demo/docker-compose.yml up -d group-authd
+   ```
+3. Cria um segredo via portal (`/admin/secrets`, role `infra-admin`), cria
+   um modelo no templatesadmin (`/admin/templates`) referenciando-o em
+   `${secret:NOME}` dentro do `env`, e lança-o como instância "solo" via
+   launcher (ver "Lançar containers sem autoscaling (launcher)" abaixo).
+   Confirma que resolveu de verdade:
+   ```sh
+   docker inspect <container_id_devolvido_pelo_launcher> \
+     --format '{{range .Config.Env}}{{println .}}{{end}}' | grep NOME_DA_VARIAVEL
    ```
 
-### Cuidado real: não referencies segredos no launch template do PRÓPRIO auth
+### Cuidado real: `group-authd` continua auto-referencial, só que agora sempre
 
-Isto foi reproduzido manualmente durante o desenvolvimento desta feature:
-o `secretsclient` do `group-authd` autentica-se contra `AUTH_SERVICE_URL`,
-que aqui aponta para o **próprio** `group-authd` (é ele quem serve o auth
-service que gere). Se `launch-template.auth.json` referenciar
-`${secret:...}` e as réplicas do `auth` caírem a zero (ex: depois de um
-`POST /v1/restart`, que termina TODAS as réplicas antes de recriar),
-resolver o segredo passa a exigir um access token válido -- que exige
-chamar `.../v1/token/refresh` contra um auth service que não tem nenhuma
-réplica de pé para responder. Deadlock: a réplica nunca sobe, porque
-resolvê-la depende de ela já estar de pé. Usa `${secret:...}` nos launch
-templates de OUTROS serviços (cujo `AUTH_SERVICE_URL` aponta a um auth
-service independente, já de pé) — não no do próprio `auth`.
+Antes desta feature, o cuidado abaixo só se aplicava se
+`launch-template.auth.json` referenciasse `${secret:...}` (não referencia,
+por isso `group-authd` nunca sofria o problema na prática). Com o
+launcher, o cuidado passa a valer INCONDICIONALMENTE, porque toda réplica
+nova -- com ou sem segredo -- agora depende de `group-authd` conseguir
+chamar o launcher, autenticado com o seu próprio `LAUNCHER_REFRESH_TOKEN`.
+
+`group-authd` renova esse token chamando `.../v1/token/refresh` através do
+seu PRÓPRIO proxy (é ele quem serve o auth service que gere). Se as
+réplicas do `auth` caírem a zero (ex: depois de um `POST /v1/restart`, que
+termina TODAS as réplicas antes de recriar, ou um reboot completo do
+ambiente), renovar o token falha -- e sem token, `group-authd` não
+consegue pedir ao launcher a primeira réplica nova. Deadlock: a réplica
+nunca sobe, porque conseguir criá-la depende de uma réplica já estar de
+pé. Isto NÃO é um problema para outros groups (cujo `AUTH_SERVICE_URL`
+aponta a um auth service independente, já de pé) -- só para `group-authd`
+especificamente, por gerir o próprio auth service de que ele mesmo
+depende. Não resolvido nesta iteração: o access token inicial dura tempo
+suficiente para o ambiente terminar de subir; se expirar antes disso, é
+preciso emitir um `LAUNCHER_REFRESH_TOKEN` novo manualmente (mesmo
+bootstrap do passo 2 acima) e recriar `group-authd`.
 
 ## Criar um novo serviço autoscalado (templatesadmin)
 
-[services/templatesadmin](../services/templatesadmin) é um gerador de
-configuração persistido: guarda, por nome, um "modelo de serviço" (a
-imagem, `cmd`, `env`, `labels`, `binds`, `network`, `extraHosts` de um
-launch template, mais os campos de grupo que hoje só existem como env
-vars de um `group-*` no Compose -- `target_service`, réplicas mín/máx,
-`backend_port`, portas de host). Não sobe nem gere nenhum container --
-o `/admin/templates` do portal só produz o `launch-template.<nome>.json`
-e o bloco YAML do `group-<nome>` prontos para você aplicar à mão (ver
-"Fora de escopo" abaixo).
+[services/templatesadmin](../services/templatesadmin) é um repositório de
+launch templates: guarda, por nome, só o que o CONTAINER da aplicação
+precisa -- imagem, `cmd`, `env`, `labels`, `binds`, `network`,
+`extraHosts`. Não tem nenhum campo de autoscaling (réplicas, thresholds de
+CPU, nome do serviço, portas) -- isso é decidido no momento de lançar,
+não faz parte do modelo (ver abaixo). Não sobe nem gere nenhum container
+por si só -- quem faz isso é o launcher.
 
 1. Construa e suba o templatesadmin:
    ```sh
@@ -226,28 +214,88 @@ e o bloco YAML do `group-<nome>` prontos para você aplicar à mão (ver
    imagem já buildada/pulled no Docker do host (populado via
    `GET /v1/images`, que fala com o Engine API local -- por isso este
    serviço também monta `/var/run/docker.sock`, mesma superfície de
-   risco que `group-authd` já tem), preencha as variáveis de ambiente
+   risco que `group-authd` já tem) e preencha as variáveis de ambiente
    (estáticas ou `${secret:NOME}`, escolhendo um nome já criado em
-   `/admin/secrets`) e os campos de grupo (nome do serviço, réplicas,
-   portas).
-3. Clique em "Gerar": copie o JSON para
-   `demo/launch-template.<nome>.json` e cole o bloco YAML gerado como um
-   novo serviço `group-<nome>` em `demo/docker-compose.yml` (mesmo
-   formato do bloco comentado `group-demo`).
-4. Suba o serviço novo:
-   ```sh
-   docker compose -f demo/docker-compose.yml up -d group-<nome>
-   ```
+   `/admin/secrets`).
+3. Salve o modelo com um `name` (ex: `laravel-app`) -- não precisa copiar
+   nada para `demo/docker-compose.yml`: o launcher lê este modelo direto
+   do templatesadmin pelo nome, no momento de lançar.
+4. Lance-o a partir do modelo:
+   - **Instância solo** (só a app, sem autoscaling nenhum) -- em
+     `/admin/launcher`, escolha o modelo e clique "Lançar".
+   - **Autoscaler-group** (a app gerida por um autoscaler, que passa a
+     criar/remover as suas próprias réplicas) -- em `/admin/autoscaler`,
+     secção "Criar grupo": escolha o modelo e preencha o nome do serviço,
+     réplicas mín./máx. e thresholds de CPU (é aqui, não no modelo, que
+     esta config vive agora).
 
-### Fora de escopo (por agora)
+Ver "Lançar containers sem autoscaling (launcher)" abaixo para os
+detalhes de cada rota da API por trás destes dois botões.
 
-Isto é um gerador, não um orquestrador: nenhum container é criado a
-partir da UI. Para isso acontecer "ao vivo" seria preciso mudar o
-`cmd/group` do autoscaler para aceitar um template vindo de uma chamada
-de rede (hoje só lê de um ficheiro local, ver
-`services/autoscaler/cmd/group/config.go`, `loadLaunchTemplate`) e trocar
-o `AUTOSCALER_ADMIN_INSTANCES` estático do portal por um registo
-dinâmico de grupos -- nenhuma das duas coisas existe ainda.
+Um group criado em "Criar grupo" aparece sozinho na tabela de
+`/admin/autoscaler` -- essa lista é descoberta em tempo real contra o
+Docker (via launcher, `GET /v1/groups`, por label `autoscaler.role=group`),
+não uma configuração estática. A partir dessa tabela também se consegue
+lançar/matar réplicas específicas de cada group manualmente (`POST`/`DELETE
+/v1/replicas` na API admin desse group), além da policy e do restart que
+já existiam.
+
+## Lançar containers sem autoscaling (launcher)
+
+[services/launcher](../services/launcher) é o serviço que resolve o
+problema que motivou toda esta secção de segredos: antes, a ÚNICA forma
+de uma aplicação ter acesso a `${secret:NOME}` era correr sob um
+autoscaler-group, porque só o `cmd/group` sabia falar com o secretsadmin.
+Agora é o launcher quem sabe fazer isso -- e ele consegue lançar dois
+tipos de coisa a partir de um modelo já guardado no templatesadmin:
+
+- `"kind": "solo"` -- um único container da aplicação, sem nenhum
+  autoscaler à volta, com o `env` já resolvido. UI: `/admin/launcher`.
+- `"kind": "group"` -- um `autoscaler-group` inteiro (a mesma imagem de
+  `group-authd`), que a partir daí passa a gerir as suas PRÓPRIAS
+  réplicas chamando o launcher (ver "Cuidado real" acima para a conta de
+  serviço que esse group novo precisa). UI: `/admin/autoscaler`, secção
+  "Criar grupo" -- é aqui, não no modelo, que se preenche o nome do
+  serviço, réplicas mín./máx. e thresholds de CPU.
+
+Nenhum dos dois passa pelo `demo/docker-compose.yml` -- é exatamente o
+"lançar um container fora do compose" que motivou este serviço. Ambas as
+UIs são só um proxy fino para a API do launcher (ver
+`services/portal/lib/launcherClient.ts`); o mesmo dá para fazer direto
+por `curl`:
+
+```sh
+# Lançar uma instância solo a partir do modelo "demo" (já criado no
+# templatesadmin -- ver secção anterior):
+curl -X POST http://localhost:8094/v1/instances \
+  -H "Authorization: Bearer <TOKEN_INFRA_ADMIN>" -H "Content-Type: application/json" \
+  -d '{"templateName":"demo","kind":"solo"}'
+
+# Lançar um group a partir do mesmo modelo:
+curl -X POST http://localhost:8094/v1/instances \
+  -H "Authorization: Bearer <TOKEN_INFRA_ADMIN>" -H "Content-Type: application/json" \
+  -d '{"templateName":"demo","kind":"group","targetService":"demo","minReplicas":1,"maxReplicas":3,"cpuScaleUpPercent":50,"cpuScaleDownPercent":20,"replicaAuthToken":"<REFRESH_TOKEN_SERVICE>"}'
+
+# Listar (só o que este launcher lançou -- solo/group) e as réplicas de
+# QUALQUER group (descobertas contra o Docker, inclusive as que o group
+# criou por conta própria, sem nunca passar por aqui):
+curl http://localhost:8094/v1/instances -H "Authorization: Bearer <TOKEN_INFRA_ADMIN>"
+curl http://localhost:8094/v1/replicas -H "Authorization: Bearer <TOKEN_INFRA_ADMIN>"
+
+# Parar (sem remover) ou eliminar QUALQUER container desta plataforma pelo
+# seu containerId -- funciona para uma instância solo ou uma réplica,
+# nunca para o processo de um group inteiro (isso é sempre
+# DELETE /v1/groups/{containerId}, feito a partir de /admin/autoscaler):
+curl -X POST http://localhost:8094/v1/containers/<containerId>/stop -H "Authorization: Bearer <TOKEN_INFRA_ADMIN>"
+curl -X DELETE http://localhost:8094/v1/containers/<containerId> -H "Authorization: Bearer <TOKEN_INFRA_ADMIN>"
+```
+
+Note que `launcher` não publica porta no host em `demo/docker-compose.yml`
+(mesmo espírito de `secretsadmin`/`templatesadmin`) -- os `curl` acima só
+funcionam de dentro da rede `auth-net` (ex: de outro container), ou
+publicando `8094:8094` temporariamente para testar do host. É por isso
+que o portal (que já está nessa rede) fala com o launcher via
+`LAUNCHER_SERVICE_URL`, não via `localhost`.
 
 ## Derrubar
 
@@ -255,8 +303,9 @@ dinâmico de grupos -- nenhuma das duas coisas existe ainda.
 docker compose -f demo/docker-compose.yml down
 ```
 
-Cada group (`group-demo`, `group-authd`) remove as réplicas que criou
-como parte do seu shutdown gracioso — não fica nada órfão. Dados do auth
+Cada group (`group-authd`, e qualquer outro group que você tenha lançado
+via launcher) remove as réplicas que criou como parte do seu shutdown
+gracioso — não fica nada órfão. Dados do auth
 (contas, chaves) ficam em volumes nomeados e sobrevivem a este comando:
 - `demo-database-data` / `demo-database-backup-repo` — declarados no
   Compose, `down -v` remove os dois (isto apaga também os backups locais

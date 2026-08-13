@@ -1,7 +1,0 @@
-{
-  "image": "nginx:alpine",
-  "network": "observability-net",
-  "env": [
-    "DEMO_SECRET_VALUE=${secret:auth-db-password}"
-  ]
-}

@@ -8,5 +8,8 @@
     "LOG_LEVEL=info"
   ],
   "binds": ["auth-signing-key:/var/lib/auth"],
-  "network": "auth-net"
+  "network": "auth-net",
+  "labels": {
+    "base-stack.managed": "true"
+  }
 }
