@@ -190,10 +190,18 @@ nunca sobe, porque conseguir criá-la depende de uma réplica já estar de
 pé. Isto NÃO é um problema para outros groups (cujo `AUTH_SERVICE_URL`
 aponta a um auth service independente, já de pé) -- só para `group-authd`
 especificamente, por gerir o próprio auth service de que ele mesmo
-depende. Não resolvido nesta iteração: o access token inicial dura tempo
-suficiente para o ambiente terminar de subir; se expirar antes disso, é
-preciso emitir um `LAUNCHER_REFRESH_TOKEN` novo manualmente (mesmo
-bootstrap do passo 2 acima) e recriar `group-authd`.
+depende, e acontece de novo a cada vez que reinicia do zero, não só uma
+vez.
+
+Resolvido via `ALLOW_COLD_START_FALLBACK=true` (só em `group-authd`, ver
+`docker-compose.yml`): quando o pedido ao launcher falha E não há nenhuma
+réplica viva, `group-authd` cria essa réplica localmente, uma única vez
+-- o suficiente para o seu próprio proxy voltar a ter um backend, o token
+voltar a renovar, e a partir da réplica seguinte voltar a pedir sempre ao
+launcher, como qualquer outro group (ver `applyScaleUp` em
+`services/autoscaler/cmd/group/main.go`). Esta válvula de escape fica
+desligada por defeito em qualquer group novo -- só é ligada aqui porque
+`group-authd` é o único auto-referencial.
 
 ## Criar um novo serviço autoscalado (templatesadmin)
 
@@ -296,6 +304,46 @@ funcionam de dentro da rede `auth-net` (ex: de outro container), ou
 publicando `8094:8094` temporariamente para testar do host. É por isso
 que o portal (que já está nessa rede) fala com o launcher via
 `LAUNCHER_SERVICE_URL`, não via `localhost`.
+
+## Acesso externo via browser (Traefik)
+
+Nenhum container publica porta própria no host -- inclusive uma instância
+"solo" ou o proxy de um `group`, mesmo depois desta secção. Em vez disso, o
+`demo/docker-compose.yml` sobe um serviço `traefik`, o único a publicar uma
+porta (80), que decide para onde reencaminhar cada pedido pelo `Host:` do
+pedido, lendo labels que o launcher escreve no momento de criar o
+container (nunca depois -- expor uma instância já viva exige recriá-la,
+mesmo limite que já existe para imagem/env).
+
+Para expor algo, passe `"exposeAs": "<slug>"` ao criar (UI:
+`/admin/launcher`, "Expor publicamente como"; ou `/admin/autoscaler/new`,
+mesmo campo, para um group). Uma instância `solo` também precisa de
+`"exposePort"` -- a porta que a APLICAÇÃO escuta lá dentro do container,
+já que a imagem é arbitrária e não há convenção nenhuma sobre isso. Um
+`group` não pede porta: expõe sempre o seu próprio proxy interno (porta
+`8090`), nunca uma réplica diretamente.
+
+```sh
+curl -X POST http://localhost:8094/v1/instances \
+  -H "Authorization: Bearer <TOKEN_INFRA_ADMIN>" -H "Content-Type: application/json" \
+  -d '{"templateName":"demo","kind":"solo","exposeAs":"minha-app","exposePort":80}'
+```
+
+O host completo fica `<slug>.PUBLIC_BASE_DOMAIN` (env var do `launcher`,
+ver `docker-compose.yml`). Em dev, o default é `127.0.0.1.nip.io` -- um
+serviço de DNS público real que resolve QUALQUER
+`algo.127.0.0.1.nip.io` para `127.0.0.1`, sem precisar editar `/etc/hosts`
+nem ter domínio próprio. Depois de criar a instância do exemplo acima,
+basta abrir `http://minha-app.127.0.0.1.nip.io` no browser -- chega à
+app através do Traefik, na porta 80. Em produção, sobreponha
+`PUBLIC_BASE_DOMAIN` com o domínio real (e, nesse caso, aponte um registo
+DNS wildcard `*.dominio.com` para o IP do host).
+
+Uma instância exposta numa rede personalizada (ver `/admin/networks`)
+também funciona: sempre que uma rede nova é criada, o launcher liga o
+Traefik a ela automaticamente. Para uma rede já existente antes desta
+feature, ligue o Traefik manualmente pela própria UI de `/admin/networks`
+("ligar container").
 
 ## Derrubar
 

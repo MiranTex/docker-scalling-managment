@@ -43,6 +43,44 @@ networks:
       base-stack.managed: "true"
 
 services:
+  # Gateway único de acesso externo: publica a ÚNICA porta do host em toda
+  # a plataforma (80). Nenhum container passa a publicar porta própria --
+  # continuam só na rede interna, como hoje; é o Traefik quem decide para
+  # onde reencaminhar, lendo labels Docker que o launcher escreve (ver
+  # services/launcher/internal/httpapi, labelExposeHost) quando uma
+  # instância/group pede para ser exposta.
+  traefik:
+    # v3.6.1+ é obrigatório aqui -- versões anteriores têm a versão da API
+    # do Docker fixa em 1.24 no seu provider, e o Docker Engine 29+ deixou
+    # de aceitar qualquer coisa abaixo de 1.44 ("client version 1.24 is too
+    # old"). v3.6.1 introduziu a negociação automática que resolve isto.
+    image: traefik:v3.6.1
+    # Nome fixo -- é por ele que o launcher liga o Traefik a uma rede nova
+    # (ver handleCreateNetwork), sem precisar descobrir o nome do container.
+    container_name: traefik
+    command:
+      - --providers.docker=true
+      # Crítico: sem isto, o Traefik tentaria expor QUALQUER container
+      # visível pelo socket, inclusive de outra app vossa não relacionada
+      # -- mesmo cuidado do isolamento por base-stack.managed. Só um
+      # container com "traefik.enable=true" (escrito pelo launcher) é
+      # roteado.
+      - --providers.docker.exposedByDefault=false
+      - --providers.docker.network=auth-net
+      - --entrypoints.web.address=:80
+    ports:
+      - "80:80"
+    volumes:
+      # Só leitura -- o Traefik nunca cria/para nada, só observa labels
+      # (mesmo espírito do mount do templatesadmin, que só lista imagens).
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    labels:
+      base-stack.managed: "true"
+    mem_limit: 128m
+    cpus: 0.25
+    networks:
+      - auth-net
+
   # Postgres partilhado (services/database) -- substitui o
   # `postgres:16-alpine` ad-hoc que este demo subia antes só pro auth.
   # Já vem com backups em rotina + PITR (pgBackRest) e Adminer, mesmo
@@ -166,6 +204,13 @@ services:
       # criar dinamicamente (ver internal/httpapi.GroupConfig.SelfURL).
       LAUNCHER_SELF_URL: "http://launcher:8094"
       AUTOSCALER_GROUP_IMAGE: "autoscaler-group:latest"
+      # Domínio base para instâncias/groups expostos publicamente (ver
+      # internal/httpapi, resolveExposeLabels) -- "<slug>.<isto>" é o host
+      # completo escrito nas labels do Traefik. nip.io é um serviço de DNS
+      # público real que resolve QUALQUER "algo.127.0.0.1.nip.io" para
+      # 127.0.0.1 -- funciona em dev sem editar /etc/hosts nem ter domínio
+      # próprio; troque por um domínio real em produção.
+      PUBLIC_BASE_DOMAIN: "${PUBLIC_BASE_DOMAIN:-127.0.0.1.nip.io}"
     labels:
       base-stack.managed: "true"
     volumes:
@@ -263,14 +308,21 @@ services:
       # uma réplica de "auth" de pé. Se as réplicas de auth chegarem a
       # zero (ex: reboot completo do ambiente), group-authd não consegue
       # renovar o token para pedir ao launcher a primeira réplica nova:
-      # deadlock. Contorno aceite nesta iteração: o token inicial dura
-      # tempo suficiente (ver services/auth/internal/refresh) para o
-      # ambiente subir; se expirar antes disso, é preciso emitir um novo
-      # manualmente (mesmo bootstrap de sempre) antes de recriar
-      # group-authd. Resolver isto de vez exigiria group-authd conseguir
-      # chamar o launcher sem depender de si mesmo -- não feito aqui.
+      # deadlock estrutural, todas as vezes que reiniciar do zero, não só
+      # uma vez -- ver ALLOW_COLD_START_FALLBACK abaixo, que é como isto
+      # se resolve sozinho agora.
       LAUNCHER_SERVICE_URL: "http://launcher:8094"
       LAUNCHER_REFRESH_TOKEN: "${GROUP_AUTHD_LAUNCHER_REFRESH_TOKEN:-}"
+      # Válvula de escape, desligada por defeito em qualquer outro group
+      # (ver services/autoscaler/cmd/group/main.go, applyScaleUp): só
+      # entra em jogo quando o pedido ao launcher falha E não há NENHUMA
+      # réplica de auth viva -- cria essa réplica localmente, uma vez,
+      # para deixar de haver zero réplicas e o próprio proxy voltar a
+      # responder. A partir da réplica seguinte, volta a pedir sempre ao
+      # launcher, como qualquer group. Só group-authd precisa disto: é o
+      # único cujo AUTH_SERVICE_URL aponta para o serviço que ele mesmo
+      # gere.
+      ALLOW_COLD_START_FALLBACK: "true"
     labels:
       # É por esta label que o launcher descobre este group em
       # GET /v1/groups (ver services/launcher/internal/httpapi,
