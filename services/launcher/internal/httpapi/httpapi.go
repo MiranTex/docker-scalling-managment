@@ -136,7 +136,33 @@ const (
 	// group em GET /v1/replicas, mesmo as criadas localmente por ele sem
 	// nunca passar por aqui.
 	labelServiceKey = "autoscaler.service"
+
+	// labelExposeHost é a NOSSA label semântica (não do Traefik) que marca
+	// um container como exposto publicamente, com o hostname completo já
+	// resolvido -- é a que GET /v1/instances, /v1/groups e /v1/replicas
+	// leem de volta para mostrar "exposto em X" (ver resolveExposeLabels).
+	// As labels que o Traefik de facto usa para rotear são mecânicas
+	// (traefik.*) e ficam só do lado de quem escreve -- nada aqui precisa
+	// de entender a sintaxe delas.
+	labelExposeHost = "base-stack.expose.host"
+	// traefikContainerName é o nome fixo do container do gateway único de
+	// acesso externo (ver demo/docker-compose.yml, serviço "traefik",
+	// container_name) -- é a ele que handleCreateNetwork liga toda rede
+	// nova, para uma instância exposta numa rede personalizada continuar
+	// alcançável.
+	traefikContainerName = "traefik"
+	// groupProxyPort é o LISTEN_ADDR default de todo autoscaler-group
+	// lançado por este launcher (ver services/autoscaler/cmd/group/config.go)
+	// -- launchGroup nunca sobrepõe isto, então é sempre esta porta que o
+	// Traefik deve alcançar para expor um group: o próprio proxy interno
+	// dele, nunca uma réplica (ver launchGroup, onde as labels de exposição
+	// vão só nas labels do container do group, não nas da réplica).
+	groupProxyPort = 8090
 )
+
+// exposeSlugRe é o mesmo charset de um label de subdomínio DNS válido --
+// letras minúsculas, números e hífen, nunca a começar/acabar em hífen.
+var exposeSlugRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
 type Handler struct {
 	tokens    TokenVerifier
@@ -145,10 +171,15 @@ type Handler struct {
 	secrets   Secrets
 	templates Templates
 	groups    GroupConfig
+	// publicBaseDomain é o domínio usado para expor uma instância/group
+	// publicamente (ver resolveExposeLabels) -- "" desliga a feature: um
+	// pedido com "exposeAs" preenchido falha com erro claro em vez de
+	// silenciosamente não expor nada.
+	publicBaseDomain string
 }
 
-func NewHandler(tokens TokenVerifier, s Store, docker Docker, secrets Secrets, templates Templates, groups GroupConfig) *Handler {
-	return &Handler{tokens: tokens, store: s, docker: docker, secrets: secrets, templates: templates, groups: groups}
+func NewHandler(tokens TokenVerifier, s Store, docker Docker, secrets Secrets, templates Templates, groups GroupConfig, publicBaseDomain string) *Handler {
+	return &Handler{tokens: tokens, store: s, docker: docker, secrets: secrets, templates: templates, groups: groups, publicBaseDomain: publicBaseDomain}
 }
 
 func (h *Handler) Routes() *http.ServeMux {
@@ -239,6 +270,19 @@ type createInstanceRequest struct {
 	// nesta iteração -- mesmo espírito do SECRETS_REFRESH_TOKEN inicial que
 	// já existia antes desta feature.
 	ReplicaAuthToken string `json:"replicaAuthToken,omitempty"`
+
+	// ExposeAs, se preenchido, expõe esta instância publicamente através
+	// do gateway único (Traefik, ver demo/docker-compose.yml) em
+	// "<ExposeAs>.<PUBLIC_BASE_DOMAIN>" -- ver resolveExposeLabels. Nunca
+	// publica porta nenhuma no host; só escreve labels que o Traefik já
+	// observa. Vazio (default) não expõe nada, como sempre até agora.
+	ExposeAs string `json:"exposeAs,omitempty"`
+	// ExposePort é a porta, DENTRO do container, para onde o Traefik deve
+	// reencaminhar -- obrigatório quando ExposeAs != "" e Kind="solo" (a
+	// imagem é arbitrária, não há convenção de porta nenhuma). Ignorado
+	// quando Kind="group": um group expõe sempre o seu próprio proxy
+	// interno (ver groupProxyPort), nunca uma réplica.
+	ExposePort int `json:"exposePort,omitempty"`
 }
 
 // handleCreateInstance lança uma instância nova a partir de um modelo já
@@ -277,11 +321,29 @@ func (h *Handler) handleCreateInstance(w http.ResponseWriter, r *http.Request, s
 		return
 	}
 
+	exposeLabels := map[string]string{}
+	if req.ExposeAs != "" {
+		port := req.ExposePort
+		if req.Kind == store.KindGroup {
+			port = groupProxyPort
+		}
+		labels, host, err := h.resolveExposeLabels(req.ExposeAs, resolveNetwork(req.Network, tmpl.Network), port)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_expose", err.Error())
+			return
+		}
+		if err := h.checkExposeSlugAvailable(r.Context(), host); err != nil {
+			writeError(w, http.StatusConflict, "expose_conflict", err.Error())
+			return
+		}
+		exposeLabels = labels
+	}
+
 	var containerID string
 	if req.Kind == store.KindSolo {
-		containerID, err = h.launchSolo(r.Context(), id, tmpl, req)
+		containerID, err = h.launchSolo(r.Context(), id, tmpl, req, exposeLabels)
 	} else {
-		containerID, err = h.launchGroup(r.Context(), id, tmpl, req)
+		containerID, err = h.launchGroup(r.Context(), id, tmpl, req, exposeLabels)
 	}
 
 	instance := store.Instance{
@@ -318,9 +380,58 @@ func resolveNetwork(reqNetwork, templateNetwork string) string {
 	return templateNetwork
 }
 
+// resolveExposeLabels monta as labels de exposição pública para
+// host = slug + "." + publicBaseDomain, reencaminhando para port dentro do
+// container -- a nossa (labelExposeHost, a única que o resto desta API lê
+// de volta) e as mecânicas que o Traefik de facto usa para rotear (ver
+// demo/docker-compose.yml). Chamada só quando req.ExposeAs != "" (ver
+// handleCreateInstance) -- nunca com slug vazio.
+func (h *Handler) resolveExposeLabels(slug, network string, port int) (labels map[string]string, host string, err error) {
+	if h.publicBaseDomain == "" {
+		return nil, "", errors.New(`PUBLIC_BASE_DOMAIN não configurado neste launcher -- não é possível expor nada publicamente`)
+	}
+	if !exposeSlugRe.MatchString(slug) {
+		return nil, "", errors.New(`"exposeAs" inválido -- use só letras minúsculas, números e "-", até 63 caracteres, sem começar/acabar em hífen`)
+	}
+	if port <= 0 {
+		return nil, "", errors.New(`"exposePort" é obrigatório e deve ser positivo para expor esta instância`)
+	}
+
+	host = slug + "." + h.publicBaseDomain
+	labels = map[string]string{
+		labelExposeHost:  host,
+		"traefik.enable": "true",
+		fmt.Sprintf("traefik.http.routers.%s.rule", slug):                      fmt.Sprintf("Host(`%s`)", host),
+		fmt.Sprintf("traefik.http.routers.%s.entrypoints", slug):               "web",
+		fmt.Sprintf("traefik.http.services.%s.loadbalancer.server.port", slug): strconv.Itoa(port),
+	}
+	if network != "" {
+		labels["traefik.docker.network"] = network
+	}
+	return labels, host, nil
+}
+
+// checkExposeSlugAvailable confirma que nenhum container vivo (ou parado --
+// ver o all=true abaixo, para não reabrir a mesma disputa por um container
+// que ainda não foi de facto removido) desta plataforma já usa host. Sem
+// isto, duas instâncias disputariam o mesmo router no Traefik, e só uma
+// delas responderia de facto.
+func (h *Handler) checkExposeSlugAvailable(ctx context.Context, host string) error {
+	containers, err := h.docker.ListContainers(ctx, true, map[string][]string{
+		"label": {labelExposeHost + "=" + host},
+	})
+	if err != nil {
+		return fmt.Errorf("confirmando disponibilidade de %q: %w", host, err)
+	}
+	if len(containers) > 0 {
+		return fmt.Errorf("%q já está em uso por outra instância", host)
+	}
+	return nil
+}
+
 // launchSolo cria e inicia diretamente o container da aplicação descrita
 // pelo modelo -- sem nenhum autoscaler entre o launcher e o container.
-func (h *Handler) launchSolo(ctx context.Context, id string, tmpl templatesclient.Template, req createInstanceRequest) (string, error) {
+func (h *Handler) launchSolo(ctx context.Context, id string, tmpl templatesclient.Template, req createInstanceRequest, exposeLabels map[string]string) (string, error) {
 	resolvedEnv, err := h.secrets.ResolveEnv(ctx, tmpl.Env)
 	if err != nil {
 		return "", fmt.Errorf("resolvendo segredos do modelo: %w", err)
@@ -332,6 +443,9 @@ func (h *Handler) launchSolo(ctx context.Context, id string, tmpl templatesclien
 	}
 	labels["launcher.instance"] = id
 	labels[dockerclient.PlatformLabel] = dockerclient.PlatformLabelValue
+	for k, v := range exposeLabels {
+		labels[k] = v
+	}
 
 	containerID, err := h.docker.CreateContainer(ctx, "", dockerclient.CreateContainerRequest{
 		Image:  tmpl.Image,
@@ -365,9 +479,17 @@ func (h *Handler) launchSolo(ctx context.Context, id string, tmpl templatesclien
 // resolver fica sempre a cargo deste launcher, no momento de cada réplica
 // (mesmo timing de antes, ver services/autoscaler/cmd/group/main.go,
 // applyScaleUp).
-func (h *Handler) launchGroup(ctx context.Context, id string, tmpl templatesclient.Template, req createInstanceRequest) (string, error) {
+func (h *Handler) launchGroup(ctx context.Context, id string, tmpl templatesclient.Template, req createInstanceRequest, exposeLabels map[string]string) (string, error) {
 	if req.TargetService == "" {
 		return "", errors.New(`"targetService" é obrigatório para lançar como "group"`)
+	}
+	// Desde que o group deixou de saber criar réplica localmente (sempre
+	// pede ao launcher, mesmo sem segredo nenhum no env), este token
+	// passou de opcional a obrigatório -- sem ele, o group fica preso a
+	// tentar escalar para sempre, sem nenhum erro visível além do próprio
+	// log dele (ver internal/launcherclient.CreateReplica).
+	if req.ReplicaAuthToken == "" {
+		return "", errors.New(`"replicaAuthToken" é obrigatório para lançar como "group" -- sem ele, o group nunca consegue pedir uma réplica ao launcher`)
 	}
 
 	// A label da plataforma é injetada aqui, não deixada a cargo do
@@ -416,15 +538,25 @@ func (h *Handler) launchGroup(ctx context.Context, id string, tmpl templatesclie
 	// endereçar a API admin deste group por nome DNS (ver
 	// handleListGroups), sem precisar de descobrir/guardar um IP.
 	containerName := "group-" + id
+	// exposeLabels vai só aqui, nas labels do PRÓPRIO container do group
+	// (o processo cmd/group, que já é o load balancer interno das suas
+	// réplicas) -- nunca em replicaLabels/innerTemplate.Labels acima. Se
+	// cada réplica carregasse a mesma label de router, o Traefik ficaria a
+	// competir com o load balancer do group em vez de entregar a ele (ver
+	// groupProxyPort, a porta fixa que o Traefik deve alcançar).
+	groupLabels := map[string]string{
+		"launcher.instance":        id,
+		labelGroupRole:             labelGroupRoleValue,
+		labelGroupTargetService:    req.TargetService,
+		dockerclient.PlatformLabel: dockerclient.PlatformLabelValue,
+	}
+	for k, v := range exposeLabels {
+		groupLabels[k] = v
+	}
 	containerID, err := h.docker.CreateContainer(ctx, containerName, dockerclient.CreateContainerRequest{
-		Image: h.groups.Image,
-		Env:   groupEnv,
-		Labels: map[string]string{
-			"launcher.instance":        id,
-			labelGroupRole:             labelGroupRoleValue,
-			labelGroupTargetService:    req.TargetService,
-			dockerclient.PlatformLabel: dockerclient.PlatformLabelValue,
-		},
+		Image:  h.groups.Image,
+		Env:    groupEnv,
+		Labels: groupLabels,
 		HostConfig: &dockerclient.CreateHostConfig{
 			NetworkMode: resolveNetwork(req.Network, tmpl.Network),
 			Binds:       []string{h.groups.DockerSocket + ":/var/run/docker.sock"},
@@ -467,13 +599,37 @@ func (h *Handler) ensureImage(ctx context.Context, image string) error {
 	return nil
 }
 
+// InstanceResponse é store.Instance mais o hostname público (ver
+// labelExposeHost), lido ao vivo do Docker -- não guardado na store, pelo
+// mesmo motivo de "network" também não ser: é derivável a qualquer momento
+// a partir do container, que é sempre a fonte de verdade.
+type InstanceResponse struct {
+	store.Instance
+	ExposedHost string `json:"exposedHost,omitempty"`
+}
+
 func (h *Handler) handleListInstances(w http.ResponseWriter, r *http.Request, _, _ string) {
 	instances, err := h.store.List(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "erro listando instâncias")
 		return
 	}
-	writeJSON(w, http.StatusOK, instances)
+
+	// Uma chamada só ao Docker para todo container exposto (nunca N+1, uma
+	// por instância) -- monta um mapa containerId -> host e enriquece cada
+	// linha da store com ele.
+	exposedByContainer := map[string]string{}
+	if containers, err := h.docker.ListContainers(r.Context(), true, map[string][]string{"label": {labelExposeHost}}); err == nil {
+		for _, c := range containers {
+			exposedByContainer[c.ID] = c.Labels[labelExposeHost]
+		}
+	}
+
+	out := make([]InstanceResponse, 0, len(instances))
+	for _, i := range instances {
+		out = append(out, InstanceResponse{Instance: i, ExposedHost: exposedByContainer[i.ContainerID]})
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 type createReplicaRequest struct {
@@ -558,6 +714,10 @@ type GroupSummary struct {
 	// mesma rede Docker pelo nome do container -- nunca pelo proxy
 	// (porta do LISTEN_ADDR), que serve tráfego da aplicação, não admin.
 	AdminURL string `json:"adminUrl"`
+	// ExposedHost é o hostname público deste group (ver labelExposeHost),
+	// vazio se nunca foi exposto -- lido direto da label, nunca da sintaxe
+	// do Traefik.
+	ExposedHost string `json:"exposedHost,omitempty"`
 }
 
 func (h *Handler) handleListGroups(w http.ResponseWriter, r *http.Request, _, _ string) {
@@ -580,6 +740,7 @@ func (h *Handler) handleListGroups(w http.ResponseWriter, r *http.Request, _, _ 
 			State:         c.State,
 			Network:       c.PrimaryNetwork(),
 			AdminURL:      "http://" + name + ":" + groupAdminPort,
+			ExposedHost:   c.Labels[labelExposeHost],
 		})
 	}
 	writeJSON(w, http.StatusOK, groups)
@@ -679,6 +840,10 @@ type ReplicaSummary struct {
 	Image         string `json:"image"`
 	State         string `json:"state"`
 	Network       string `json:"network"`
+	// ExposedHost -- ver GroupSummary.ExposedHost. Só teria valor aqui numa
+	// réplica se alguém tivesse exposto uma diretamente (não é o caminho
+	// normal: expor um group expõe o SEU proxy, não uma réplica).
+	ExposedHost string `json:"exposedHost,omitempty"`
 }
 
 func (h *Handler) handleListReplicas(w http.ResponseWriter, r *http.Request, _, _ string) {
@@ -706,6 +871,7 @@ func (h *Handler) handleListReplicas(w http.ResponseWriter, r *http.Request, _, 
 			Image:         c.Image,
 			State:         c.State,
 			Network:       c.PrimaryNetwork(),
+			ExposedHost:   c.Labels[labelExposeHost],
 		})
 	}
 	writeJSON(w, http.StatusOK, replicas)
@@ -828,6 +994,15 @@ func (h *Handler) handleCreateNetwork(w http.ResponseWriter, r *http.Request, _,
 		writeError(w, http.StatusBadGateway, "docker_error", "erro criando rede: "+err.Error())
 		return
 	}
+
+	// De melhor esforço: liga o Traefik a esta rede nova, para uma
+	// instância exposta publicamente aqui dentro continuar alcançável por
+	// ele (ver traefikContainerName) -- sem isto, expor algo numa rede
+	// personalizada exigiria ligar o Traefik à mão via /admin/networks
+	// antes. Falhar aqui (ex: Traefik nem está a correr neste ambiente)
+	// não é motivo para falhar a criação da rede em si.
+	_ = h.docker.ConnectNetwork(r.Context(), req.Name, traefikContainerName)
+
 	writeJSON(w, http.StatusCreated, map[string]string{"name": req.Name})
 }
 

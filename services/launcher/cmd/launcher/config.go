@@ -39,6 +39,12 @@ type config struct {
 	selfURL string
 	// groupImage é a imagem usada para lançar uma instância "kind=group".
 	groupImage string
+
+	// publicBaseDomain é o domínio base para expor uma instância/group
+	// publicamente através do Traefik (ver httpapi.resolveExposeLabels) --
+	// "" (default) desliga a feature: um pedido com "exposeAs" falha com
+	// erro claro em vez de não expor nada silenciosamente.
+	publicBaseDomain string
 }
 
 func loadConfig() config {
@@ -59,6 +65,8 @@ func loadConfig() config {
 
 		selfURL:    envString("LAUNCHER_SELF_URL", "http://launcher:8094"),
 		groupImage: envString("AUTOSCALER_GROUP_IMAGE", "autoscaler-group:latest"),
+
+		publicBaseDomain: os.Getenv("PUBLIC_BASE_DOMAIN"),
 	}
 
 	if cfg.databaseURL == "" {
@@ -113,5 +121,6 @@ func (c config) logAttrs() []any {
 		"secretsadmin_service_url", c.secretsAdminServiceURL,
 		"self_url", c.selfURL,
 		"group_image", c.groupImage,
+		"public_base_domain", c.publicBaseDomain,
 	}
 }
