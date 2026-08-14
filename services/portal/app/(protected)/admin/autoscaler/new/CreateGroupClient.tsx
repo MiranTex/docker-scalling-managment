@@ -17,6 +17,7 @@ const EMPTY_GROUP_FORM = {
   cpuScaleUpPercent: "50",
   cpuScaleDownPercent: "20",
   replicaAuthToken: "",
+  exposeAs: "",
 };
 
 export default function CreateGroupClient() {
@@ -58,6 +59,12 @@ export default function CreateGroupClient() {
       setGroupError("nome do serviço (target service) é obrigatório");
       return;
     }
+    if (!groupForm.replicaAuthToken.trim()) {
+      setGroupError(
+        "refresh token do group é obrigatório -- sem ele, o group nunca consegue pedir uma réplica ao launcher e fica preso a tentar escalar para sempre"
+      );
+      return;
+    }
     setCreatingGroup(true);
     try {
       const res = await fetch("/api/admin/launcher", {
@@ -74,6 +81,7 @@ export default function CreateGroupClient() {
           cpuScaleUpPercent: Number(groupForm.cpuScaleUpPercent) || 0,
           cpuScaleDownPercent: Number(groupForm.cpuScaleDownPercent) || 0,
           ...(groupForm.replicaAuthToken ? { replicaAuthToken: groupForm.replicaAuthToken } : {}),
+          ...(groupForm.exposeAs.trim() ? { exposeAs: groupForm.exposeAs.trim() } : {}),
         }),
       });
       const data = await res.json();
@@ -112,7 +120,16 @@ export default function CreateGroupClient() {
       {groupCreated && (
         <div className="notice">
           Grupo lançado: instância <code>{groupCreated.id}</code>, container{" "}
-          <code>{groupCreated.containerId.slice(0, 12)}</code>, estado {groupCreated.status}. {" "}
+          <code>{groupCreated.containerId.slice(0, 12)}</code>, estado {groupCreated.status}.{" "}
+          {groupCreated.exposedHost && (
+            <>
+              Público em{" "}
+              <a href={`http://${groupCreated.exposedHost}`} target="_blank" rel="noreferrer">
+                {groupCreated.exposedHost}
+              </a>
+              .{" "}
+            </>
+          )}
           <Link href={`/admin/autoscaler/${groupCreated.containerId}`}>Ver detalhes →</Link>
         </div>
       )}
@@ -159,6 +176,20 @@ export default function CreateGroupClient() {
         Tem de ser a mesma rede do launcher/portal (ex: <code>auth-net</code> no demo) para a API
         admin deste group ficar alcançável -- sem isto, um modelo sem rede definida cria o group
         na rede "bridge" do Docker, isolado, e ele aparece como "instância inalcançável".
+      </p>
+
+      <label htmlFor="group-expose-as">Expor publicamente como (opcional)</label>
+      <input
+        id="group-expose-as"
+        type="text"
+        value={groupForm.exposeAs}
+        onChange={(e) => setGroupForm((f) => ({ ...f, exposeAs: e.target.value }))}
+        placeholder="minha-app"
+      />
+      <p className="muted">
+        Expõe o proxy deste group (não uma réplica) via Traefik, em{" "}
+        <code>{groupForm.exposeAs.trim() || "..."}.PUBLIC_BASE_DOMAIN</code> -- nunca publica porta
+        no host. Deixa em branco para o group continuar só na rede interna, como hoje.
       </p>
 
       <div className="row" style={{ gap: "1rem" }}>
@@ -212,7 +243,7 @@ export default function CreateGroupClient() {
         </div>
       </div>
 
-      <label htmlFor="group-token">Refresh token do group (role &quot;service&quot;, opcional)</label>
+      <label htmlFor="group-token">Refresh token do group (role &quot;service&quot;, obrigatório)</label>
       <input
         id="group-token"
         type="password"
@@ -224,7 +255,8 @@ export default function CreateGroupClient() {
       <p className="muted">
         É com este token que o group recém-criado se autentica de volta contra o launcher em cada
         scale up (<code>POST /v1/replicas</code>) -- bootstrap manual, mesmo espírito do refresh
-        token inicial de qualquer conta de serviço.
+        token inicial de qualquer conta de serviço. Sem ele o group nunca consegue criar réplica
+        nenhuma (nem a primeira) -- fica só a tentar escalar, sem parar, sem nunca conseguir.
       </p>
 
       <div className="row">

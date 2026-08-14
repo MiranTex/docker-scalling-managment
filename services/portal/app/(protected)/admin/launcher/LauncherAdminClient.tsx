@@ -23,6 +23,7 @@ type Row = {
   error?: string;
   containerId: string;
   info: string;
+  exposedHost?: string;
 };
 
 type StatusFilter = "active" | "stopped" | "all";
@@ -37,6 +38,7 @@ function instanceToRow(i: LauncherInstance): Row {
     error: i.error,
     containerId: i.containerId,
     info: `${new Date(i.createdAt).toLocaleString("pt-PT")} · ${i.updatedBy}`,
+    exposedHost: i.exposedHost,
   };
 }
 
@@ -49,6 +51,7 @@ function replicaToRow(r: ReplicaSummary): Row {
     statusText: r.state,
     containerId: r.containerId,
     info: `rede: ${r.network || "--"}`,
+    exposedHost: r.exposedHost,
   };
 }
 
@@ -61,6 +64,8 @@ export default function LauncherAdminClient() {
   const [templates, setTemplates] = useState<ServiceTemplate[] | null>(null);
   const [templateName, setTemplateName] = useState("");
   const [network, setNetwork] = useState("");
+  const [exposeAs, setExposeAs] = useState("");
+  const [exposePort, setExposePort] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -123,12 +128,21 @@ export default function LauncherAdminClient() {
       setFormError("nome do modelo é obrigatório");
       return;
     }
+    if (exposeAs.trim() && !exposePort.trim()) {
+      setFormError("porta interna é obrigatória para expor a instância");
+      return;
+    }
     setSaving(true);
     try {
       const res = await fetch("/api/admin/launcher", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ templateName, kind: "solo", ...(network.trim() ? { network: network.trim() } : {}) }),
+        body: JSON.stringify({
+          templateName,
+          kind: "solo",
+          ...(network.trim() ? { network: network.trim() } : {}),
+          ...(exposeAs.trim() ? { exposeAs: exposeAs.trim(), exposePort: Number(exposePort) } : {}),
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -200,6 +214,7 @@ export default function LauncherAdminClient() {
                 <th>Estado</th>
                 <th>Container</th>
                 <th>Info</th>
+                <th>Público</th>
                 <th></th>
               </tr>
             </thead>
@@ -218,6 +233,15 @@ export default function LauncherAdminClient() {
                     <code>{row.containerId ? row.containerId.slice(0, 12) : "--"}</code>
                   </td>
                   <td>{row.info}</td>
+                  <td>
+                    {row.exposedHost ? (
+                      <a href={`http://${row.exposedHost}`} target="_blank" rel="noreferrer">
+                        {row.exposedHost}
+                      </a>
+                    ) : (
+                      "--"
+                    )}
+                  </td>
                   <td>
                     {row.kind === "group" ? (
                       row.active && (
@@ -286,6 +310,29 @@ export default function LauncherAdminClient() {
           Deixa em branco para usar a rede definida no modelo. Se o container ficar "inatingível"
           depois de lançado, é normalmente porque nem o modelo nem este campo têm a rede certa (o
           Docker usa "bridge" por defeito, isolada do launcher/portal).
+        </p>
+
+        <label htmlFor="instance-expose-as">Expor publicamente como (opcional)</label>
+        <input
+          id="instance-expose-as"
+          type="text"
+          value={exposeAs}
+          onChange={(e) => setExposeAs(e.target.value)}
+          placeholder="minha-app"
+        />
+        <label htmlFor="instance-expose-port">Porta interna (obrigatória se expor publicamente)</label>
+        <input
+          id="instance-expose-port"
+          type="number"
+          value={exposePort}
+          onChange={(e) => setExposePort(e.target.value)}
+          placeholder="80"
+        />
+        <p className="muted">
+          Deixa "expor publicamente" em branco para a instância continuar só na rede interna, como
+          hoje. Preenchido, fica acessível em <code>http://{exposeAs.trim() || "..."}.PUBLIC_BASE_DOMAIN</code>{" "}
+          através do gateway único (Traefik) -- nunca publica porta nenhuma no host. A porta interna é
+          a que a APLICAÇÃO escuta lá dentro do container, não uma porta do host.
         </p>
 
         <div className="row">

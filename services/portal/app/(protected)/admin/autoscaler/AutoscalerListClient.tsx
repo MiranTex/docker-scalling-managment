@@ -61,6 +61,7 @@ export default function AutoscalerListClient() {
               <th>Rede</th>
               <th>Réplicas</th>
               <th>Estado</th>
+              <th>Público</th>
               <th></th>
             </tr>
           </thead>
@@ -77,6 +78,15 @@ export default function AutoscalerListClient() {
                 </td>
                 <td>
                   <span className={`badge ${i.error ? "revoked" : "active"}`}>{i.error ?? "ok"}</span>
+                </td>
+                <td onClick={(e) => e.stopPropagation()}>
+                  {i.exposedHost ? (
+                    <a href={`http://${i.exposedHost}`} target="_blank" rel="noreferrer">
+                      {i.exposedHost}
+                    </a>
+                  ) : (
+                    "--"
+                  )}
                 </td>
                 <td>
                   <Link href={`/admin/autoscaler/${i.id}`} className="muted" onClick={(e) => e.stopPropagation()}>

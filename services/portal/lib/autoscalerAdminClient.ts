@@ -65,6 +65,8 @@ export type InstanceSummary = {
   network: string;
   status?: AutoscalerStatus;
   error?: string;
+  // exposedHost -- ver lib/launcherClient.DiscoveredGroup.exposedHost.
+  exposedHost?: string;
 };
 
 // findGroup pergunta ao launcher quais groups estão vivos agora (GET

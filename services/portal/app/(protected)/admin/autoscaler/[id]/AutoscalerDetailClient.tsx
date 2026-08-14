@@ -214,6 +214,18 @@ export default function AutoscalerDetailClient({ id }: { id: string }) {
                   </td>
                 </tr>
                 <tr>
+                  <th>Público</th>
+                  <td>
+                    {instance.exposedHost ? (
+                      <a href={`http://${instance.exposedHost}`} target="_blank" rel="noreferrer">
+                        {instance.exposedHost}
+                      </a>
+                    ) : (
+                      "-- (só na rede interna)"
+                    )}
+                  </td>
+                </tr>
+                <tr>
                   <th>Réplicas</th>
                   <td>{status.replica_count}</td>
                 </tr>

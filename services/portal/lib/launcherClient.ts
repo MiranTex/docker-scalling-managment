@@ -17,6 +17,10 @@ export type LauncherInstance = {
   updatedAt: string;
   updatedBy: string;
   stoppedAt?: string;
+  // exposedHost é o hostname público desta instância (ver
+  // services/launcher/internal/httpapi.labelExposeHost), lido ao vivo do
+  // container -- ausente/vazio se nunca foi exposta.
+  exposedHost?: string;
 };
 
 export type CreateInstanceRequest = {
@@ -39,6 +43,14 @@ export type CreateInstanceRequest = {
   cpuScaleUpPercent?: number;
   cpuScaleDownPercent?: number;
   replicaAuthToken?: string;
+  // exposeAs expõe esta instância publicamente via Traefik, em
+  // "<exposeAs>.<PUBLIC_BASE_DOMAIN>" -- nunca publica porta no host, só
+  // escreve labels que o Traefik já observa (ver demo/docker-compose.yml).
+  // exposePort é obrigatório junto com exposeAs quando kind="solo" (a
+  // imagem é arbitrária, sem convenção de porta); ignorado para "group",
+  // que expõe sempre o seu próprio proxy interno.
+  exposeAs?: string;
+  exposePort?: number;
 };
 
 async function launcherFetch(path: string, accessToken: string, init?: RequestInit): Promise<Response> {
@@ -74,6 +86,8 @@ export type ReplicaSummary = {
   image: string;
   state: string;
   network: string;
+  // exposedHost -- ver LauncherInstance.exposedHost.
+  exposedHost?: string;
 };
 
 export function listReplicas(accessToken: string) {
@@ -111,6 +125,8 @@ export type DiscoveredGroup = {
   // services/autoscaler/internal/adminapi) -- é para aí, não para o
   // launcher, que o portal manda pedidos de policy/restart/réplicas.
   adminUrl: string;
+  // exposedHost -- ver LauncherInstance.exposedHost.
+  exposedHost?: string;
 };
 
 export function listGroups(accessToken: string) {

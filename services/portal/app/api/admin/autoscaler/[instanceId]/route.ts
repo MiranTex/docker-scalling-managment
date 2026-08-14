@@ -17,7 +17,13 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ ins
     return NextResponse.json({ error: "unknown_instance", message: `instância desconhecida: ${instanceId}` }, { status: 404 });
   }
 
-  const base = { id: group.containerId, label: group.targetService || group.name, url: group.adminUrl, network: group.network };
+  const base = {
+    id: group.containerId,
+    label: group.targetService || group.name,
+    url: group.adminUrl,
+    network: group.network,
+    exposedHost: group.exposedHost,
+  };
   try {
     const res = await getStatus(group.adminUrl, accessToken);
     const data = await res.json().catch(() => ({}));
