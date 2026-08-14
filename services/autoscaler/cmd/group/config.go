@@ -82,6 +82,17 @@ type config struct {
 	// réplica agora depende do launcher em todo scale up, sempre.
 	launcherServiceURL   string
 	launcherRefreshToken string
+
+	// allowColdStartFallback liga uma válvula de escape, desligada por
+	// defeito: se o pedido de réplica ao launcher falhar E este group não
+	// tiver NENHUMA réplica viva neste momento, cria a réplica localmente
+	// (ver executor.CreateFromTemplate), só essa vez -- nunca como
+	// caminho normal, só para desbloquear um group auto-referencial (ex:
+	// group-authd) preso num arranque a frio. Ver applyScaleUp em main.go
+	// e "Cuidado real" em demo/README.md. A maioria dos groups NUNCA
+	// precisa disto ligado -- só um cujo AUTH_SERVICE_URL aponte para o
+	// serviço que ele mesmo gere.
+	allowColdStartFallback bool
 }
 
 // loadConfig lê a configuração das variáveis de ambiente, aplicando defaults
@@ -118,6 +129,8 @@ func loadConfig() config {
 
 		launcherServiceURL:   envString("LAUNCHER_SERVICE_URL", "http://localhost:8094"),
 		launcherRefreshToken: os.Getenv("LAUNCHER_REFRESH_TOKEN"),
+
+		allowColdStartFallback: envBool("ALLOW_COLD_START_FALLBACK", false),
 	}
 
 	if cfg.targetService == "" {
@@ -221,6 +234,19 @@ func envFloat(key string, def float64) float64 {
 	return n
 }
 
+func envBool(key string, def bool) bool {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		slog.Error("configuração inválida", "var", key, "value", v, "want", "booleano (true/false)", "err", err)
+		os.Exit(1)
+	}
+	return b
+}
+
 func envSeconds(key string, defSeconds int) time.Duration {
 	return time.Duration(envInt(key, defSeconds)) * time.Second
 }
@@ -259,5 +285,6 @@ func (c config) logAttrs() []any {
 		"auth_issuer", c.authIssuer,
 		"auth_audience", c.authAudience,
 		"launcher_service_url", c.launcherServiceURL,
+		"allow_cold_start_fallback", c.allowColdStartFallback,
 	}
 }

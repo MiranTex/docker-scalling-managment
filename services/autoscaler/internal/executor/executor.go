@@ -71,21 +71,25 @@ func scaleUp(ctx context.Context, client *dockerclient.Client, members []dockerc
 // comando, env, labels e config de rede/volumes. Ao contrário de scaleUp
 // (que clona um container já rodando, escolhido meio arbitrariamente), é
 // a partir daqui que cmd/group monta o pedido que manda ao launcher (ver
-// internal/launcherclient) para criar toda réplica nova -- inclusive a
+// internal/launcherclient) para criar toda réplica nova -- SEMPRE, mesmo a
 // primeira, quando ainda não existe nenhum container do serviço. Também
 // significa que mudar o template (ex: nova versão da imagem) só afeta as
 // PRÓXIMAS réplicas criadas, não substitui as que já estão rodando.
 //
-// Criar a partir daqui tem dois caminhos possíveis, escolhidos por
-// cmd/group (ver applyScaleUp): se o "env" não referencia nenhum
-// ${secret:NOME}, CreateFromTemplate cria localmente, sem precisar do
-// launcher -- é o que mantém um group auto-referencial (ex: group-authd,
-// cujo AUTH_SERVICE_URL aponta pra ele mesmo) capaz de arrancar a
-// PRIMEIRA réplica sozinho, sem depender de um access token que só essa
-// réplica poderia emitir. Só quando o "env" tem segredos de verdade é que
-// vale a pena depender do launcher (ver
-// services/launcher/internal/httpapi, POST /v1/replicas) -- ele é quem
-// tem a credencial para o secretsadmin.
+// O group nunca cria uma réplica diretamente contra o Docker -- essa
+// responsabilidade é sempre do launcher (ver
+// services/launcher/internal/httpapi, POST /v1/replicas), que resolve
+// ${secret:NOME} antes de criar, com ou sem segredo nenhum no "env". O
+// group continua a GERIR réplicas (monitorizar, decidir escalar,
+// balancear, remover) -- só não sabe lançar uma sozinho.
+//
+// Excepção única, desligada por defeito (ver cmd/group's
+// ALLOW_COLD_START_FALLBACK): um group auto-referencial (ex: group-authd,
+// cujo AUTH_SERVICE_URL aponta pra ele mesmo) depende de conseguir renovar
+// o seu próprio token contra o serviço que ele mesmo gere, para pedir
+// qualquer réplica ao launcher -- se as réplicas caírem a zero, isso fica
+// impossível, e sem uma válvula de escape, nunca mais sai desse estado.
+// Ver cmd/group/main.go, applyScaleUp, e "Cuidado real" em demo/README.md.
 type LaunchTemplate struct {
 	Image   string            `json:"image"`
 	Cmd     []string          `json:"cmd,omitempty"`
@@ -102,9 +106,10 @@ type LaunchTemplate struct {
 }
 
 // CreateFromTemplate cria+inicia um container diretamente a partir de
-// template, sem passar pelo launcher -- só seguro de chamar quando
-// template.Env não tem nenhuma referência ${secret:NOME} (quem decide
-// isso é cmd/group.applyScaleUp, não este pacote).
+// template, sem passar pelo launcher. Não é o caminho normal de criar uma
+// réplica (ver LaunchTemplate) -- só é seguro chamar como último recurso,
+// quando o group não tem NENHUMA réplica viva e o pedido ao launcher já
+// falhou (é cmd/group.applyScaleUp quem decide isso, nunca este pacote).
 func CreateFromTemplate(ctx context.Context, client *dockerclient.Client, template LaunchTemplate) (string, error) {
 	if template.Image == "" {
 		return "", errors.New("executor: launch template sem \"image\" definida")

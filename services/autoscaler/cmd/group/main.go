@@ -17,7 +17,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"regexp"
 	"sync"
 	"syscall"
 	"time"
@@ -231,8 +230,11 @@ func reconcile(ctx context.Context, cfg config, client *dockerclient.Client, log
 
 		switch decision.Action {
 		case scaler.ScaleUp:
-			if _, err := applyScaleUp(ctx, client, launcher, cfg.launchTemplate); err != nil {
+			_, usedFallback, err := applyScaleUp(ctx, client, logger, cfg, launcher, len(containers), cfg.launchTemplate)
+			if err != nil {
 				logger.Error("erro aplicando scale up", "err", err)
+			} else if usedFallback {
+				metrics.scaleActions.WithLabelValues(cfg.targetService, "cold_start_fallback").Inc()
 			} else {
 				metrics.scaleActions.WithLabelValues(cfg.targetService, "scale_up").Inc()
 			}
@@ -259,38 +261,22 @@ func reconcile(ctx context.Context, cfg config, client *dockerclient.Client, log
 	metrics.healthyBackends.WithLabelValues(cfg.targetService).Set(float64(len(backends)))
 }
 
-// secretRefRe casa qualquer referência ${secret:NOME} -- mesmo charset
-// aceite pelo secretsadmin. Só para decidir SE uma réplica precisa do
-// launcher; a resolução em si (o valor por trás do nome) nunca acontece
-// aqui, ver services/launcher/internal/secretsclient.
-var secretRefRe = regexp.MustCompile(`\$\{secret:[A-Za-z0-9_.-]+\}`)
-
-func hasSecretRefs(env []string) bool {
-	for _, e := range env {
-		if secretRefRe.MatchString(e) {
-			return true
-		}
-	}
-	return false
-}
-
-// applyScaleUp cria uma réplica nova a partir do launch template. Se o
-// "env" não referencia nenhum ${secret:NOME}, cria localmente (ver
-// executor.CreateFromTemplate) -- é o que permite um group
-// auto-referencial (ex: group-authd, ver "Cuidado real" em
-// demo/README.md) arrancar a PRIMEIRA réplica mesmo sem nenhuma réplica
-// de pé, sem depender de um access token que só essa réplica poderia
-// emitir. Só quando há segredos de verdade é que delega no launcher (ver
-// internal/launcherclient), que resolve ${secret:NOME} antes de criar --
-// feito a cada scale up, não uma vez no arranque, para que atualizar o
-// VALOR de um segredo já existente se reflita na próxima réplica criada
-// sem precisar de restart nenhum.
-func applyScaleUp(ctx context.Context, client *dockerclient.Client, launcher *launcherclient.Client, template executor.LaunchTemplate) (string, error) {
-	if !hasSecretRefs(template.Env) {
-		return executor.CreateFromTemplate(ctx, client, template)
-	}
-
-	id, err := launcher.CreateReplica(ctx, launcherclient.LaunchTemplate{
+// applyScaleUp pede uma réplica nova ao launcher (ver internal/launcherclient)
+// -- é o launcher quem resolve ${secret:NOME} antes de criar, com ou sem
+// segredo nenhum no "env" (ver executor.LaunchTemplate) -- feito a cada
+// scale up, não uma vez no arranque, para que atualizar o VALOR de um
+// segredo já existente se reflita na próxima réplica criada sem precisar
+// de restart nenhum.
+//
+// replicaCount é a contagem de réplicas vivas NESTE momento (quem chama já
+// a tem, de listar containers para decidir o scale up -- não vale a pena
+// listar de novo aqui). usedFallback no retorno diz se a réplica veio do
+// launcher (false, o caminho normal) ou do disjuntor de arranque a frio
+// (true, ver executor.CreateFromTemplate) -- só entra em jogo quando
+// cfg.allowColdStartFallback está ligado E replicaCount é zero E o
+// launcher já falhou; nunca como caminho alternativo normal.
+func applyScaleUp(ctx context.Context, client *dockerclient.Client, logger *slog.Logger, cfg config, launcher *launcherclient.Client, replicaCount int, template executor.LaunchTemplate) (id string, usedFallback bool, err error) {
+	id, err = launcher.CreateReplica(ctx, launcherclient.LaunchTemplate{
 		Image:      template.Image,
 		Cmd:        template.Cmd,
 		Env:        template.Env,
@@ -299,10 +285,20 @@ func applyScaleUp(ctx context.Context, client *dockerclient.Client, launcher *la
 		Network:    template.Network,
 		ExtraHosts: template.ExtraHosts,
 	})
-	if err != nil {
-		return "", fmt.Errorf("pedindo réplica nova ao launcher: %w", err)
+	if err == nil {
+		return id, false, nil
 	}
-	return id, nil
+	launcherErr := fmt.Errorf("pedindo réplica nova ao launcher: %w", err)
+	if !cfg.allowColdStartFallback || replicaCount > 0 {
+		return "", false, launcherErr
+	}
+
+	logger.Warn("launcher falhou com zero réplicas vivas -- criando localmente para desbloquear arranque a frio (ALLOW_COLD_START_FALLBACK)", "err", err)
+	id, fallbackErr := executor.CreateFromTemplate(ctx, client, template)
+	if fallbackErr != nil {
+		return "", false, fmt.Errorf("fallback de arranque a frio também falhou: %w (launcher: %v)", fallbackErr, launcherErr)
+	}
+	return id, true, nil
 }
 
 // startDrain escolhe um alvo de scale down entre os containers que ainda

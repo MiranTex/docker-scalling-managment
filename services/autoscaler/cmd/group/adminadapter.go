@@ -83,22 +83,34 @@ func (a *groupAdapter) Restart(ctx context.Context) error {
 	return nil
 }
 
-// AddReplica cria uma réplica extra imediatamente, fora do ciclo normal do
-// scaler -- mesmo caminho (local ou via launcher) que applyScaleUp usaria
-// num scale up automático, ver cmd/group/main.go. restartMu serializa
-// isto contra reconcile()/Restart(), pela mesma razão de sempre: evitar
-// que um tick concorrente crie/remova réplicas ao mesmo tempo que uma
-// ação manual.
+// AddReplica pede uma réplica extra ao launcher imediatamente, fora do
+// ciclo normal do scaler -- mesmo caminho que applyScaleUp usaria num
+// scale up automático, ver cmd/group/main.go. restartMu serializa isto
+// contra reconcile()/Restart(), pela mesma razão de sempre: evitar que um
+// tick concorrente crie/remova réplicas ao mesmo tempo que uma ação
+// manual.
 func (a *groupAdapter) AddReplica(ctx context.Context) (string, error) {
 	a.restartMu.Lock()
 	defer a.restartMu.Unlock()
 
-	id, err := applyScaleUp(ctx, a.client, a.launcher, a.cfg.launchTemplate)
+	filters := map[string][]string{
+		"label": {fmt.Sprintf("%s=%s", a.cfg.serviceLabel, a.cfg.targetService)},
+	}
+	containers, err := a.client.ListContainers(ctx, false, filters)
+	if err != nil {
+		return "", fmt.Errorf("listando réplicas atuais: %w", err)
+	}
+
+	id, usedFallback, err := applyScaleUp(ctx, a.client, a.logger, a.cfg, a.launcher, len(containers), a.cfg.launchTemplate)
 	if err != nil {
 		return "", err
 	}
-	a.metrics.scaleActions.WithLabelValues(a.cfg.targetService, "manual_scale_up").Inc()
-	a.logger.Info("réplica adicionada manualmente via API admin", "container_id", id[:12])
+	action := "manual_scale_up"
+	if usedFallback {
+		action = "manual_cold_start_fallback"
+	}
+	a.metrics.scaleActions.WithLabelValues(a.cfg.targetService, action).Inc()
+	a.logger.Info("réplica adicionada manualmente via API admin", "container_id", id[:12], "cold_start_fallback", usedFallback)
 	return id, nil
 }
 
