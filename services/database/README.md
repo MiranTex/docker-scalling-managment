@@ -48,6 +48,9 @@ cliente nenhum na tua máquina.
 | `BACKUP_SCHEDULE_FULL` | `0 2 * * 0` | Cron (UTC) do backup full -- default domingo 02:00. |
 | `BACKUP_SCHEDULE_INCR` | `0 2 * * 1-6` | Cron (UTC) do backup incremental -- default todo dia menos domingo, 02:00. |
 | `DBADMIN_LISTEN_ADDR` | `:8091` | Porta interna da API de administração (`dbadmin`, ver abaixo). Nunca publique esta porta no host em produção. |
+| `DBADMIN_PROVISIONED_DB_HOST` | `localhost` | Host incluído nas credenciais geradas. Em produção deve ser alcançável pelas aplicações consumidoras. |
+| `DBADMIN_PROVISIONED_DB_PORT` | `5432` | Porta incluída nas credenciais geradas. |
+| `DBADMIN_PROVISIONED_DB_SSLMODE` | `disable` | `sslmode` incluído na URL e em `PGSSLMODE`; use `require` ou `verify-full` em produção. |
 | `AUTH_SERVICE_URL` | `http://localhost:8081` | Onde o `dbadmin` busca as chaves públicas (JWKS) para validar quem chama a API. |
 | `AUTH_ISSUER` / `AUTH_AUDIENCE` | `auth-service` / `base-stack` | Têm de bater exatamente com os mesmos valores configurados no `services/auth` que emite os tokens. |
 
@@ -80,6 +83,41 @@ curl -H "Authorization: Bearer $TOKEN" http://localhost:8091/v1/restore/jobs/res
 # depois confirma (isto promove -- ver aviso sobre timeline nova abaixo):
 curl -X POST -H "Authorization: Bearer $TOKEN" http://localhost:8091/v1/restore/jobs/restore-1/confirm
 ```
+
+### Schemas e utilizadores
+
+O portal em `/admin/database` permite criar um schema e uma role de
+login com nomes independentes. Os nomes têm de usar 3 a 63 caracteres
+minúsculos, começar por uma letra e conter apenas letras, números ou `_`.
+O dbadmin torna a role dona do schema e configura o seu `search_path`,
+portanto tabelas criadas sem prefixo ficam no schema correto.
+
+```sh
+# Listar apenas schemas criados por esta API
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8091/v1/schemas
+
+# Criar; a resposta inclui DATABASE_URL e variáveis PG* uma única vez
+curl -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"schema_name":"minha_app","role_name":"minha_app_user"}' \
+  http://localhost:8091/v1/schemas
+
+# Gerar uma senha nova; a senha anterior deixa de funcionar
+curl -X POST -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8091/v1/schemas/minha_app/reset-password
+
+# Eliminar schema, todos os seus dados e a role
+curl -X DELETE -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"confirmation":"minha_app"}' \
+  http://localhost:8091/v1/schemas/minha_app
+```
+
+As senhas não são persistidas pelo dbadmin nem aparecem na listagem ou
+nos logs de auditoria. Só recursos registados pela própria API podem ser
+redefinidos ou eliminados; schemas internos e recursos criados por SQL
+ficam fora desse controlo. A remoção usa `DROP SCHEMA ... CASCADE`, mas
+reverte sem alterações se a role possuir dependências fora do schema.
 
 Não há endpoint de "cancelar" um restore a meio -- uma vez que
 `pgbackrest restore` já reescreveu o PGDATA, a única forma de "desistir"
@@ -210,12 +248,10 @@ docker compose -f services/database/docker-compose.yml exec postgres run-backup.
   serviço partilhado de verdade (ver `demo/README.md`, secção "Auth +
   portal + database", e `demo/db-init/01-auth-role.sql` como exemplo de
   provisionamento de role por serviço).
-- Criação de roles/schemas por serviço (ex: um utilizador Postgres com
-  acesso só ao seu próprio schema) não é automatizada por este serviço --
-  cada projeto que o consome monta os seus próprios scripts em
-  `/docker-entrypoint-initdb.d` (ver exemplo em `demo/db-init/`) ou faz
-  manualmente via Adminer/`psql`. Isto é deliberado: o `database` não
-  precisa saber nada sobre os serviços que o usam.
+- Os scripts em `/docker-entrypoint-initdb.d` continuam a ser necessários
+  para roles de infraestrutura que precisam existir antes do portal. Para
+  aplicações novas, schemas e utilizadores podem ser provisionados pelo
+  portal ou pela API do dbadmin.
 - Sem teste de restore automatizado -- um backup nunca testado não é um
   backup confiável; validar periodicamente com o passo a passo de PITR
   acima (contra um volume descartável) fica como responsabilidade

@@ -17,6 +17,7 @@ import (
 	"dbadmin/internal/jwtverify"
 	"dbadmin/internal/pgbackrest"
 	"dbadmin/internal/pgstat"
+	"dbadmin/internal/provisioning"
 	"dbadmin/internal/restorejob"
 )
 
@@ -46,17 +47,25 @@ type DBStatus interface {
 	Ping(ctx context.Context) error
 }
 
+type SchemaProvisioner interface {
+	List(ctx context.Context) ([]provisioning.Schema, error)
+	Create(ctx context.Context, schemaName, roleName, actor string) (provisioning.Credentials, error)
+	ResetPassword(ctx context.Context, schemaName string) (provisioning.Credentials, error)
+	Delete(ctx context.Context, schemaName string) error
+}
+
 type Handler struct {
 	tokens   TokenVerifier
 	db       DBStatus
 	backups  pgbackrest.Client
 	jobs     *backupjob.Manager
 	restores *restorejob.Manager
+	schemas  SchemaProvisioner
 	audit    *audit.Logger
 }
 
-func NewHandler(tokens TokenVerifier, db DBStatus, backups pgbackrest.Client, jobs *backupjob.Manager, restores *restorejob.Manager, auditLogger *audit.Logger) *Handler {
-	return &Handler{tokens: tokens, db: db, backups: backups, jobs: jobs, restores: restores, audit: auditLogger}
+func NewHandler(tokens TokenVerifier, db DBStatus, backups pgbackrest.Client, jobs *backupjob.Manager, restores *restorejob.Manager, schemas SchemaProvisioner, auditLogger *audit.Logger) *Handler {
+	return &Handler{tokens: tokens, db: db, backups: backups, jobs: jobs, restores: restores, schemas: schemas, audit: auditLogger}
 }
 
 func (h *Handler) Routes() *http.ServeMux {
@@ -68,9 +77,105 @@ func (h *Handler) Routes() *http.ServeMux {
 	mux.HandleFunc("POST /v1/restore", h.requireRole(RoleInfraAdmin, h.handleTriggerRestore))
 	mux.HandleFunc("GET /v1/restore/jobs/{id}", h.requireRole(RoleInfraAdmin, h.handleGetRestoreJob))
 	mux.HandleFunc("POST /v1/restore/jobs/{id}/confirm", h.requireRole(RoleInfraAdmin, h.handleConfirmRestore))
+	mux.HandleFunc("GET /v1/schemas", h.requireRole(RoleInfraAdmin, h.handleListSchemas))
+	mux.HandleFunc("POST /v1/schemas", h.requireRole(RoleInfraAdmin, h.handleCreateSchema))
+	mux.HandleFunc("POST /v1/schemas/{name}/reset-password", h.requireRole(RoleInfraAdmin, h.handleResetSchemaPassword))
+	mux.HandleFunc("DELETE /v1/schemas/{name}", h.requireRole(RoleInfraAdmin, h.handleDeleteSchema))
 	mux.HandleFunc("GET /healthz", h.handleHealthz)
 	mux.HandleFunc("GET /readyz", h.handleReadyz)
 	return mux
+}
+
+func (h *Handler) handleListSchemas(w http.ResponseWriter, r *http.Request, _ string) {
+	schemas, err := h.schemas.List(r.Context())
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "database_error", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, schemas)
+}
+
+type createSchemaRequest struct {
+	SchemaName string `json:"schema_name"`
+	RoleName   string `json:"role_name"`
+}
+
+func (h *Handler) handleCreateSchema(w http.ResponseWriter, r *http.Request, subject string) {
+	var req createSchemaRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_body", "corpo inválido, esperado schema_name e role_name")
+		return
+	}
+	credentials, err := h.schemas.Create(r.Context(), req.SchemaName, req.RoleName, subject)
+	if err != nil {
+		h.audit.Log(subject, "schema.create", req.SchemaName+" role="+req.RoleName, provisioningAuditResult(err))
+		writeProvisioningError(w, err)
+		return
+	}
+	h.audit.Log(subject, "schema.create", req.SchemaName+" role="+req.RoleName, "criado")
+	writeJSON(w, http.StatusCreated, credentials)
+}
+
+func (h *Handler) handleResetSchemaPassword(w http.ResponseWriter, r *http.Request, subject string) {
+	name := r.PathValue("name")
+	credentials, err := h.schemas.ResetPassword(r.Context(), name)
+	if err != nil {
+		h.audit.Log(subject, "schema.reset_password", name, provisioningAuditResult(err))
+		writeProvisioningError(w, err)
+		return
+	}
+	h.audit.Log(subject, "schema.reset_password", name, "senha redefinida")
+	writeJSON(w, http.StatusOK, credentials)
+}
+
+type deleteSchemaRequest struct {
+	Confirmation string `json:"confirmation"`
+}
+
+func (h *Handler) handleDeleteSchema(w http.ResponseWriter, r *http.Request, subject string) {
+	name := r.PathValue("name")
+	var req deleteSchemaRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Confirmation != name {
+		writeError(w, http.StatusBadRequest, "confirmation_mismatch", "confirmation deve ser exatamente igual ao nome do schema")
+		return
+	}
+	if err := h.schemas.Delete(r.Context(), name); err != nil {
+		h.audit.Log(subject, "schema.delete", name, provisioningAuditResult(err))
+		writeProvisioningError(w, err)
+		return
+	}
+	h.audit.Log(subject, "schema.delete", name, "removido com cascade")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func writeProvisioningError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, provisioning.ErrInvalidName):
+		writeError(w, http.StatusBadRequest, "invalid_name", err.Error())
+	case errors.Is(err, provisioning.ErrConflict):
+		writeError(w, http.StatusConflict, "name_conflict", "o schema ou utilizador já existe")
+	case errors.Is(err, provisioning.ErrNotFound):
+		writeError(w, http.StatusNotFound, "not_found", "schema não encontrado ou não gerido pelo dbadmin")
+	case errors.Is(err, provisioning.ErrDependencies):
+		writeError(w, http.StatusConflict, "external_dependencies", "o utilizador possui dependências fora do schema")
+	default:
+		writeError(w, http.StatusBadGateway, "database_error", "não foi possível concluir a operação no Postgres")
+	}
+}
+
+func provisioningAuditResult(err error) string {
+	switch {
+	case errors.Is(err, provisioning.ErrInvalidName):
+		return "rejeitado: nome inválido"
+	case errors.Is(err, provisioning.ErrConflict):
+		return "rejeitado: conflito de nome"
+	case errors.Is(err, provisioning.ErrNotFound):
+		return "rejeitado: schema não gerido"
+	case errors.Is(err, provisioning.ErrDependencies):
+		return "rejeitado: dependências externas"
+	default:
+		return "falhou: erro interno da base de dados"
+	}
 }
 
 var errMissingToken = errors.New("httpapi: cabeçalho Authorization ausente")

@@ -38,6 +38,10 @@ func (c *Client) Close() {
 	c.pool.Close()
 }
 
+func (c *Client) Pool() *pgxpool.Pool {
+	return c.pool
+}
+
 // ResumeReplay confirma um PITR pausado -- ver
 // services/database/README.md, "Restaurar para um instante específico".
 // Nunca bloqueia por si só (não toca em nenhuma tabela), mas se houver

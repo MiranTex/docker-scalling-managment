@@ -39,6 +39,7 @@ import (
 	"dbadmin/internal/pgbackrest"
 	"dbadmin/internal/pgstat"
 	"dbadmin/internal/pgsupervisor"
+	"dbadmin/internal/provisioning"
 	"dbadmin/internal/restorejob"
 	"dbadmin/internal/restorerunner"
 )
@@ -62,6 +63,13 @@ func main() {
 
 	db := connectWithRetry(ctx, cfg.databaseURL, logger)
 	defer db.Close()
+	provisioner := provisioning.NewManager(db.Pool(), provisioning.ConnectionConfig{
+		Host: cfg.provisionedDBHost, Port: cfg.provisionedDBPort, SSLMode: cfg.provisionedDBSSLMode,
+	})
+	if err := provisioner.Migrate(ctx); err != nil {
+		logger.Error("erro preparando provisionamento de schemas", "err", err)
+		os.Exit(1)
+	}
 
 	tokens := jwtverify.NewVerifier(cfg.authServiceURL, cfg.authIssuer, cfg.authAudience, cfg.jwksRefresh)
 	backups := pgbackrest.Client{Stanza: cfg.pgbackrestStanza}
@@ -69,7 +77,7 @@ func main() {
 	runner := restorerunner.Runner{Supervisor: sup, Backups: backups, DB: db}
 	restores := restorejob.NewManager(runner, jobs)
 	auditLogger := audit.NewLogger(logger)
-	handler := httpapi.NewHandler(tokens, db, backups, jobs, restores, auditLogger)
+	handler := httpapi.NewHandler(tokens, db, backups, jobs, restores, provisioner, auditLogger)
 
 	srv := &http.Server{
 		Addr:    cfg.listenAddr,

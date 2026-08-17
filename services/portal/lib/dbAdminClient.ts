@@ -55,6 +55,18 @@ export type RestoreJob = {
   confirmed_by?: string;
 };
 
+export type ProvisionedSchema = {
+  schema_name: string;
+  role_name: string;
+  created_at: string;
+  created_by: string;
+};
+
+export type SchemaCredentials = ProvisionedSchema & {
+  database_url: string;
+  pg_env: string;
+};
+
 async function dbAdminFetch(path: string, accessToken: string, init?: RequestInit): Promise<Response> {
   return fetch(`${DBADMIN_SERVICE_URL}${path}`, {
     ...init,
@@ -98,4 +110,26 @@ export function getRestoreJob(accessToken: string, id: string) {
 
 export function confirmRestore(accessToken: string, id: string) {
   return dbAdminFetch(`/v1/restore/jobs/${id}/confirm`, accessToken, { method: "POST" });
+}
+
+export function listSchemas(accessToken: string) {
+  return dbAdminFetch("/v1/schemas", accessToken);
+}
+
+export function createSchema(accessToken: string, schemaName: string, roleName: string) {
+  return dbAdminFetch("/v1/schemas", accessToken, {
+    method: "POST",
+    body: JSON.stringify({ schema_name: schemaName, role_name: roleName }),
+  });
+}
+
+export function resetSchemaPassword(accessToken: string, schemaName: string) {
+  return dbAdminFetch(`/v1/schemas/${encodeURIComponent(schemaName)}/reset-password`, accessToken, { method: "POST" });
+}
+
+export function deleteSchema(accessToken: string, schemaName: string, confirmation: string) {
+  return dbAdminFetch(`/v1/schemas/${encodeURIComponent(schemaName)}`, accessToken, {
+    method: "DELETE",
+    body: JSON.stringify({ confirmation }),
+  });
 }

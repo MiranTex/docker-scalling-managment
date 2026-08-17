@@ -103,6 +103,9 @@ services:
       # por issuer inesperado, mesmo com assinatura e role corretas.
       AUTH_ISSUER: "auth.base-stack.local"
       AUTH_AUDIENCE: "base-stack"
+      DBADMIN_PROVISIONED_DB_HOST: database
+      DBADMIN_PROVISIONED_DB_PORT: "5432"
+      DBADMIN_PROVISIONED_DB_SSLMODE: disable
     labels:
       base-stack.managed: "true"
     volumes:

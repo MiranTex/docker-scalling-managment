@@ -31,6 +31,12 @@ services:
       # já faz pro Postgres dele).
       POSTGRES_PASSWORD: app
 
+      # Endereço devolvido pelo dbadmin nas credenciais de schemas novos.
+      # Deve ser alcançável pelas aplicações que consomem esta base.
+      DBADMIN_PROVISIONED_DB_HOST: postgres
+      DBADMIN_PROVISIONED_DB_PORT: "5432"
+      DBADMIN_PROVISIONED_DB_SSLMODE: disable
+
       # --- pgBackRest -----------------------------------------------
       PGBACKREST_STANZA: shared
       # posix (default, backups no volume `database-backup-repo`) ou s3
