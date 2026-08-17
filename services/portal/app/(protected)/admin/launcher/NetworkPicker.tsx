@@ -21,6 +21,14 @@ export default function NetworkPicker({
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // manualEntry: escrever o nome à mão em vez de escolher da lista -- útil
+  // quando a rede já existe (ex: "observability-net", criada por
+  // services/monitoring) mas ainda não apareceu no <select> (lista só
+  // atualiza no load da página) ou só se sabe o nome de cor. O launcher
+  // continua a validar no servidor que a rede é mesmo gerida por esta
+  // plataforma (base-stack.managed) -- isto é só um atalho de UI, não
+  // contorna essa validação.
+  const [manualEntry, setManualEntry] = useState(false);
 
   async function loadNetworks() {
     try {
@@ -82,10 +90,12 @@ export default function NetworkPicker({
     );
   }
 
+  const hasList = networks && networks.length > 0;
+
   return (
     <div className="row" style={{ gap: "0.5rem" }}>
       {error && <div className="error">{error}</div>}
-      {networks && networks.length > 0 ? (
+      {hasList && !manualEntry ? (
         <select id={id} value={value} onChange={(e) => onChange(e.target.value)} style={{ marginBottom: 0 }}>
           <option value="">-- nenhuma (usa a do modelo) --</option>
           {networks.map((n) => (
@@ -103,6 +113,11 @@ export default function NetworkPicker({
           placeholder="auth-net"
           style={{ marginBottom: 0 }}
         />
+      )}
+      {hasList && (
+        <button className="secondary" onClick={() => setManualEntry((v) => !v)}>
+          {manualEntry ? "Escolher da lista" : "Escrever nome"}
+        </button>
       )}
       <button className="secondary" onClick={() => setCreating(true)}>
         + Nova rede

@@ -12,6 +12,13 @@ export default function NetworksAdminClient() {
   const [detail, setDetail] = useState<NetworkDetail | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
 
+  // Ir direto ao nome -- atalho pra quando já se sabe o nome exato da rede
+  // (ex: "observability-net", criada por services/monitoring) e não se
+  // quer depender da tabela abaixo (que só atualiza no load da página).
+  // O launcher continua a validar no servidor que é uma rede gerida por
+  // esta plataforma (base-stack.managed) -- isto é só um atalho de UI.
+  const [goToName, setGoToName] = useState("");
+
   const [containers, setContainers] = useState<ContainerSummary[] | null>(null);
   const [connectTarget, setConnectTarget] = useState("");
   const [connecting, setConnecting] = useState(false);
@@ -193,6 +200,29 @@ export default function NetworksAdminClient() {
         </p>
         {listError && <div className="error">{listError}</div>}
         {deleteError && <div className="error">{deleteError}</div>}
+
+        <label htmlFor="go-to-network">Ir direto a uma rede pelo nome</label>
+        <div className="row" style={{ gap: "0.5rem" }}>
+          <input
+            id="go-to-network"
+            type="text"
+            value={goToName}
+            onChange={(e) => setGoToName(e.target.value)}
+            placeholder="observability-net"
+            style={{ marginBottom: 0 }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && goToName.trim()) selectNetwork(goToName.trim());
+            }}
+          />
+          <button className="secondary" disabled={!goToName.trim()} onClick={() => selectNetwork(goToName.trim())}>
+            Ir
+          </button>
+        </div>
+        <p className="muted">
+          Útil para uma rede que já existe mas ainda não aparece na tabela abaixo (ex: acabaste de
+          subir <code>services/monitoring</code>) -- funciona só se o nome corresponder a uma rede
+          gerida por esta plataforma, mesma validação de sempre.
+        </p>
 
         {!networks ? (
           <p className="muted">A carregar...</p>

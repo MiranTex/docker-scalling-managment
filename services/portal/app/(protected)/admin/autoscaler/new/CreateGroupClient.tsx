@@ -6,11 +6,13 @@ import { useRouter } from "next/navigation";
 import type { ServiceTemplate } from "@/lib/templatesAdminClient";
 import type { LauncherInstance } from "@/lib/launcherClient";
 import NetworkPicker from "../../launcher/NetworkPicker";
+import ExtraNetworksPicker from "../../launcher/ExtraNetworksPicker";
 
 const EMPTY_GROUP_FORM = {
   templateName: "",
   targetService: "",
   network: "",
+  extraNetworks: [] as string[],
   backendPort: "80",
   minReplicas: "1",
   maxReplicas: "3",
@@ -75,6 +77,7 @@ export default function CreateGroupClient() {
           kind: "group",
           targetService: groupForm.targetService.trim(),
           ...(groupForm.network.trim() ? { network: groupForm.network.trim() } : {}),
+          ...(groupForm.extraNetworks.length ? { extraNetworks: groupForm.extraNetworks } : {}),
           backendPort: Number(groupForm.backendPort) || 80,
           minReplicas: Number(groupForm.minReplicas) || 0,
           maxReplicas: Number(groupForm.maxReplicas) || 1,
@@ -124,7 +127,7 @@ export default function CreateGroupClient() {
           {groupCreated.exposedHost && (
             <>
               Público em{" "}
-              <a href={`http://${groupCreated.exposedHost}`} target="_blank" rel="noreferrer">
+              <a href={`${groupCreated.exposedScheme || "http"}://${groupCreated.exposedHost}`} target="_blank" rel="noreferrer">
                 {groupCreated.exposedHost}
               </a>
               .{" "}
@@ -176,6 +179,19 @@ export default function CreateGroupClient() {
         Tem de ser a mesma rede do launcher/portal (ex: <code>auth-net</code> no demo) para a API
         admin deste group ficar alcançável -- sem isto, um modelo sem rede definida cria o group
         na rede "bridge" do Docker, isolado, e ele aparece como "instância inalcançável".
+      </p>
+
+      <label htmlFor="group-extra-networks">Redes adicionais (opcional)</label>
+      <ExtraNetworksPicker
+        id="group-extra-networks"
+        exclude={groupForm.network || undefined}
+        value={groupForm.extraNetworks}
+        onChange={(extraNetworks) => setGroupForm((f) => ({ ...f, extraNetworks }))}
+      />
+      <p className="muted">
+        Liga o group a mais redes além da acima, ao mesmo tempo -- ex:{" "}
+        <code>observability-net</code> (ver <a href="/admin/networks">/admin/networks</a>), sem
+        precisar voltar lá depois de criar. Ctrl/Cmd+clique para escolher mais do que uma.
       </p>
 
       <label htmlFor="group-expose-as">Expor publicamente como (opcional)</label>

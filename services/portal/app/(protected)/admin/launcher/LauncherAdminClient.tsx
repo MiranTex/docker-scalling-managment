@@ -5,6 +5,7 @@ import type { LauncherInstance, ReplicaSummary } from "@/lib/launcherClient";
 import type { ServiceTemplate } from "@/lib/templatesAdminClient";
 import ConfirmModal from "../database/ConfirmModal";
 import NetworkPicker from "./NetworkPicker";
+import ExtraNetworksPicker from "./ExtraNetworksPicker";
 
 // Row unifica os dois tipos de container geridos por esta plataforma que
 // aparecem em /admin/launcher: instâncias que este launcher lançou
@@ -24,6 +25,7 @@ type Row = {
   containerId: string;
   info: string;
   exposedHost?: string;
+  exposedScheme?: string;
 };
 
 type StatusFilter = "active" | "stopped" | "all";
@@ -39,6 +41,7 @@ function instanceToRow(i: LauncherInstance): Row {
     containerId: i.containerId,
     info: `${new Date(i.createdAt).toLocaleString("pt-PT")} · ${i.updatedBy}`,
     exposedHost: i.exposedHost,
+    exposedScheme: i.exposedScheme,
   };
 }
 
@@ -52,6 +55,7 @@ function replicaToRow(r: ReplicaSummary): Row {
     containerId: r.containerId,
     info: `rede: ${r.network || "--"}`,
     exposedHost: r.exposedHost,
+    exposedScheme: r.exposedScheme,
   };
 }
 
@@ -64,6 +68,7 @@ export default function LauncherAdminClient() {
   const [templates, setTemplates] = useState<ServiceTemplate[] | null>(null);
   const [templateName, setTemplateName] = useState("");
   const [network, setNetwork] = useState("");
+  const [extraNetworks, setExtraNetworks] = useState<string[]>([]);
   const [exposeAs, setExposeAs] = useState("");
   const [exposePort, setExposePort] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
@@ -141,6 +146,7 @@ export default function LauncherAdminClient() {
           templateName,
           kind: "solo",
           ...(network.trim() ? { network: network.trim() } : {}),
+          ...(extraNetworks.length ? { extraNetworks } : {}),
           ...(exposeAs.trim() ? { exposeAs: exposeAs.trim(), exposePort: Number(exposePort) } : {}),
         }),
       });
@@ -235,7 +241,7 @@ export default function LauncherAdminClient() {
                   <td>{row.info}</td>
                   <td>
                     {row.exposedHost ? (
-                      <a href={`http://${row.exposedHost}`} target="_blank" rel="noreferrer">
+                      <a href={`${row.exposedScheme || "http"}://${row.exposedHost}`} target="_blank" rel="noreferrer">
                         {row.exposedHost}
                       </a>
                     ) : (
@@ -310,6 +316,19 @@ export default function LauncherAdminClient() {
           Deixa em branco para usar a rede definida no modelo. Se o container ficar "inatingível"
           depois de lançado, é normalmente porque nem o modelo nem este campo têm a rede certa (o
           Docker usa "bridge" por defeito, isolada do launcher/portal).
+        </p>
+
+        <label htmlFor="instance-extra-networks">Redes adicionais (opcional)</label>
+        <ExtraNetworksPicker
+          id="instance-extra-networks"
+          exclude={network || undefined}
+          value={extraNetworks}
+          onChange={setExtraNetworks}
+        />
+        <p className="muted">
+          Liga a instância a mais redes além da acima, ao mesmo tempo -- ex: a própria rede da app
+          E <code>observability-net</code> (ver <a href="/admin/networks">/admin/networks</a>),
+          sem precisar voltar lá depois de lançar. Ctrl/Cmd+clique para escolher mais do que uma.
         </p>
 
         <label htmlFor="instance-expose-as">Expor publicamente como (opcional)</label>
