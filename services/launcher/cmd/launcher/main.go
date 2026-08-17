@@ -45,7 +45,7 @@ func main() {
 	docker := dockerclient.New(cfg.dockerSocket)
 	secrets := secretsclient.New(cfg.secretsAdminServiceURL, cfg.authServiceURL, cfg.secretsRefreshToken)
 	templates := templatesclient.New(cfg.templatesAdminServiceURL)
-	handler := httpapi.NewHandler(tokens, db, docker, secrets, templates, cfg.groupConfig(), cfg.publicBaseDomain)
+	handler := httpapi.NewHandler(tokens, db, docker, secrets, templates, cfg.groupConfig(), cfg.publicBaseDomain, cfg.tlsCertResolver)
 
 	srv := &http.Server{
 		Addr:    cfg.listenAddr,

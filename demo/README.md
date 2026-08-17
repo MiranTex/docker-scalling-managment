@@ -14,9 +14,12 @@ Isto é a PLATAFORMA -- depois de subir, novos serviços não se escrevem à
 mão neste `docker-compose.yml`: criam-se um modelo no templatesadmin e
 lançam-se a partir dele via launcher (ver "Criar um novo serviço
 autoscalado" e "Lançar containers sem autoscaling (launcher)" abaixo).
-[services/monitoring](../services/monitoring) (Prometheus/Grafana) é uma
-plataforma separada e opcional que qualquer serviço criado a partir daqui
-já sabe anunciar-se a (labels `prometheus.scrape`/`prometheus.port`).
+[services/monitoring](../services/monitoring) (Prometheus/Grafana/Loki) é
+uma plataforma à parte, pensada para servir vários projetos ao mesmo tempo
+(não só este demo) -- mas o `traefik` deste `docker-compose.yml` já nasce
+ligado à rede dela (`observability-net`, externa), por isso **tem de estar
+de pé primeiro** -- ver "Subir a plataforma base" abaixo e
+"Observabilidade" mais à frente.
 
 ## Subir a plataforma base (auth gerido pelo autoscaler, Postgres partilhado)
 
@@ -47,10 +50,17 @@ do `auth` (ver
    docker build -t templatesadmin:latest services/templatesadmin
    docker build -t launcher:latest services/launcher
    ```
-2. Suba tudo:
+2. Suba a plataforma de observabilidade primeiro (uma vez só -- ver
+   [services/monitoring/README.md](../services/monitoring/README.md)) e só
+   depois este demo:
    ```sh
+   docker compose -f services/monitoring/docker-compose.yml up -d
    docker compose -f demo/docker-compose.yml up -d
    ```
+   Nessa ordem porque o `traefik` deste ficheiro já nasce ligado à rede
+   `observability-net` (externa) -- se tentares subir o demo primeiro,
+   `docker compose` recusa com algo como
+   `network observability-net declared as external, but could not be found`.
    O `group-authd` cria a primeira réplica do `authd` sozinho (pedindo-a
    ao `launcher`) — confira com
    `docker ps --filter label=autoscaler.service=auth`.
@@ -361,6 +371,81 @@ também funciona: sempre que uma rede nova é criada, o launcher liga o
 Traefik a ela automaticamente. Para uma rede já existente antes desta
 feature, ligue o Traefik manualmente pela própria UI de `/admin/networks`
 ("ligar container").
+
+### HTTPS/TLS (ACME)
+
+`demo/docker-compose.yml` já sobe o Traefik com um segundo entrypoint
+(`websecure`, porta 443) e um resolver ACME chamado `le` (Let's Encrypt),
+mas **desligado por padrão**: nenhum router usa `le` até o `launcher` ser
+configurado para escrevê-lo. Isto é intencional -- ligar por padrão num
+ambiente de dev (`127.0.0.1.nip.io`, loopback) não serviria de nada, já
+que o challenge HTTP-01 da Let's Encrypt precisa de alcançar o teu host
+pela internet na porta 80 para confirmar que o domínio é mesmo teu.
+
+Para ligar em produção (host com IP público, porta 80 já acessível de
+fora -- a mesma que o Traefik já usa hoje):
+
+1. Aponte `PUBLIC_BASE_DOMAIN` para um domínio real, com um registo `A`
+   (ou `*.dominio.com` para o caso multi-tenant) a apontar para o IP
+   público do host -- ou use `<IP-público>.nip.io`, que também é um
+   domínio real do ponto de vista da Let's Encrypt (só `127.0.0.1.nip.io`,
+   loopback, não funciona).
+2. Defina `TRAEFIK_ACME_EMAIL` (contacto exigido pela Let's Encrypt para
+   avisos de expiração) e suba `traefik` de novo:
+   ```sh
+   export TRAEFIK_ACME_EMAIL="teu-email@example.com"
+   docker compose -f demo/docker-compose.yml up -d traefik
+   ```
+3. Confirme contra a CA de **staging** primeiro (default de
+   `TRAEFIK_ACME_CA_SERVER` -- sem limite de taxa realista, mas emite
+   certificados em que o browser não confia) expondo uma instância e
+   verificando `docker logs demo-traefik-1` por erros de challenge.
+4. Só depois de confirmar, mude para a CA de produção e refaça o passo 2:
+   ```sh
+   export TRAEFIK_ACME_CA_SERVER="https://acme-v02.api.letsencrypt.org/directory"
+   docker compose -f demo/docker-compose.yml up -d traefik
+   ```
+5. Ligue o `launcher` para passar a escrever HTTPS em toda instância
+   exposta a partir daqui:
+   ```sh
+   export PUBLIC_TLS_CERT_RESOLVER=le
+   docker compose -f demo/docker-compose.yml up -d launcher
+   ```
+
+Só instâncias expostas **depois** deste último passo ganham HTTPS -- uma
+já exposta antes continua só em HTTP até ser recriada (mesma limitação já
+documentada acima para imagem/env: expor é decidido na criação, não
+depois). O certificado fica em `acme.json`, dentro do volume nomeado
+`traefik-acme` -- sobrevive a um `docker compose down` normal (sem `-v`).
+
+### Observabilidade (Prometheus/Grafana/Loki)
+
+O `traefik` já sobe com access logs em JSON (`--accesslog`), um endpoint
+`/metrics` Prometheus nativo num entrypoint próprio (`:8082`, nunca
+publicado no host), e já nasce ligado à rede `observability-net` (ver
+serviço `traefik` em `demo/docker-compose.yml`) -- nada a configurar à
+parte, desde que a [plataforma de observabilidade](../services/monitoring)
+já esteja de pé (ver "Subir a plataforma base" acima, é pré-requisito
+deste `docker-compose.yml` inteiro, não só da observabilidade).
+
+- **Logs**: automático -- o Promtail já coleta o stdout de QUALQUER
+  container do host, `traefik` incluído, sem precisar de rede nem label
+  nenhuma.
+- **Métricas**: automático -- o Prometheus descobre o `traefik` sozinho
+  via `docker_sd_configs` (labels `prometheus.scrape`/`prometheus.port`,
+  já na label do serviço) e alcança-o pelo nome (`traefik:8082`, resolvido
+  via DNS interno do Docker dentro de `observability-net`).
+- Abra o Grafana (`http://localhost:3000` por defeito, ver
+  `services/monitoring/README.md`) -- o dashboard "Traefik (gateway)", na
+  pasta "Base Stack", já vem provisionado: requisições/erros/latência por
+  instância exposta (`traefik_service_requests_total`/`_duration_seconds`,
+  rotuladas pelo mesmo nome que `exposeAs` gerou) mais os access logs no
+  fim.
+
+Um serviço lançado depois via templatesadmin/launcher segue a mesma
+convenção (`prometheus.scrape`/`prometheus.port` no seu `env`/labels, se
+quiser aparecer aqui também) -- ver `services/monitoring/README.md`,
+"Como um projeto novo aparece aqui".
 
 ## Derrubar
 

@@ -81,7 +81,7 @@ export default function AutoscalerListClient() {
                 </td>
                 <td onClick={(e) => e.stopPropagation()}>
                   {i.exposedHost ? (
-                    <a href={`http://${i.exposedHost}`} target="_blank" rel="noreferrer">
+                    <a href={`${i.exposedScheme || "http"}://${i.exposedHost}`} target="_blank" rel="noreferrer">
                       {i.exposedHost}
                     </a>
                   ) : (

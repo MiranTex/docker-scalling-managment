@@ -217,7 +217,7 @@ export default function AutoscalerDetailClient({ id }: { id: string }) {
                   <th>Público</th>
                   <td>
                     {instance.exposedHost ? (
-                      <a href={`http://${instance.exposedHost}`} target="_blank" rel="noreferrer">
+                      <a href={`${instance.exposedScheme || "http"}://${instance.exposedHost}`} target="_blank" rel="noreferrer">
                         {instance.exposedHost}
                       </a>
                     ) : (

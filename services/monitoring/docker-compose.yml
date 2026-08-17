@@ -17,6 +17,15 @@
 networks:
   observability-net:
     name: observability-net
+    labels:
+      # Sem esta label, esta rede fica invisível em GET /v1/networks do
+      # launcher (ver services/launcher/internal/dockerclient.ListNetworks,
+      # que só lista redes com base-stack.managed=true) -- e por extensão
+      # em /admin/networks no portal. Com ela, dá para ligar QUALQUER
+      # container (ex: o Traefik do demo) a esta rede pela própria UI
+      # ("ligar container"), em vez de precisar de `docker network connect`
+      # na linha de comandos.
+      base-stack.managed: "true"
 
 services:
   prometheus:
@@ -35,10 +44,12 @@ services:
       - observability-net
     # A imagem oficial do Prometheus roda como usuário não-root (nobody);
     # sem isto ele não tem permissão de ler o socket Docker (dono root:docker).
-    # 999 é o GID do grupo "docker" neste host -- confirme com `getent group docker`
-    # se for reaplicar isto noutra máquina.
+    # 991 é o GID do dono do grupo do socket NESTE host (Colima -- confirme
+    # com `ls -la /var/run/docker.sock` de dentro de qualquer container
+    # deste projeto, ou `getent group docker` no host, se for reaplicar
+    # isto noutra máquina; noutro runtime Docker o valor mais comum é 999).
     group_add:
-      - "999"
+      - "991"
     mem_limit: 256m
     cpus: 0.5
 
@@ -48,7 +59,11 @@ services:
     volumes:
       - ./loki/loki-config.yml:/etc/loki/loki-config.yml:ro
     ports:
-      - "3100:3100"
+      # 3101 no host, não 3100 -- colide com o portal do demo
+      # (demo/docker-compose.yml, "3100:3000"). Só afeta acesso direto à
+      # API do Loki a partir do host; Grafana/Promtail continuam a falar
+      # com ele pelo nome do container ("loki:3100"), nunca por aqui.
+      - "3101:3100"
     networks:
       - observability-net
     mem_limit: 256m
@@ -84,5 +99,7 @@ services:
     depends_on:
       - prometheus
       - loki
-    mem_limit: 384m
+    # 384m morria por OOM (exit 137) com esta versão do Grafana -- a
+    # indexação bleve de dashboards/pastas/etc sozinha já passa disso.
+    mem_limit: 768m
     cpus: 0.5

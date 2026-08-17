@@ -21,6 +21,11 @@ export type LauncherInstance = {
   // services/launcher/internal/httpapi.labelExposeHost), lido ao vivo do
   // container -- ausente/vazio se nunca foi exposta.
   exposedHost?: string;
+  // exposedScheme -- "https" ou "http", conforme o launcher tinha
+  // PUBLIC_TLS_CERT_RESOLVER configurado no momento em que esta instância
+  // foi exposta (ver httpapi.labelExposeScheme). Ausente se nunca foi
+  // exposta; tratar como "http" nesse caso.
+  exposedScheme?: string;
 };
 
 export type CreateInstanceRequest = {
@@ -32,6 +37,12 @@ export type CreateInstanceRequest = {
   // API admin da instância fica inatingível. Ver lib/launcherClient.listNetworks
   // para escolher/criar uma em vez de digitar à mão.
   network?: string;
+  // extraNetworks liga a instância a redes ADICIONAIS, além de "network"
+  // -- ex: a rede da própria aplicação E "observability-net" (ver
+  // services/monitoring) ao mesmo tempo, sem precisar voltar a
+  // /admin/networks depois. Mesma validação de sempre no launcher (só
+  // redes "base-stack.managed").
+  extraNetworks?: string[];
   // Campos abaixo só são lidos pelo launcher quando kind="group" -- ver
   // services/launcher/internal/httpapi.createInstanceRequest. Um modelo
   // (ServiceTemplate) já não tem estes campos; é aqui, ao criar o group,
@@ -86,8 +97,9 @@ export type ReplicaSummary = {
   image: string;
   state: string;
   network: string;
-  // exposedHost -- ver LauncherInstance.exposedHost.
+  // exposedHost/exposedScheme -- ver LauncherInstance.
   exposedHost?: string;
+  exposedScheme?: string;
 };
 
 export function listReplicas(accessToken: string) {
@@ -125,8 +137,9 @@ export type DiscoveredGroup = {
   // services/autoscaler/internal/adminapi) -- é para aí, não para o
   // launcher, que o portal manda pedidos de policy/restart/réplicas.
   adminUrl: string;
-  // exposedHost -- ver LauncherInstance.exposedHost.
+  // exposedHost/exposedScheme -- ver LauncherInstance.
   exposedHost?: string;
+  exposedScheme?: string;
 };
 
 export function listGroups(accessToken: string) {

@@ -145,6 +145,14 @@ const (
 	// (traefik.*) e ficam só do lado de quem escreve -- nada aqui precisa
 	// de entender a sintaxe delas.
 	labelExposeHost = "base-stack.expose.host"
+	// labelExposeScheme acompanha labelExposeHost -- "https" se esta
+	// instância foi exposta com TLS (ver resolveExposeLabels, tlsCertResolver
+	// configurado neste launcher no momento da criação), "http" caso
+	// contrário. Guardado na label (não recalculado a partir da config
+	// atual do launcher) para uma instância já exposta continuar a mostrar
+	// o esquema com que foi de facto criada, mesmo que a config de TLS da
+	// plataforma mude depois.
+	labelExposeScheme = "base-stack.expose.scheme"
 	// traefikContainerName é o nome fixo do container do gateway único de
 	// acesso externo (ver demo/docker-compose.yml, serviço "traefik",
 	// container_name) -- é a ele que handleCreateNetwork liga toda rede
@@ -176,10 +184,18 @@ type Handler struct {
 	// pedido com "exposeAs" preenchido falha com erro claro em vez de
 	// silenciosamente não expor nada.
 	publicBaseDomain string
+	// tlsCertResolver é o nome do certResolver Traefik (ver
+	// demo/docker-compose.yml, certificatesresolvers) a usar em toda
+	// instância exposta a partir de agora -- "" (default) mantém o
+	// comportamento de sempre: só HTTP, sem certificado nenhum. Preenchido
+	// (ex: "le"), toda instância exposta A PARTIR DAQUI passa a responder
+	// também em HTTPS com um certificado emitido por esse resolver; ver
+	// resolveExposeLabels.
+	tlsCertResolver string
 }
 
-func NewHandler(tokens TokenVerifier, s Store, docker Docker, secrets Secrets, templates Templates, groups GroupConfig, publicBaseDomain string) *Handler {
-	return &Handler{tokens: tokens, store: s, docker: docker, secrets: secrets, templates: templates, groups: groups, publicBaseDomain: publicBaseDomain}
+func NewHandler(tokens TokenVerifier, s Store, docker Docker, secrets Secrets, templates Templates, groups GroupConfig, publicBaseDomain, tlsCertResolver string) *Handler {
+	return &Handler{tokens: tokens, store: s, docker: docker, secrets: secrets, templates: templates, groups: groups, publicBaseDomain: publicBaseDomain, tlsCertResolver: tlsCertResolver}
 }
 
 func (h *Handler) Routes() *http.ServeMux {
@@ -252,6 +268,17 @@ type createInstanceRequest struct {
 	// DEPLOYMENT (qual rede, não o que a aplicação precisa), por isso vive
 	// aqui, não no modelo -- mesmo raciocínio de TargetService/réplicas.
 	Network string `json:"network,omitempty"`
+
+	// ExtraNetworks liga o container recém-criado a redes ADICIONAIS,
+	// além de Network -- útil quando a instância precisa de estar em mais
+	// de uma rede ao mesmo tempo (ex: a sua própria rede de aplicação E
+	// "observability-net", ver services/monitoring). A API do Docker só
+	// aceita UMA rede na criação (Network, via NetworkMode); estas são
+	// ligadas depois, uma a uma, por isso passam pela mesma validação de
+	// handleConnectNetwork (têm de ser redes "base-stack.managed") -- não
+	// é uma forma de contornar essa regra, só de fazer tudo numa única
+	// chamada em vez de precisar voltar a /admin/networks depois.
+	ExtraNetworks []string `json:"extraNetworks,omitempty"`
 
 	// Campos usados só quando Kind="group" -- mesmo significado dos
 	// campos homónimos que existiam em store.Template antes desta versão.
@@ -410,10 +437,32 @@ func (h *Handler) resolveExposeLabels(slug, network string, port int) (labels ma
 	labels = map[string]string{
 		labelExposeHost:  host,
 		"traefik.enable": "true",
+		// Router HTTP puro, sem "tls" nenhum -- sempre presente, mesmo com
+		// TLS ligado, para uma instância exposta antes desta feature (ou
+		// com h.tlsCertResolver="") continuar acessível exatamente como
+		// sempre foi.
 		fmt.Sprintf("traefik.http.routers.%s.rule", slug):                      rule,
 		fmt.Sprintf("traefik.http.routers.%s.entrypoints", slug):               "web",
 		fmt.Sprintf("traefik.http.services.%s.loadbalancer.server.port", slug): strconv.Itoa(port),
 	}
+	scheme := "http"
+	if h.tlsCertResolver != "" {
+		// Router SEGUNDO e SEPARADO para HTTPS, não uma extensão do de cima:
+		// o Traefik trata todo router com bloco "tls" como HTTPS-only,
+		// mesmo listando "web" nos seus entrypoints -- listar os dois
+		// entrypoints num router só com tls.certresolver definido faz o
+		// "web" parar de responder para ele (confirmado testando contra o
+		// Traefik real: 404 em HTTP, 200 em HTTPS com a mesma config).
+		// Os dois routers apontam ao MESMO serviço (nome do slug), definido
+		// uma única vez acima.
+		secureRouter := slug + "-secure"
+		labels[fmt.Sprintf("traefik.http.routers.%s.rule", secureRouter)] = rule
+		labels[fmt.Sprintf("traefik.http.routers.%s.entrypoints", secureRouter)] = "websecure"
+		labels[fmt.Sprintf("traefik.http.routers.%s.tls.certresolver", secureRouter)] = h.tlsCertResolver
+		labels[fmt.Sprintf("traefik.http.routers.%s.service", secureRouter)] = slug
+		scheme = "https"
+	}
+	labels[labelExposeScheme] = scheme
 	if network != "" {
 		labels["traefik.docker.network"] = network
 	}
@@ -472,6 +521,9 @@ func (h *Handler) launchSolo(ctx context.Context, id string, tmpl templatesclien
 	}
 	if err := h.docker.StartContainer(ctx, containerID); err != nil {
 		return "", fmt.Errorf("iniciando container: %w", err)
+	}
+	if err := h.connectExtraNetworks(ctx, containerID, req.ExtraNetworks); err != nil {
+		return containerID, err
 	}
 	return containerID, nil
 }
@@ -577,6 +629,9 @@ func (h *Handler) launchGroup(ctx context.Context, id string, tmpl templatesclie
 	if err := h.docker.StartContainer(ctx, containerID); err != nil {
 		return "", fmt.Errorf("iniciando container do group: %w", err)
 	}
+	if err := h.connectExtraNetworks(ctx, containerID, req.ExtraNetworks); err != nil {
+		return containerID, err
+	}
 	return containerID, nil
 }
 
@@ -614,7 +669,8 @@ func (h *Handler) ensureImage(ctx context.Context, image string) error {
 // a partir do container, que é sempre a fonte de verdade.
 type InstanceResponse struct {
 	store.Instance
-	ExposedHost string `json:"exposedHost,omitempty"`
+	ExposedHost   string `json:"exposedHost,omitempty"`
+	ExposedScheme string `json:"exposedScheme,omitempty"`
 }
 
 func (h *Handler) handleListInstances(w http.ResponseWriter, r *http.Request, _, _ string) {
@@ -625,18 +681,20 @@ func (h *Handler) handleListInstances(w http.ResponseWriter, r *http.Request, _,
 	}
 
 	// Uma chamada só ao Docker para todo container exposto (nunca N+1, uma
-	// por instância) -- monta um mapa containerId -> host e enriquece cada
-	// linha da store com ele.
-	exposedByContainer := map[string]string{}
+	// por instância) -- monta um mapa containerId -> host/scheme e enriquece
+	// cada linha da store com eles.
+	exposedHostByContainer := map[string]string{}
+	exposedSchemeByContainer := map[string]string{}
 	if containers, err := h.docker.ListContainers(r.Context(), true, map[string][]string{"label": {labelExposeHost}}); err == nil {
 		for _, c := range containers {
-			exposedByContainer[c.ID] = c.Labels[labelExposeHost]
+			exposedHostByContainer[c.ID] = c.Labels[labelExposeHost]
+			exposedSchemeByContainer[c.ID] = c.Labels[labelExposeScheme]
 		}
 	}
 
 	out := make([]InstanceResponse, 0, len(instances))
 	for _, i := range instances {
-		out = append(out, InstanceResponse{Instance: i, ExposedHost: exposedByContainer[i.ContainerID]})
+		out = append(out, InstanceResponse{Instance: i, ExposedHost: exposedHostByContainer[i.ContainerID], ExposedScheme: exposedSchemeByContainer[i.ContainerID]})
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -727,6 +785,9 @@ type GroupSummary struct {
 	// vazio se nunca foi exposto -- lido direto da label, nunca da sintaxe
 	// do Traefik.
 	ExposedHost string `json:"exposedHost,omitempty"`
+	// ExposedScheme -- ver labelExposeScheme. "https" ou "http", vazio se
+	// nunca foi exposto.
+	ExposedScheme string `json:"exposedScheme,omitempty"`
 }
 
 func (h *Handler) handleListGroups(w http.ResponseWriter, r *http.Request, _, _ string) {
@@ -750,6 +811,7 @@ func (h *Handler) handleListGroups(w http.ResponseWriter, r *http.Request, _, _ 
 			Network:       c.PrimaryNetwork(),
 			AdminURL:      "http://" + name + ":" + groupAdminPort,
 			ExposedHost:   c.Labels[labelExposeHost],
+			ExposedScheme: c.Labels[labelExposeScheme],
 		})
 	}
 	writeJSON(w, http.StatusOK, groups)
@@ -852,7 +914,8 @@ type ReplicaSummary struct {
 	// ExposedHost -- ver GroupSummary.ExposedHost. Só teria valor aqui numa
 	// réplica se alguém tivesse exposto uma diretamente (não é o caminho
 	// normal: expor um group expõe o SEU proxy, não uma réplica).
-	ExposedHost string `json:"exposedHost,omitempty"`
+	ExposedHost   string `json:"exposedHost,omitempty"`
+	ExposedScheme string `json:"exposedScheme,omitempty"`
 }
 
 func (h *Handler) handleListReplicas(w http.ResponseWriter, r *http.Request, _, _ string) {
@@ -881,6 +944,7 @@ func (h *Handler) handleListReplicas(w http.ResponseWriter, r *http.Request, _, 
 			State:         c.State,
 			Network:       c.PrimaryNetwork(),
 			ExposedHost:   c.Labels[labelExposeHost],
+			ExposedScheme: c.Labels[labelExposeScheme],
 		})
 	}
 	writeJSON(w, http.StatusOK, replicas)
@@ -1021,6 +1085,25 @@ func (h *Handler) handleCreateNetwork(w http.ResponseWriter, r *http.Request, _,
 // qualquer a partilhar o mesmo host Docker.
 func hasPlatformLabel(labels map[string]string) bool {
 	return labels[dockerclient.PlatformLabel] == dockerclient.PlatformLabelValue
+}
+
+// connectExtraNetworks liga containerID a cada rede em names, além da
+// rede em que já nasceu -- chamado por launchSolo/launchGroup logo a
+// seguir a StartContainer, para req.ExtraNetworks (ver createInstanceRequest).
+// Mesma validação de handleConnectNetwork (só redes "base-stack.managed"):
+// isto grava labels e chama a API do Docker diretamente, não passa pela
+// rota HTTP, então precisa confirmar a mesma coisa aqui.
+func (h *Handler) connectExtraNetworks(ctx context.Context, containerID string, names []string) error {
+	for _, name := range names {
+		detail, err := h.docker.InspectNetwork(ctx, name)
+		if err != nil || !hasPlatformLabel(detail.Labels) {
+			return fmt.Errorf("rede adicional desconhecida: %q", name)
+		}
+		if err := h.docker.ConnectNetwork(ctx, name, containerID); err != nil {
+			return fmt.Errorf("ligando à rede adicional %q: %w", name, err)
+		}
+	}
+	return nil
 }
 
 // isPlatformContainer confirma, por label, que um container é desta

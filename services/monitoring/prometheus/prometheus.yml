@@ -15,9 +15,22 @@ scrape_configs:
       - source_labels: [__meta_docker_container_label_prometheus_scrape]
         regex: "true"
         action: keep
-      - source_labels: [__meta_docker_network_ip, __meta_docker_container_label_prometheus_port]
-        separator: ":"
+      # Endereço = NOME do container + porta (nunca __meta_docker_network_ip):
+      # confirmado ao vivo que esse meta label só reflete o IP da rede
+      # "primária" do container -- a que ele tinha ao ser criado -- mesmo
+      # que ele seja ligado a "observability-net" DEPOIS (via
+      # `docker network connect`, ou a UI /admin/networks do launcher, ou
+      # até listando as duas redes no mesmo docker-compose.yml -- o Compose
+      # escolhe a primária sozinho, sem opção de configurar qual). Um
+      # container assim nunca teria __meta_docker_network_ip apontando pra
+      # "observability-net", ficando pra sempre inatingível a partir daqui.
+      # O nome resolve certo via DNS interno do Docker em QUALQUER rede a
+      # que o container esteja ligado, primária ou não.
+      - source_labels: [__meta_docker_container_name, __meta_docker_container_label_prometheus_port]
+        separator: ";"
+        regex: "/(.*);(.*)"
         target_label: __address__
+        replacement: "${1}:${2}"
       # "compose_service" (não "service"): o nosso próprio /metrics já usa a
       # label "service" pro serviço que o autoscaler gerencia (ex: "demo") --
       # se relabelássemos pra "service" aqui, colidiria e o Prometheus

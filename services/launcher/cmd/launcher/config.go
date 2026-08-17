@@ -45,6 +45,14 @@ type config struct {
 	// "" (default) desliga a feature: um pedido com "exposeAs" falha com
 	// erro claro em vez de não expor nada silenciosamente.
 	publicBaseDomain string
+
+	// tlsCertResolver é o certResolver Traefik (ver demo/docker-compose.yml,
+	// serviço traefik, certificatesresolvers) a usar em toda instância
+	// exposta a partir de agora -- "" (default) mantém toda instância só em
+	// HTTP, como sempre até esta feature existir. Preencher com "le" (o
+	// nome que demo/docker-compose.yml já configura) liga HTTPS/ACME para
+	// instâncias novas; ver demo/README.md, "HTTPS/TLS (ACME)".
+	tlsCertResolver string
 }
 
 func loadConfig() config {
@@ -67,6 +75,7 @@ func loadConfig() config {
 		groupImage: envString("AUTOSCALER_GROUP_IMAGE", "autoscaler-group:latest"),
 
 		publicBaseDomain: os.Getenv("PUBLIC_BASE_DOMAIN"),
+		tlsCertResolver:  os.Getenv("PUBLIC_TLS_CERT_RESOLVER"),
 	}
 
 	if cfg.databaseURL == "" {
@@ -122,5 +131,6 @@ func (c config) logAttrs() []any {
 		"self_url", c.selfURL,
 		"group_image", c.groupImage,
 		"public_base_domain", c.publicBaseDomain,
+		"tls_cert_resolver", c.tlsCertResolver,
 	}
 }

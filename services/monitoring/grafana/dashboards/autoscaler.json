@@ -27,7 +27,7 @@
         "refresh": 2,
         "multi": false,
         "includeAll": false,
-        "current": { "selected": true, "text": "group-demo", "value": "group-demo" }
+        "current": { "selected": true, "text": "group-authd", "value": "group-authd" }
       }
     ]
   },

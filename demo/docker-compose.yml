@@ -42,6 +42,16 @@ networks:
       # mesmo host Docker.
       base-stack.managed: "true"
 
+  # Rede da plataforma de observabilidade (ver services/monitoring),
+  # externa -- criada por AQUELE compose, não por este. "external: true"
+  # torna isto um pré-requisito rígido: suba services/monitoring ANTES de
+  # subir este ficheiro, ou "docker compose up" falha inteiro (não só o
+  # traefik) por a rede não existir ainda. Ver demo/README.md,
+  # "Observabilidade".
+  observability-net:
+    name: observability-net
+    external: true
+
 services:
   # Gateway único de acesso externo: publica a ÚNICA porta do host em toda
   # a plataforma (80). Nenhum container passa a publicar porta própria --
@@ -68,18 +78,75 @@ services:
       - --providers.docker.exposedByDefault=false
       - --providers.docker.network=auth-net
       - --entrypoints.web.address=:80
+      # HTTPS -- sempre disponível neste entrypoint, mas só usado por uma
+      # instância que o launcher tenha exposto com PUBLIC_TLS_CERT_RESOLVER
+      # preenchido (ver serviço "launcher" abaixo); sem isso, o Traefik
+      # nunca recebe um router com "tls.certresolver", e este entrypoint
+      # fica simplesmente sem tráfego nenhum -- publicá-lo aqui é inofensivo.
+      - --entrypoints.websecure.address=:443
+      # Resolver ACME chamado "le" -- é este nome que PUBLIC_TLS_CERT_RESOLVER
+      # tem de repetir. Desligado por padrão no sentido em que NENHUM
+      # router o usa até alguém preencher PUBLIC_TLS_CERT_RESOLVER; ainda
+      # assim o challenge HTTP-01 exige o domínio (PUBLIC_BASE_DOMAIN)
+      # resolvendo para um IP publicamente alcançável na porta 80 -- não
+      # funciona com "127.0.0.1.nip.io" (loopback), só com um domínio real
+      # (ou um nip.io montado sobre o IP público real do host).
+      - --certificatesresolvers.le.acme.email=${TRAEFIK_ACME_EMAIL:-admin@example.com}
+      - --certificatesresolvers.le.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.le.acme.httpchallenge.entrypoint=web
+      # CA de staging da Let's Encrypt por defeito -- emite certificados
+      # que o browser não confia, mas sem os limites de taxa da CA de
+      # produção (fáceis de esgotar enquanto se testa a configuração). Só
+      # trocar para a de produção (comentada abaixo) depois de confirmar
+      # que o challenge HTTP-01 está mesmo a passar contra a de staging.
+      - --certificatesresolvers.le.acme.caserver=${TRAEFIK_ACME_CA_SERVER:-https://acme-staging-v2.api.letsencrypt.org/directory}
+      # Produção: https://acme-v02.api.letsencrypt.org/directory
+      # Access logs (um por pedido, JSON) por stdout -- é o suficiente para
+      # o Promtail da plataforma de observabilidade (ver services/monitoring)
+      # os coletar sozinho, já que ele lê o stdout/stderr de TODO container
+      # do host, sem precisar de nenhuma config nova do lado dele.
+      - --accesslog=true
+      - --accesslog.format=json
+      # Métricas Prometheus nativas -- entrypoint PRÓPRIO ("metrics"),
+      # nunca publicado no host (ver "ports" abaixo, sem 8082), só
+      # alcançável de dentro de uma rede Docker partilhada com quem faz
+      # scrape. Isolar num entrypoint à parte evita expor /metrics no
+      # mesmo domínio/porta público de uma app.
+      - --entrypoints.metrics.address=:8082
+      - --metrics.prometheus=true
+      - --metrics.prometheus.entrypoint=metrics
     ports:
       - "80:80"
+      - "443:443"
     volumes:
       # Só leitura -- o Traefik nunca cria/para nada, só observa labels
       # (mesmo espírito do mount do templatesadmin, que só lista imagens).
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Persiste os certificados emitidos (acme.json) entre reinícios --
+      # sem isto, cada restart do Traefik pediria certificados novos a
+      # todo host exposto, batendo cedo nos limites de taxa da CA.
+      - traefik-acme:/letsencrypt
     labels:
       base-stack.managed: "true"
+      # Convenção da plataforma de observabilidade (ver
+      # services/monitoring/docker-compose.yml) -- o Prometheus lá descobre
+      # este container via docker_sd_configs por causa destas duas labels,
+      # já ligado à rede "observability-net" abaixo desde a criação.
+      prometheus.scrape: "true"
+      prometheus.port: "8082"
     mem_limit: 128m
     cpus: 0.25
     networks:
       - auth-net
+      # Externa (ver bloco "networks" no topo do ficheiro) -- é o que dá ao
+      # Prometheus da plataforma de observabilidade acesso de rede a este
+      # container (a label sozinha não basta, bridge networks do Docker
+      # isolam IP entre si). Descoberta funciona por NOME (Prometheus
+      # resolve "traefik" via DNS interno do Docker nesta rede -- ver
+      # services/monitoring/prometheus/prometheus.yml), não por IP, então a
+      # ordem desta lista ou qual rede é "primária" para o Docker não
+      # importa aqui.
+      - observability-net
 
   # Postgres partilhado (services/database) -- substitui o
   # `postgres:16-alpine` ad-hoc que este demo subia antes só pro auth.
@@ -214,6 +281,13 @@ services:
       # 127.0.0.1 -- funciona em dev sem editar /etc/hosts nem ter domínio
       # próprio; troque por um domínio real em produção.
       PUBLIC_BASE_DOMAIN: "${PUBLIC_BASE_DOMAIN:-127.0.0.1.nip.io}"
+      # Nome do certResolver Traefik (ver serviço "traefik" acima) a usar
+      # em toda instância exposta a partir de agora -- "" (default) mantém
+      # tudo só em HTTP, exatamente como antes desta feature existir.
+      # Preencher com "le" liga HTTPS/ACME para instâncias novas (as já
+      # expostas antes da mudança continuam em HTTP até serem recriadas --
+      # ver demo/README.md, "HTTPS/TLS (ACME)").
+      PUBLIC_TLS_CERT_RESOLVER: "${PUBLIC_TLS_CERT_RESOLVER:-}"
     labels:
       base-stack.managed: "true"
     volumes:
@@ -336,6 +410,13 @@ services:
       autoscaler.role: "group"
       autoscaler.target_service: "auth"
       base-stack.managed: "true"
+      # Convenção da plataforma de observabilidade (ver
+      # services/monitoring/docker-compose.yml) -- mesmo padrão do
+      # "traefik" acima: o Prometheus descobre este container via
+      # docker_sd_configs por causa destas duas labels, já ligado à rede
+      # "observability-net" abaixo desde a criação. Porta = METRICS_ADDR.
+      prometheus.scrape: "true"
+      prometheus.port: "9090"
     volumes:
       # Continua montado: group-authd ainda lista/inspeciona/para as suas
       # próprias réplicas diretamente (leitura + scale down, ver
@@ -356,6 +437,7 @@ services:
     cpus: 0.5
     networks:
       - auth-net
+      - observability-net
 
   portal:
     image: portal:latest
@@ -397,6 +479,7 @@ services:
 volumes:
   demo-database-data:
   demo-database-backup-repo:
+  traefik-acme:
   # auth-signing-key NÃO é montado por nenhum serviço Compose -- é
   # referenciado só dentro de launch-template.auth.json ("binds"), que o
   # group-authd usa para criar as réplicas via API do Docker diretamente.

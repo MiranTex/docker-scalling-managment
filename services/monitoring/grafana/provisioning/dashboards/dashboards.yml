@@ -4,8 +4,11 @@
 apiVersion: 1
 
 providers:
-  - name: autoscaler
-    folder: Autoscaler
+  - name: base-stack
+    # "Base Stack", não "Autoscaler" -- esta pasta carrega TODO .json em
+    # grafana/dashboards, não só o do autoscaler (ver traefik.json, que
+    # chegou depois, na mesma pasta).
+    folder: Base Stack
     type: file
     options:
       path: /var/lib/grafana/dashboards

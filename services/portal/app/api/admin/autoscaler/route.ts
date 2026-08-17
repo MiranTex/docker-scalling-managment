@@ -32,6 +32,7 @@ export async function GET() {
         url: group.adminUrl,
         network: group.network,
         exposedHost: group.exposedHost,
+        exposedScheme: group.exposedScheme,
       };
       try {
         const res = await getStatus(group.adminUrl, accessToken);

@@ -25,8 +25,9 @@ docker compose -f services/monitoring/docker-compose.yml up -d
 Cria a rede externa `observability-net`, que qualquer outro compose pode se
 conectar (`networks: { observability-net: { external: true } }`).
 
-Portas no host: Prometheus `9091`, Loki `3100`, Grafana `3000`
-(login anônimo habilitado, sem senha).
+Portas no host: Prometheus `9091`, Loki `3101` (não `3100` -- colide com o
+`portal` do `demo/docker-compose.yml`), Grafana `3000` (login anônimo
+habilitado, sem senha).
 
 ## Como um projeto novo aparece aqui
 

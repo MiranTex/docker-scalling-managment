@@ -23,6 +23,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ ins
     url: group.adminUrl,
     network: group.network,
     exposedHost: group.exposedHost,
+    exposedScheme: group.exposedScheme,
   };
   try {
     const res = await getStatus(group.adminUrl, accessToken);
