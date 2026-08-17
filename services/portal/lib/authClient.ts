@@ -107,3 +107,10 @@ export function updateUserRole(accessToken: string, id: string, role: string) {
     body: JSON.stringify({ role }),
   });
 }
+
+export function mintServiceTokens(accessToken: string, id: string) {
+  return authFetch(`/v1/admin/users/${encodeURIComponent(id)}/tokens`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+}

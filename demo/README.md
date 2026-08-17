@@ -128,12 +128,16 @@ cada instância "solo" pedida via `POST /v1/instances`.
    docker build -t launcher:latest services/launcher
    docker compose -f demo/docker-compose.yml up -d secretsadmin launcher
    ```
-2. Bootstrap da conta de serviço (uma vez só) — nenhum destes passos tem
-   UI ainda, é `curl` direto contra o auth service. O launcher (serviço
-   `launcher` em `demo/docker-compose.yml`) precisa da sua própria conta
-   `service` para falar com o secretsadmin, e cada group precisa de OUTRA
-   conta `service` para falar com o launcher (ver abaixo porquê NÃO usar
-   `group-authd` para testar isto):
+2. Bootstrap da conta de serviço (uma vez só). Como `super-admin`, abre
+  `/admin/users`, cria um utilizador com role `service` e depois usa
+  **Gerar tokens** na respetiva linha. Guarda o `refresh_token` mostrado
+  uma única vez; ao criar um autoscaler em `/admin/autoscaler/new`, cola-o
+  no campo de token da conta de serviço. O launcher precisa da sua própria
+  conta `service` para falar com o secretsadmin, e cada group precisa de
+  OUTRA conta `service` para falar com o launcher. Emitir um novo par não
+  revoga automaticamente pares anteriores.
+
+  O mesmo fluxo também pode ser feito diretamente contra o auth service:
    ```sh
    # 1. Regista a conta (role nasce "user")
    curl -X POST http://localhost:8081/v1/register \
@@ -148,8 +152,9 @@ cada instância "solo" pedida via `POST /v1/instances`.
    curl -X POST http://localhost:8081/v1/admin/users/<ID>/tokens \
      -H "Authorization: Bearer <TOKEN_SUPER_ADMIN>"
    ```
-   Guarda o `refresh_token` da resposta -- é o `LAUNCHER_SECRETS_REFRESH_TOKEN`
-   do launcher:
+  Guarda o `refresh_token` da resposta -- é o `LAUNCHER_SECRETS_REFRESH_TOKEN`
+  do launcher. Os tokens emitidos pela interface seguem exatamente o mesmo
+  contrato:
    ```sh
    export LAUNCHER_SECRETS_REFRESH_TOKEN="<refresh_token>"
    docker compose -f demo/docker-compose.yml up -d launcher
