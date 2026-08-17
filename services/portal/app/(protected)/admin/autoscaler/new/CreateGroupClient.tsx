@@ -189,7 +189,11 @@ export default function CreateGroupClient() {
       <p className="muted">
         Expõe o proxy deste group (não uma réplica) via Traefik, em{" "}
         <code>{groupForm.exposeAs.trim() || "..."}.PUBLIC_BASE_DOMAIN</code> -- nunca publica porta
-        no host. Deixa em branco para o group continuar só na rede interna, como hoje.
+        no host. Deixa em branco para o group continuar só na rede interna, como hoje. Qualquer
+        subdomínio na frente (ex:{" "}
+        <code>tenant.{groupForm.exposeAs.trim() || "..."}.PUBLIC_BASE_DOMAIN</code>) também chega a
+        este mesmo proxy -- útil para uma app multi-tenant escolher o tenant pelo <code>Host:</code>{" "}
+        do pedido.
       </p>
 
       <div className="row" style={{ gap: "1rem" }}>

@@ -386,6 +386,13 @@ func resolveNetwork(reqNetwork, templateNetwork string) string {
 // de volta) e as mecânicas que o Traefik de facto usa para rotear (ver
 // demo/docker-compose.yml). Chamada só quando req.ExposeAs != "" (ver
 // handleCreateInstance) -- nunca com slug vazio.
+//
+// A regra roteia tanto host exato ("gymapp.<domain>") quanto qualquer
+// subdomínio de tenant na frente dele ("<tenant>.gymapp.<domain>") para o
+// MESMO container -- é a própria aplicação quem lê o Host header e escolhe
+// o tenant a partir do rótulo mais à esquerda; o launcher não sabe nem
+// precisa saber a lista de tenants, então nenhuma label nova é escrita
+// quando um tenant surge.
 func (h *Handler) resolveExposeLabels(slug, network string, port int) (labels map[string]string, host string, err error) {
 	if h.publicBaseDomain == "" {
 		return nil, "", errors.New(`PUBLIC_BASE_DOMAIN não configurado neste launcher -- não é possível expor nada publicamente`)
@@ -398,10 +405,12 @@ func (h *Handler) resolveExposeLabels(slug, network string, port int) (labels ma
 	}
 
 	host = slug + "." + h.publicBaseDomain
+	tenantHostRegexp := `^[a-z0-9-]+\.` + regexp.QuoteMeta(host) + `$`
+	rule := fmt.Sprintf("Host(`%s`) || HostRegexp(`%s`)", host, tenantHostRegexp)
 	labels = map[string]string{
 		labelExposeHost:  host,
 		"traefik.enable": "true",
-		fmt.Sprintf("traefik.http.routers.%s.rule", slug):                      fmt.Sprintf("Host(`%s`)", host),
+		fmt.Sprintf("traefik.http.routers.%s.rule", slug):                      rule,
 		fmt.Sprintf("traefik.http.routers.%s.entrypoints", slug):               "web",
 		fmt.Sprintf("traefik.http.services.%s.loadbalancer.server.port", slug): strconv.Itoa(port),
 	}

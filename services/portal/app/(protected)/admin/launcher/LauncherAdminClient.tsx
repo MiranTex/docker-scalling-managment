@@ -332,7 +332,10 @@ export default function LauncherAdminClient() {
           Deixa "expor publicamente" em branco para a instância continuar só na rede interna, como
           hoje. Preenchido, fica acessível em <code>http://{exposeAs.trim() || "..."}.PUBLIC_BASE_DOMAIN</code>{" "}
           através do gateway único (Traefik) -- nunca publica porta nenhuma no host. A porta interna é
-          a que a APLICAÇÃO escuta lá dentro do container, não uma porta do host.
+          a que a APLICAÇÃO escuta lá dentro do container, não uma porta do host. Qualquer subdomínio na
+          frente (ex: <code>tenant.{exposeAs.trim() || "..."}.PUBLIC_BASE_DOMAIN</code>) também chega a
+          este mesmo container -- útil para uma app multi-tenant escolher o tenant pelo <code>Host:</code>{" "}
+          do pedido.
         </p>
 
         <div className="row">

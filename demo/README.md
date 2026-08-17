@@ -344,6 +344,18 @@ app através do Traefik, na porta 80. Em produção, sobreponha
 `PUBLIC_BASE_DOMAIN` com o domínio real (e, nesse caso, aponte um registo
 DNS wildcard `*.dominio.com` para o IP do host).
 
+A regra do Traefik para cada instância exposta casa tanto o host exato
+(`<slug>.PUBLIC_BASE_DOMAIN`) quanto qualquer subdomínio na frente dele
+(`<qualquer-coisa>.<slug>.PUBLIC_BASE_DOMAIN`) -- ambos chegam ao MESMO
+container. É assim que uma app multi-tenant expõe um subdomínio por
+tenant sem o launcher saber a lista de tenants nem precisar recriar nada
+quando um tenant novo surge: `http://aplus.minha-app.127.0.0.1.nip.io`
+(nip.io já resolve qualquer subdomínio extra para `127.0.0.1` sem
+configuração nenhuma) chega à mesma app que `http://minha-app.127.0.0.1.nip.io`,
+e é a própria aplicação -- não o launcher nem o Traefik -- quem lê o
+`Host:` do pedido e escolhe o tenant (`aplus`) a partir do rótulo mais à
+esquerda.
+
 Uma instância exposta numa rede personalizada (ver `/admin/networks`)
 também funciona: sempre que uma rede nova é criada, o launcher liga o
 Traefik a ela automaticamente. Para uma rede já existente antes desta
