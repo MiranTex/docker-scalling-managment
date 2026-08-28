@@ -40,3 +40,15 @@ scrape_configs:
       - source_labels: [__meta_docker_container_name]
         regex: "/(.*)"
         target_label: container
+      # Um group lançado pelo launcher tem nome opaco ("group-<hex>") e
+      # nenhuma label de compose -- sem isto seria impossível dizer, só a
+      # olhar para a série, qual aplicação ele gere.
+      - source_labels: [__meta_docker_container_label_autoscaler_target_service]
+        target_label: target_service
+      # compose_service vazio (container fora do compose) cai para o nome do
+      # container, para os dropdowns do Grafana nunca terem uma opção em branco.
+      - source_labels: [compose_service, container]
+        separator: ";"
+        regex: "^;(.*)$"
+        target_label: compose_service
+        replacement: "${1}"

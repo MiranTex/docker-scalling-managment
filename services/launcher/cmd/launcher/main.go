@@ -45,7 +45,7 @@ func main() {
 	docker := dockerclient.New(cfg.dockerSocket)
 	secrets := secretsclient.New(cfg.secretsAdminServiceURL, cfg.authServiceURL, cfg.secretsRefreshToken)
 	templates := templatesclient.New(cfg.templatesAdminServiceURL)
-	handler := httpapi.NewHandler(tokens, db, docker, secrets, templates, cfg.groupConfig(), cfg.publicBaseDomain, cfg.tlsCertResolver)
+	handler := httpapi.NewHandler(tokens, db, docker, secrets, templates, cfg.groupConfig(), cfg.publicBaseDomain, cfg.tlsCertResolver, cfg.capacityConfig(), logger)
 
 	srv := &http.Server{
 		Addr:    cfg.listenAddr,
@@ -68,6 +68,17 @@ func main() {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		logger.Warn("shutdown do servidor HTTP não terminou a tempo", "err", err)
 	}
+
+	// Nenhum group está no docker-compose.yml (são lançados dinamicamente
+	// via API, ver httpapi.launchGroup) -- sem isto, "docker compose down"
+	// derrubaria só este launcher, deixando todo group (e as réplicas que
+	// gere) órfão. Contexto próprio: os 15s acima já foram gastos a
+	// drenar HTTP, e esta cascata precisa do seu próprio tempo (stop de
+	// cada group + o cleanup de réplicas que isso dispara dentro dele).
+	groupsCtx, cancelGroups := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancelGroups()
+	handler.TerminateAllGroups(groupsCtx)
+
 	logger.Info("launcher encerrado")
 }
 

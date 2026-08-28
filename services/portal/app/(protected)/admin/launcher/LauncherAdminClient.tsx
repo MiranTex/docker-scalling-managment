@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { LauncherInstance, ReplicaSummary } from "@/lib/launcherClient";
-import type { ServiceTemplate } from "@/lib/templatesAdminClient";
+import type { Capacity, LauncherInstance, ReplicaSummary } from "@/lib/launcherClient";
+import type { InstanceType, ServiceTemplate } from "@/lib/templatesAdminClient";
+import { formatInstanceType, formatMemory } from "@/lib/instanceTypes";
 import ConfirmModal from "../database/ConfirmModal";
+import CapacityPanel from "./CapacityPanel";
 import NetworkPicker from "./NetworkPicker";
 import ExtraNetworksPicker from "./ExtraNetworksPicker";
 
@@ -24,6 +26,7 @@ type Row = {
   error?: string;
   containerId: string;
   info: string;
+  sizeText: string;
   exposedHost?: string;
   exposedScheme?: string;
 };
@@ -40,6 +43,7 @@ function instanceToRow(i: LauncherInstance): Row {
     error: i.error,
     containerId: i.containerId,
     info: `${new Date(i.createdAt).toLocaleString("pt-PT")} · ${i.updatedBy}`,
+    sizeText: i.instanceType ? `${i.instanceType} (${i.vcpu} vCPU / ${formatMemory(i.memoryMb)})` : "--",
     exposedHost: i.exposedHost,
     exposedScheme: i.exposedScheme,
   };
@@ -54,6 +58,9 @@ function replicaToRow(r: ReplicaSummary): Row {
     statusText: r.state,
     containerId: r.containerId,
     info: `rede: ${r.network || "--"}`,
+    // O tamanho de uma réplica vive nas labels do container, não na store
+    // do launcher -- GET /v1/replicas ainda não as devolve.
+    sizeText: "--",
     exposedHost: r.exposedHost,
     exposedScheme: r.exposedScheme,
   };
@@ -67,6 +74,9 @@ export default function LauncherAdminClient() {
 
   const [templates, setTemplates] = useState<ServiceTemplate[] | null>(null);
   const [templateName, setTemplateName] = useState("");
+  const [instanceTypes, setInstanceTypes] = useState<InstanceType[]>([]);
+  const [instanceType, setInstanceType] = useState("");
+  const [capacity, setCapacity] = useState<Capacity | null>(null);
   const [network, setNetwork] = useState("");
   const [extraNetworks, setExtraNetworks] = useState<string[]>([]);
   const [exposeAs, setExposeAs] = useState("");
@@ -101,6 +111,26 @@ export default function LauncherAdminClient() {
     }
   }
 
+  async function loadCapacity() {
+    try {
+      const res = await fetch("/api/admin/launcher/capacity");
+      if (res.ok) setCapacity(await res.json());
+    } catch {
+      // O painel de capacidade é informativo -- se falhar, o resto do ecrã
+      // continua utilizável.
+    }
+  }
+
+  async function loadInstanceTypes() {
+    try {
+      const res = await fetch("/api/admin/instance-types");
+      if (res.ok) setInstanceTypes(((await res.json()) ?? []).filter((it: InstanceType) => it.enabled));
+    } catch {
+      // Sem catálogo, o <select> fica só com "herdar do modelo" -- que é o
+      // comportamento por omissão do launcher de qualquer forma.
+    }
+  }
+
   async function loadTemplates() {
     try {
       const res = await fetch("/api/admin/templates");
@@ -117,6 +147,8 @@ export default function LauncherAdminClient() {
   useEffect(() => {
     loadInstances();
     loadTemplates();
+    loadCapacity();
+    loadInstanceTypes();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -145,6 +177,7 @@ export default function LauncherAdminClient() {
         body: JSON.stringify({
           templateName,
           kind: "solo",
+          ...(instanceType ? { instanceType } : {}),
           ...(network.trim() ? { network: network.trim() } : {}),
           ...(extraNetworks.length ? { extraNetworks } : {}),
           ...(exposeAs.trim() ? { exposeAs: exposeAs.trim(), exposePort: Number(exposePort) } : {}),
@@ -156,6 +189,7 @@ export default function LauncherAdminClient() {
         return;
       }
       await loadInstances();
+      await loadCapacity();
     } catch {
       setFormError("erro ao lançar instância");
     } finally {
@@ -200,6 +234,8 @@ export default function LauncherAdminClient() {
         {listError && <div className="error">{listError}</div>}
         {actionError && <div className="error">{actionError}</div>}
 
+        {capacity && <CapacityPanel capacity={capacity} />}
+
         <label htmlFor="status-filter">Mostrar</label>
         <select id="status-filter" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}>
           <option value="active">Ativas</option>
@@ -217,6 +253,7 @@ export default function LauncherAdminClient() {
               <tr>
                 <th>Nome</th>
                 <th>Tipo</th>
+                <th>Tamanho</th>
                 <th>Estado</th>
                 <th>Container</th>
                 <th>Info</th>
@@ -231,6 +268,7 @@ export default function LauncherAdminClient() {
                     <code>{row.label}</code>
                   </td>
                   <td>{row.kind}</td>
+                  <td>{row.sizeText}</td>
                   <td>
                     {row.statusText}
                     {row.error && <div className="error">{row.error}</div>}
@@ -309,6 +347,20 @@ export default function LauncherAdminClient() {
             placeholder="nome do modelo (services/templatesadmin)"
           />
         )}
+
+        <label htmlFor="instance-type">Tipo de instância</label>
+        <select id="instance-type" value={instanceType} onChange={(e) => setInstanceType(e.target.value)}>
+          <option value="">(herdar do modelo)</option>
+          {instanceTypes.map((it) => (
+            <option key={it.name} value={it.name}>
+              {formatInstanceType(it)}
+            </option>
+          ))}
+        </select>
+        <p className="muted">
+          Limites de CPU e memória aplicados ao container. Gerir o catálogo em{" "}
+          <a href="/admin/instance-types">/admin/instance-types</a>.
+        </p>
 
         <label htmlFor="instance-network">Rede Docker (opcional, substitui a do modelo)</label>
         <NetworkPicker id="instance-network" value={network} onChange={setNetwork} />

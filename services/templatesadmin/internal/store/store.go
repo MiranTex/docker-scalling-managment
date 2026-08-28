@@ -76,6 +76,9 @@ type Template struct {
 	Binds      []string          `json:"binds"`
 	Network    string            `json:"network"`
 	ExtraHosts []string          `json:"extraHosts"`
+	// DefaultInstanceType é o tamanho aplicado quando quem lança não
+	// escolhe nenhum -- vazio cai no default global do launcher.
+	DefaultInstanceType string `json:"defaultInstanceType"`
 
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
@@ -83,7 +86,7 @@ type Template struct {
 }
 
 const listColumns = `name, image, cmd, env, labels, binds, network, extra_hosts,
-	created_at, updated_at, updated_by`
+	default_instance_type, created_at, updated_at, updated_by`
 
 func scanTemplate(row interface{ Scan(...any) error }) (Template, error) {
 	var (
@@ -94,7 +97,7 @@ func scanTemplate(row interface{ Scan(...any) error }) (Template, error) {
 	)
 	err := row.Scan(
 		&t.Name, &t.Image, &cmdRaw, &envRaw, &labelsRaw, &bindsRaw, &t.Network, &extraHostsRaw,
-		&t.CreatedAt, &t.UpdatedAt, &t.UpdatedBy,
+		&t.DefaultInstanceType, &t.CreatedAt, &t.UpdatedAt, &t.UpdatedBy,
 	)
 	if err != nil {
 		return Template{}, err
@@ -183,8 +186,8 @@ func (db *DB) Upsert(ctx context.Context, t Template, updatedBy string) error {
 	_, err = db.sql.ExecContext(ctx, `
 		INSERT INTO service_templates.templates (
 			name, image, cmd, env, labels, binds, network, extra_hosts,
-			updated_by
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			default_instance_type, updated_by
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		ON CONFLICT (name) DO UPDATE SET
 			image = EXCLUDED.image,
 			cmd = EXCLUDED.cmd,
@@ -193,11 +196,12 @@ func (db *DB) Upsert(ctx context.Context, t Template, updatedBy string) error {
 			binds = EXCLUDED.binds,
 			network = EXCLUDED.network,
 			extra_hosts = EXCLUDED.extra_hosts,
+			default_instance_type = EXCLUDED.default_instance_type,
 			updated_by = EXCLUDED.updated_by,
 			updated_at = now()
 	`,
 		t.Name, t.Image, cmd, env, labelsJSON, binds, t.Network, extraHosts,
-		updatedBy,
+		t.DefaultInstanceType, updatedBy,
 	)
 	if err != nil {
 		return fmt.Errorf("store: gravando modelo %q: %w", t.Name, err)

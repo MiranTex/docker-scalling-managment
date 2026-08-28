@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { ServiceTemplate } from "@/lib/templatesAdminClient";
+import type { InstanceType } from "@/lib/templatesAdminClient";
+import { formatInstanceType } from "@/lib/instanceTypes";
 import type { SecretInfo } from "@/lib/secretsAdminClient";
 import ConfirmModal from "../database/ConfirmModal";
 
@@ -19,6 +21,7 @@ const EMPTY_FORM = {
   bindsText: "",
   extraHostsText: "",
   network: "",
+  defaultInstanceType: "",
   labelsText: "",
   envRows: [] as EnvRow[],
 };
@@ -76,6 +79,7 @@ function templateToForm(t: ServiceTemplate): typeof EMPTY_FORM {
     bindsText: t.binds.join("\n"),
     extraHostsText: t.extraHosts.join("\n"),
     network: t.network,
+    defaultInstanceType: t.defaultInstanceType ?? "",
     labelsText: labelsToText(t.labels),
     envRows: envToRows(t.env),
   };
@@ -95,6 +99,7 @@ function formToBody(form: typeof EMPTY_FORM) {
     binds: linesToArray(form.bindsText),
     network: form.network.trim(),
     extraHosts: linesToArray(form.extraHostsText),
+    defaultInstanceType: form.defaultInstanceType,
   };
 }
 
@@ -129,6 +134,7 @@ export default function TemplatesAdminClient() {
   const [templates, setTemplates] = useState<ServiceTemplate[] | null>(null);
   const [images, setImages] = useState<string[]>([]);
   const [secrets, setSecrets] = useState<SecretInfo[]>([]);
+  const [instanceTypes, setInstanceTypes] = useState<InstanceType[]>([]);
   const [listError, setListError] = useState<string | null>(null);
 
   const [form, setForm] = useState(EMPTY_FORM);
@@ -164,10 +170,16 @@ export default function TemplatesAdminClient() {
     if (res.ok) setSecrets(await res.json());
   }
 
+  async function loadInstanceTypes() {
+    const res = await fetch("/api/admin/instance-types");
+    if (res.ok) setInstanceTypes(((await res.json()) ?? []).filter((it: InstanceType) => it.enabled));
+  }
+
   useEffect(() => {
     loadTemplates();
     loadImages();
     loadSecrets();
+    loadInstanceTypes();
   }, []);
 
   function resetForm() {
@@ -432,6 +444,24 @@ export default function TemplatesAdminClient() {
           onChange={(e) => setForm((f) => ({ ...f, network: e.target.value }))}
           placeholder="auth-net"
         />
+
+        <label htmlFor="tpl-instance-type">Tipo de instância por omissão</label>
+        <select
+          id="tpl-instance-type"
+          value={form.defaultInstanceType}
+          onChange={(e) => setForm((f) => ({ ...f, defaultInstanceType: e.target.value }))}
+        >
+          <option value="">(usar o default do launcher)</option>
+          {instanceTypes.map((it) => (
+            <option key={it.name} value={it.name}>
+              {formatInstanceType(it)}
+            </option>
+          ))}
+        </select>
+        <p className="muted">
+          Aplicado quando quem lança não escolhe nenhum. Gerir o catálogo em{" "}
+          <a href="/admin/instance-types">/admin/instance-types</a>.
+        </p>
 
         <label htmlFor="tpl-extra-hosts">Extra hosts (uma entrada por linha, formato host:ip)</label>
         <textarea

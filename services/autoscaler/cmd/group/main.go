@@ -277,13 +277,16 @@ func reconcile(ctx context.Context, cfg config, client *dockerclient.Client, log
 // launcher já falhou; nunca como caminho alternativo normal.
 func applyScaleUp(ctx context.Context, client *dockerclient.Client, logger *slog.Logger, cfg config, launcher *launcherclient.Client, replicaCount int, template executor.LaunchTemplate) (id string, usedFallback bool, err error) {
 	id, err = launcher.CreateReplica(ctx, launcherclient.LaunchTemplate{
-		Image:      template.Image,
-		Cmd:        template.Cmd,
-		Env:        template.Env,
-		Labels:     template.Labels,
-		Binds:      template.Binds,
-		Network:    template.Network,
-		ExtraHosts: template.ExtraHosts,
+		Image:        template.Image,
+		Cmd:          template.Cmd,
+		Env:          template.Env,
+		Labels:       template.Labels,
+		Binds:        template.Binds,
+		Network:      template.Network,
+		ExtraHosts:   template.ExtraHosts,
+		InstanceType: template.InstanceType,
+		VCPU:         template.VCPU,
+		MemoryMB:     template.MemoryMB,
 	})
 	if err == nil {
 		return id, false, nil

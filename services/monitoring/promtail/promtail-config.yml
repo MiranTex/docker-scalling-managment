@@ -31,3 +31,15 @@ scrape_configs:
       # projeto além deste, ex: "polskamit-mitsui-laravel")
       - source_labels: ["__meta_docker_container_label_com_docker_compose_project"]
         target_label: "compose_project"
+      # Qual aplicação um autoscaler-group gere -- o nome do container de um
+      # group lançado pelo launcher é opaco ("group-<hex>").
+      - source_labels: ["__meta_docker_container_label_autoscaler_target_service"]
+        target_label: "target_service"
+      # compose_service vazio (container fora do compose, ex: um group
+      # dinâmico) cai para o nome do container, para o seletor de logs no
+      # Grafana nunca ter uma opção em branco.
+      - source_labels: ["compose_service", "container"]
+        separator: ";"
+        regex: "^;(.*)$"
+        target_label: "compose_service"
+        replacement: "${1}"

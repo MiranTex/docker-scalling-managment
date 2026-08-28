@@ -46,3 +46,9 @@ migrations-check:
 		exit 1; \
 	fi; \
 	echo "OK: all migrations applied";
+
+start-demo:
+	docker compose -f $(DEMO_COMPOSE) up -d
+
+start-monitoring:
+	docker compose -f services/monitoring/docker-compose.yml up -d

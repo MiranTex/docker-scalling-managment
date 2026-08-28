@@ -55,6 +55,9 @@ func scaleUp(ctx context.Context, client *dockerclient.Client, members []dockerc
 		HostConfig: &dockerclient.CreateHostConfig{
 			Binds:       inspect.HostConfig.Binds,
 			NetworkMode: inspect.PrimaryNetwork(),
+			NanoCPUs:    inspect.HostConfig.NanoCPUs,
+			Memory:      inspect.HostConfig.Memory,
+			MemorySwap:  inspect.HostConfig.MemorySwap,
 		},
 	})
 	if err != nil {
@@ -103,6 +106,16 @@ type LaunchTemplate struct {
 	// réplicas do mesmo serviço competiriam pela mesma porta no host; quem
 	// expõe o serviço é sempre o proxy do group, nunca porta publicada.
 	ExtraHosts []string `json:"extraHosts,omitempty"`
+
+	// InstanceType/VCPU/MemoryMB descrevem o tamanho de cada réplica,
+	// injetados pelo launcher ao lançar este group (ver
+	// services/launcher/internal/httpapi, launchGroup). Viajam de volta
+	// intactos em cada pedido de réplica -- o group nunca os interpreta,
+	// exceto no fallback de arranque a frio, em que precisa de os aplicar
+	// ele próprio.
+	InstanceType string  `json:"instanceType,omitempty"`
+	VCPU         float64 `json:"vcpu,omitempty"`
+	MemoryMB     int64   `json:"memoryMb,omitempty"`
 }
 
 // CreateFromTemplate cria+inicia um container diretamente a partir de
@@ -124,6 +137,11 @@ func CreateFromTemplate(ctx context.Context, client *dockerclient.Client, templa
 			Binds:       template.Binds,
 			NetworkMode: template.Network,
 			ExtraHosts:  template.ExtraHosts,
+			NanoCPUs:    int64(template.VCPU * 1_000_000_000),
+			Memory:      template.MemoryMB * 1024 * 1024,
+			// Igual a Memory desativa o swap -- mesma decisão do launcher:
+			// melhor um container morto depressa que um host a paginar.
+			MemorySwap: template.MemoryMB * 1024 * 1024,
 		},
 	})
 	if err != nil {

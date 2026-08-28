@@ -288,6 +288,18 @@ services:
       # expostas antes da mudança continuam em HTTP até serem recriadas --
       # ver demo/README.md, "HTTPS/TLS (ACME)").
       PUBLIC_TLS_CERT_RESOLVER: "${PUBLIC_TLS_CERT_RESOLVER:-}"
+      # Tamanho aplicado quando nem o pedido nem o modelo escolhem um (ver
+      # internal/httpapi/capacity.go). Os nomes vêm do catálogo em
+      # services/templatesadmin (service_templates.instance_types).
+      LAUNCHER_DEFAULT_INSTANCE_TYPE: "${LAUNCHER_DEFAULT_INSTANCE_TYPE:-t1.small}"
+      LAUNCHER_GROUP_INSTANCE_TYPE: "${LAUNCHER_GROUP_INSTANCE_TYPE:-t1.micro}"
+      # Capacidade física declarada deste host. Vazio/zero (default)
+      # desliga a contabilidade: os limites por container continuam a ser
+      # aplicados, mas nada é recusado por falta de espaço. Definir
+      # LAUNCHER_HOST_MEMORY_MB liga o bloqueio -- só de memória, nunca de
+      # CPU (ver o package doc de internal/httpapi/capacity.go).
+      LAUNCHER_HOST_VCPU: "${LAUNCHER_HOST_VCPU:-}"
+      LAUNCHER_HOST_MEMORY_MB: "${LAUNCHER_HOST_MEMORY_MB:-}"
     labels:
       base-stack.managed: "true"
     volumes:
@@ -302,6 +314,12 @@ services:
     cpus: 0.25
     networks:
       - auth-net
+    # Default do Docker (10s) não chega: no SIGTERM, o launcher ainda
+    # drena HTTP (15s) e depois pede a cada group vivo para se desligar,
+    # o que dispara o cleanup de réplicas de cada um (ver
+    # cmd/launcher/main.go, TerminateAllGroups) -- sem isto, "docker
+    # compose down" mataria o launcher a meio da cascata.
+    stop_grace_period: 50s
 
   # Só para dev: browser de tabelas + SQL ad-hoc contra o Postgres
   # partilhado. Nunca exponha esta porta fora da tua máquina/rede de
@@ -438,6 +456,12 @@ services:
     networks:
       - auth-net
       - observability-net
+    # Default do Docker (10s) mal chega para o pr\u00f3prio shutdownTimeout de
+    # cmd/group (ver services/autoscaler/cmd/group/config.go) somado ao
+    # cleanup das suas r\u00e9plicas (terminateAllReplicas, tamb\u00e9m com grace
+    # pr\u00f3prio) -- sem isto, "docker compose down" mata este group cedo
+    # demais, deixando r\u00e9plicas de auth \u00f3rf\u00e3s.
+    stop_grace_period: 30s
 
   portal:
     image: portal:latest

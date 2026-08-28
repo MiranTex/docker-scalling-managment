@@ -53,6 +53,19 @@ type config struct {
 	// nome que demo/docker-compose.yml já configura) liga HTTPS/ACME para
 	// instâncias novas; ver demo/README.md, "HTTPS/TLS (ACME)".
 	tlsCertResolver string
+
+	// defaultInstanceType/groupInstanceType são nomes do catálogo em
+	// services/templatesadmin (service_templates.instance_types) -- ver
+	// httpapi.CapacityConfig.
+	defaultInstanceType string
+	groupInstanceType   string
+	// hostVCPU/hostMemoryMB descrevem a máquina onde este launcher cria
+	// containers. Zero (default) desliga a contabilidade de capacidade e o
+	// bloqueio por falta de memória -- os limites por container continuam
+	// a ser aplicados na mesma.
+	hostVCPU              float64
+	hostMemoryMB          int64
+	memoryOvercommitRatio float64
 }
 
 func loadConfig() config {
@@ -76,6 +89,13 @@ func loadConfig() config {
 
 		publicBaseDomain: os.Getenv("PUBLIC_BASE_DOMAIN"),
 		tlsCertResolver:  os.Getenv("PUBLIC_TLS_CERT_RESOLVER"),
+
+		defaultInstanceType: envString("LAUNCHER_DEFAULT_INSTANCE_TYPE", "t1.small"),
+		groupInstanceType:   envString("LAUNCHER_GROUP_INSTANCE_TYPE", "t1.micro"),
+
+		hostVCPU:              envFloat("LAUNCHER_HOST_VCPU", 0),
+		hostMemoryMB:          int64(envFloat("LAUNCHER_HOST_MEMORY_MB", 0)),
+		memoryOvercommitRatio: envFloat("LAUNCHER_MEMORY_OVERCOMMIT_RATIO", 1),
 	}
 
 	if cfg.databaseURL == "" {
@@ -101,11 +121,34 @@ func (c config) groupConfig() httpapi.GroupConfig {
 	}
 }
 
+func (c config) capacityConfig() httpapi.CapacityConfig {
+	return httpapi.CapacityConfig{
+		DefaultInstanceType:   c.defaultInstanceType,
+		GroupInstanceType:     c.groupInstanceType,
+		HostVCPU:              c.hostVCPU,
+		HostMemoryMB:          c.hostMemoryMB,
+		MemoryOvercommitRatio: c.memoryOvercommitRatio,
+	}
+}
+
 func envString(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
 	}
 	return def
+}
+
+func envFloat(key string, def float64) float64 {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	n, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		slog.Error("configuração inválida", "var", key, "value", v, "want", "número", "err", err)
+		os.Exit(1)
+	}
+	return n
 }
 
 func envSeconds(key string, defSeconds int) time.Duration {
@@ -132,5 +175,8 @@ func (c config) logAttrs() []any {
 		"group_image", c.groupImage,
 		"public_base_domain", c.publicBaseDomain,
 		"tls_cert_resolver", c.tlsCertResolver,
+		"default_instance_type", c.defaultInstanceType,
+		"host_vcpu", c.hostVCPU,
+		"host_memory_mb", c.hostMemoryMB,
 	}
 }

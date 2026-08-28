@@ -21,10 +21,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 
 	"launcher/internal/dockerclient"
 	"launcher/internal/jwtverify"
@@ -91,6 +93,7 @@ type Secrets interface {
 // internal/templatesclient.Client.
 type Templates interface {
 	Get(ctx context.Context, name, bearerToken string) (templatesclient.Template, error)
+	GetInstanceType(ctx context.Context, name, bearerToken string) (templatesclient.InstanceType, error)
 }
 
 // GroupConfig reúne os valores que todo autoscaler-group lançado por este
@@ -126,6 +129,11 @@ const (
 	labelGroupRoleValue     = "group"
 	labelGroupTargetService = "autoscaler.target_service"
 	groupAdminPort          = "9090"
+	// Convenção de auto-descoberta do Prometheus/promtail (ver
+	// services/monitoring/prometheus/prometheus.yml): sem estas labels o
+	// container simplesmente não é scraped.
+	labelPrometheusScrape = "prometheus.scrape"
+	labelPrometheusPort   = "prometheus.port"
 	// labelServiceKey é a mesma convenção usada por cada cmd/group
 	// (SERVICE_LABEL, default "autoscaler.service") -- toda RÉPLICA de
 	// aplicação (nunca o processo group em si, que usa labelGroupRole)
@@ -192,16 +200,26 @@ type Handler struct {
 	// também em HTTPS com um certificado emitido por esse resolver; ver
 	// resolveExposeLabels.
 	tlsCertResolver string
+	// capacity descreve os tamanhos disponíveis e a capacidade do host --
+	// ver capacity.go.
+	capacity CapacityConfig
+	// logger só é usado por TerminateAllGroups (chamado fora de um request
+	// HTTP, no shutdown do próprio launcher) -- nil vira slog.Default().
+	logger *slog.Logger
 }
 
-func NewHandler(tokens TokenVerifier, s Store, docker Docker, secrets Secrets, templates Templates, groups GroupConfig, publicBaseDomain, tlsCertResolver string) *Handler {
-	return &Handler{tokens: tokens, store: s, docker: docker, secrets: secrets, templates: templates, groups: groups, publicBaseDomain: publicBaseDomain, tlsCertResolver: tlsCertResolver}
+func NewHandler(tokens TokenVerifier, s Store, docker Docker, secrets Secrets, templates Templates, groups GroupConfig, publicBaseDomain, tlsCertResolver string, capacity CapacityConfig, logger *slog.Logger) *Handler {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &Handler{tokens: tokens, store: s, docker: docker, secrets: secrets, templates: templates, groups: groups, publicBaseDomain: publicBaseDomain, tlsCertResolver: tlsCertResolver, capacity: capacity, logger: logger}
 }
 
 func (h *Handler) Routes() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/instances", h.requireRole(RoleInfraAdmin, h.handleCreateInstance))
 	mux.HandleFunc("GET /v1/instances", h.requireRole(RoleInfraAdmin, h.handleListInstances))
+	mux.HandleFunc("GET /v1/capacity", h.requireRole(RoleInfraAdmin, h.handleCapacity))
 	mux.HandleFunc("POST /v1/replicas", h.requireRole(RoleService, h.handleCreateReplica))
 	mux.HandleFunc("GET /v1/replicas", h.requireRole(RoleInfraAdmin, h.handleListReplicas))
 	mux.HandleFunc("GET /v1/groups", h.requireRole(RoleInfraAdmin, h.handleListGroups))
@@ -280,6 +298,12 @@ type createInstanceRequest struct {
 	// chamada em vez de precisar voltar a /admin/networks depois.
 	ExtraNetworks []string `json:"extraNetworks,omitempty"`
 
+	// InstanceType é o tamanho (vCPU/memória) a aplicar -- ver capacity.go.
+	// Vazio herda o default do modelo e, se este também for vazio, o default
+	// global do launcher. Quando Kind="group", este é o tamanho de cada
+	// RÉPLICA; o container do próprio group usa sempre um tamanho fixo.
+	InstanceType string `json:"instanceType,omitempty"`
+
 	// Campos usados só quando Kind="group" -- mesmo significado dos
 	// campos homónimos que existiam em store.Template antes desta versão.
 	TargetService       string  `json:"targetService,omitempty"`
@@ -337,6 +361,27 @@ func (h *Handler) handleCreateInstance(w http.ResponseWriter, r *http.Request, s
 		return
 	}
 
+	instanceType, err := h.resolveInstanceType(r.Context(), req.InstanceType, tmpl.DefaultInstanceType, token)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_instance_type", err.Error())
+		return
+	}
+	// Um group reserva já a memória de MinReplicas réplicas, além do seu
+	// próprio container: escalar até MaxReplicas continua sujeito ao mesmo
+	// teto, réplica a réplica, em POST /v1/replicas.
+	wantMemoryMB := instanceType.MemoryMB
+	if req.Kind == store.KindGroup {
+		wantMemoryMB = instanceType.MemoryMB * int64(max(req.MinReplicas, 1))
+	}
+	if err := h.checkMemoryCapacity(r.Context(), wantMemoryMB); err != nil {
+		if errors.Is(err, errInsufficientCapacity) {
+			writeError(w, http.StatusConflict, "insufficient_capacity", err.Error())
+			return
+		}
+		writeError(w, http.StatusBadGateway, "capacity_check_failed", err.Error())
+		return
+	}
+
 	id, err := newInstanceID()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "erro gerando id")
@@ -368,9 +413,9 @@ func (h *Handler) handleCreateInstance(w http.ResponseWriter, r *http.Request, s
 
 	var containerID string
 	if req.Kind == store.KindSolo {
-		containerID, err = h.launchSolo(r.Context(), id, tmpl, req, exposeLabels)
+		containerID, err = h.launchSolo(r.Context(), id, tmpl, req, exposeLabels, instanceType)
 	} else {
-		containerID, err = h.launchGroup(r.Context(), id, tmpl, req, exposeLabels)
+		containerID, err = h.launchGroup(r.Context(), id, tmpl, req, exposeLabels, instanceType, token)
 	}
 
 	instance := store.Instance{
@@ -379,6 +424,9 @@ func (h *Handler) handleCreateInstance(w http.ResponseWriter, r *http.Request, s
 		TemplateName: req.TemplateName,
 		ContainerID:  containerID,
 		Status:       store.StatusRunning,
+		InstanceType: instanceType.Name,
+		VCPU:         instanceType.VCPU,
+		MemoryMB:     instanceType.MemoryMB,
 		UpdatedBy:    subject,
 	}
 	if err != nil {
@@ -489,7 +537,7 @@ func (h *Handler) checkExposeSlugAvailable(ctx context.Context, host string) err
 
 // launchSolo cria e inicia diretamente o container da aplicação descrita
 // pelo modelo -- sem nenhum autoscaler entre o launcher e o container.
-func (h *Handler) launchSolo(ctx context.Context, id string, tmpl templatesclient.Template, req createInstanceRequest, exposeLabels map[string]string) (string, error) {
+func (h *Handler) launchSolo(ctx context.Context, id string, tmpl templatesclient.Template, req createInstanceRequest, exposeLabels map[string]string, instanceType templatesclient.InstanceType) (string, error) {
 	resolvedEnv, err := h.secrets.ResolveEnv(ctx, tmpl.Env)
 	if err != nil {
 		return "", fmt.Errorf("resolvendo segredos do modelo: %w", err)
@@ -501,6 +549,9 @@ func (h *Handler) launchSolo(ctx context.Context, id string, tmpl templatesclien
 	}
 	labels["launcher.instance"] = id
 	labels[dockerclient.PlatformLabel] = dockerclient.PlatformLabelValue
+	for k, v := range resourceLabels(instanceType) {
+		labels[k] = v
+	}
 	for k, v := range exposeLabels {
 		labels[k] = v
 	}
@@ -514,6 +565,7 @@ func (h *Handler) launchSolo(ctx context.Context, id string, tmpl templatesclien
 			Binds:       tmpl.Binds,
 			NetworkMode: resolveNetwork(req.Network, tmpl.Network),
 			ExtraHosts:  tmpl.ExtraHosts,
+			Resources:   resources(instanceType),
 		},
 	})
 	if err != nil {
@@ -540,7 +592,7 @@ func (h *Handler) launchSolo(ctx context.Context, id string, tmpl templatesclien
 // resolver fica sempre a cargo deste launcher, no momento de cada réplica
 // (mesmo timing de antes, ver services/autoscaler/cmd/group/main.go,
 // applyScaleUp).
-func (h *Handler) launchGroup(ctx context.Context, id string, tmpl templatesclient.Template, req createInstanceRequest, exposeLabels map[string]string) (string, error) {
+func (h *Handler) launchGroup(ctx context.Context, id string, tmpl templatesclient.Template, req createInstanceRequest, exposeLabels map[string]string, instanceType templatesclient.InstanceType, token string) (string, error) {
 	if req.TargetService == "" {
 		return "", errors.New(`"targetService" é obrigatório para lançar como "group"`)
 	}
@@ -564,6 +616,12 @@ func (h *Handler) launchGroup(ctx context.Context, id string, tmpl templatesclie
 		replicaLabels[k] = v
 	}
 	replicaLabels[dockerclient.PlatformLabel] = dockerclient.PlatformLabelValue
+	// As labels de contabilidade vão dentro do launch template para que
+	// toda réplica que o group peça as carregue -- é delas que sai a soma
+	// de capacidade, e uma réplica sem elas ficaria invisível ao teto.
+	for k, v := range resourceLabels(instanceType) {
+		replicaLabels[k] = v
+	}
 
 	innerTemplate := struct {
 		Image      string            `json:"image"`
@@ -573,7 +631,14 @@ func (h *Handler) launchGroup(ctx context.Context, id string, tmpl templatesclie
 		Binds      []string          `json:"binds,omitempty"`
 		Network    string            `json:"network,omitempty"`
 		ExtraHosts []string          `json:"extraHosts,omitempty"`
-	}{tmpl.Image, tmpl.Cmd, tmpl.Env, replicaLabels, tmpl.Binds, tmpl.Network, tmpl.ExtraHosts}
+		// InstanceType/VCPU/MemoryMB viajam já resolvidos porque o group não
+		// tem role para ler o catálogo (ver createReplicaRequest) -- ele só os
+		// devolve tal e qual em cada POST /v1/replicas.
+		InstanceType string  `json:"instanceType,omitempty"`
+		VCPU         float64 `json:"vcpu,omitempty"`
+		MemoryMB     int64   `json:"memoryMb,omitempty"`
+	}{tmpl.Image, tmpl.Cmd, tmpl.Env, replicaLabels, tmpl.Binds, tmpl.Network, tmpl.ExtraHosts,
+		instanceType.Name, instanceType.VCPU, instanceType.MemoryMB}
 	launchTemplateJSON, err := json.Marshal(innerTemplate)
 	if err != nil {
 		return "", fmt.Errorf("codificando launch template do group: %w", err)
@@ -610,18 +675,38 @@ func (h *Handler) launchGroup(ctx context.Context, id string, tmpl templatesclie
 		labelGroupRole:             labelGroupRoleValue,
 		labelGroupTargetService:    req.TargetService,
 		dockerclient.PlatformLabel: dockerclient.PlatformLabelValue,
+		// Sem estas duas, o Prometheus nunca descobre este group (ver
+		// services/monitoring/prometheus/prometheus.yml, action: keep) e ele
+		// fica invisível no dashboard -- ao contrário dos groups estáticos
+		// de docker-compose, que as têm escritas à mão.
+		labelPrometheusScrape: "true",
+		labelPrometheusPort:   groupAdminPort,
 	}
 	for k, v := range exposeLabels {
 		groupLabels[k] = v
 	}
+	// O container do group é um processo de controlo (reconcile loop +
+	// proxy), não a aplicação -- dá-lhe o tamanho pedido para as réplicas
+	// seria desperdiçar memória contabilizada. Se o tamanho fixo não
+	// existir no catálogo, o group sobe sem limites em vez de falhar: um
+	// group que não arranca deixa a aplicação inteira em baixo.
+	groupHostConfig := &dockerclient.CreateHostConfig{
+		NetworkMode: resolveNetwork(req.Network, tmpl.Network),
+		Binds:       []string{h.groups.DockerSocket + ":/var/run/docker.sock"},
+	}
+	if h.capacity.GroupInstanceType != "" {
+		if groupType, err := h.templates.GetInstanceType(ctx, h.capacity.GroupInstanceType, token); err == nil {
+			groupHostConfig.Resources = resources(groupType)
+			for k, v := range resourceLabels(groupType) {
+				groupLabels[k] = v
+			}
+		}
+	}
 	containerID, err := h.docker.CreateContainer(ctx, containerName, dockerclient.CreateContainerRequest{
-		Image:  h.groups.Image,
-		Env:    groupEnv,
-		Labels: groupLabels,
-		HostConfig: &dockerclient.CreateHostConfig{
-			NetworkMode: resolveNetwork(req.Network, tmpl.Network),
-			Binds:       []string{h.groups.DockerSocket + ":/var/run/docker.sock"},
-		},
+		Image:      h.groups.Image,
+		Env:        groupEnv,
+		Labels:     groupLabels,
+		HostConfig: groupHostConfig,
 	})
 	if err != nil {
 		return "", fmt.Errorf("criando container do group: %w", err)
@@ -707,6 +792,15 @@ type createReplicaRequest struct {
 	Binds      []string          `json:"binds,omitempty"`
 	Network    string            `json:"network,omitempty"`
 	ExtraHosts []string          `json:"extraHosts,omitempty"`
+	// InstanceType/VCPU/MemoryMB vêm já resolvidos do launch template que
+	// este launcher entregou ao group -- e não são relidos do catálogo
+	// porque o token do group tem role "service", que o templatesadmin
+	// (só infra-admin) recusa. É o mesmo grau de confiança que a imagem e
+	// os binds, que já viajam assim; o teto de memória continua a ser
+	// aplicado aqui, por isso um group não consegue passar do que o host tem.
+	InstanceType string  `json:"instanceType,omitempty"`
+	VCPU         float64 `json:"vcpu,omitempty"`
+	MemoryMB     int64   `json:"memoryMb,omitempty"`
 }
 
 type createReplicaResponse struct {
@@ -732,6 +826,34 @@ func (h *Handler) handleCreateReplica(w http.ResponseWriter, r *http.Request, _,
 		return
 	}
 
+	labels := req.Labels
+	hostConfig := &dockerclient.CreateHostConfig{
+		Binds:       req.Binds,
+		NetworkMode: req.Network,
+		ExtraHosts:  req.ExtraHosts,
+	}
+	// MemoryMB zero = group anterior a esta feature (ex: um group estático
+	// declarado em docker-compose): a réplica sobe sem limites, como sempre.
+	if req.MemoryMB > 0 {
+		if err := h.checkMemoryCapacity(r.Context(), req.MemoryMB); err != nil {
+			if errors.Is(err, errInsufficientCapacity) {
+				writeError(w, http.StatusConflict, "insufficient_capacity", err.Error())
+				return
+			}
+			writeError(w, http.StatusBadGateway, "capacity_check_failed", err.Error())
+			return
+		}
+		size := templatesclient.InstanceType{Name: req.InstanceType, VCPU: req.VCPU, MemoryMB: req.MemoryMB}
+		hostConfig.Resources = resources(size)
+		labels = map[string]string{}
+		for k, v := range req.Labels {
+			labels[k] = v
+		}
+		for k, v := range resourceLabels(size) {
+			labels[k] = v
+		}
+	}
+
 	resolvedEnv, err := h.secrets.ResolveEnv(r.Context(), req.Env)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "secrets_resolve_failed", "erro resolvendo segredos: "+err.Error())
@@ -739,15 +861,11 @@ func (h *Handler) handleCreateReplica(w http.ResponseWriter, r *http.Request, _,
 	}
 
 	containerID, err := h.docker.CreateContainer(r.Context(), "", dockerclient.CreateContainerRequest{
-		Image:  req.Image,
-		Cmd:    req.Cmd,
-		Env:    resolvedEnv,
-		Labels: req.Labels,
-		HostConfig: &dockerclient.CreateHostConfig{
-			Binds:       req.Binds,
-			NetworkMode: req.Network,
-			ExtraHosts:  req.ExtraHosts,
-		},
+		Image:      req.Image,
+		Cmd:        req.Cmd,
+		Env:        resolvedEnv,
+		Labels:     labels,
+		HostConfig: hostConfig,
 	})
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "create_failed", "erro criando container: "+err.Error())
@@ -895,6 +1013,51 @@ func (h *Handler) handleDeleteGroup(w http.ResponseWriter, r *http.Request, subj
 
 	h.syncInstanceStatus(r.Context(), containerID, store.StatusStopped, subject)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// TerminateAllGroups para e remove TODO autoscaler-group vivo (a mesma
+// descoberta por label de handleListGroups, dinamicamente lançado por
+// este launcher ou estático num docker-compose.yml como group-authd) --
+// chamado uma única vez, fora de qualquer request HTTP, no shutdown do
+// próprio launcher (ver cmd/launcher/main.go). Sem isto, um "docker
+// compose down" só derruba este launcher: nenhum group está no compose,
+// então cada um (e as réplicas que gere) ficaria órfão, ainda a correr.
+//
+// Parar um group (StopContainer, o mesmo caminho de handleDeleteGroup) já
+// basta para a cascata completa -- é o próprio processo cmd/group, ao
+// receber o SIGTERM que isso implica, quem pára/remove as suas réplicas
+// (ver services/autoscaler/cmd/group/main.go, terminateAllReplicas).
+//
+// Melhor esforço e em paralelo, mesmo raciocínio de terminateAllReplicas
+// no group: um group preso ou já morto não pode impedir os outros de
+// serem limpos, nem travar o shutdown do launcher.
+func (h *Handler) TerminateAllGroups(ctx context.Context) {
+	containers, err := h.docker.ListContainers(ctx, true, map[string][]string{
+		"label": {labelGroupRole + "=" + labelGroupRoleValue},
+	})
+	if err != nil {
+		h.logger.Error("erro listando groups para encerrar", "err", err)
+		return
+	}
+
+	var wg sync.WaitGroup
+	for _, c := range containers {
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			if err := h.docker.StopContainer(ctx, id, stopTimeoutSeconds); err != nil {
+				h.logger.Error("erro parando group no encerramento do launcher", "container_id", id, "err", err)
+				return
+			}
+			if err := h.docker.RemoveContainer(ctx, id, false); err != nil {
+				h.logger.Error("erro removendo group no encerramento do launcher", "container_id", id, "err", err)
+				return
+			}
+			h.syncInstanceStatus(ctx, id, store.StatusStopped, "launcher-shutdown")
+			h.logger.Info("group encerrado em cascata pelo launcher", "container_id", id)
+		}(c.ID)
+	}
+	wg.Wait()
 }
 
 // ReplicaSummary é uma linha de GET /v1/replicas: UMA réplica de aplicação

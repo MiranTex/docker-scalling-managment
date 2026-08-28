@@ -44,6 +44,11 @@ export default function Sidebar({ role }: { role?: string }) {
           </Link>
         )}
         {hasInfraAdminAccess(role) && (
+          <Link href="/admin/instance-types" className={linkClass("/admin/instance-types")}>
+            Tipos de instância
+          </Link>
+        )}
+        {hasInfraAdminAccess(role) && (
           <Link href="/admin/launcher" className={linkClass("/admin/launcher")}>
             Instâncias
           </Link>

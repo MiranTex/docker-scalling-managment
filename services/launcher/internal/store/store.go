@@ -59,23 +59,32 @@ func (db *DB) Ping(ctx context.Context) error {
 
 // Instance é uma instância (solo ou group) que o launcher criou.
 type Instance struct {
-	ID           string     `json:"id"`
-	Kind         string     `json:"kind"`
-	TemplateName string     `json:"templateName"`
-	ContainerID  string     `json:"containerId"`
-	Status       string     `json:"status"`
-	Error        string     `json:"error,omitempty"`
+	ID           string `json:"id"`
+	Kind         string `json:"kind"`
+	TemplateName string `json:"templateName"`
+	ContainerID  string `json:"containerId"`
+	Status       string `json:"status"`
+	Error        string `json:"error,omitempty"`
+	// InstanceType/VCPU/MemoryMB são a cópia dos limites aplicados a este
+	// container -- guardados aqui, e não lidos do catálogo em cada leitura,
+	// porque o catálogo pode mudar depois e o container continua a correr
+	// com o que lhe foi dado.
+	InstanceType string     `json:"instanceType"`
+	VCPU         float64    `json:"vcpu"`
+	MemoryMB     int64      `json:"memoryMb"`
 	CreatedAt    time.Time  `json:"createdAt"`
 	UpdatedAt    time.Time  `json:"updatedAt"`
 	UpdatedBy    string     `json:"updatedBy"`
 	StoppedAt    *time.Time `json:"stoppedAt,omitempty"`
 }
 
-const listColumns = `id, kind, template_name, container_id, status, error, created_at, updated_at, updated_by, stopped_at`
+const listColumns = `id, kind, template_name, container_id, status, error,
+	instance_type, vcpu::float8, memory_mb, created_at, updated_at, updated_by, stopped_at`
 
 func scanInstance(row interface{ Scan(...any) error }) (Instance, error) {
 	var i Instance
-	err := row.Scan(&i.ID, &i.Kind, &i.TemplateName, &i.ContainerID, &i.Status, &i.Error, &i.CreatedAt, &i.UpdatedAt, &i.UpdatedBy, &i.StoppedAt)
+	err := row.Scan(&i.ID, &i.Kind, &i.TemplateName, &i.ContainerID, &i.Status, &i.Error,
+		&i.InstanceType, &i.VCPU, &i.MemoryMB, &i.CreatedAt, &i.UpdatedAt, &i.UpdatedBy, &i.StoppedAt)
 	if err != nil {
 		return Instance{}, err
 	}
@@ -117,9 +126,11 @@ func (db *DB) Get(ctx context.Context, id string) (Instance, error) {
 // Create insere uma instância nova.
 func (db *DB) Create(ctx context.Context, i Instance) error {
 	_, err := db.sql.ExecContext(ctx, `
-		INSERT INTO launcher.instances (id, kind, template_name, container_id, status, error, updated_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-	`, i.ID, i.Kind, i.TemplateName, i.ContainerID, i.Status, i.Error, i.UpdatedBy)
+		INSERT INTO launcher.instances (id, kind, template_name, container_id, status, error,
+			instance_type, vcpu, memory_mb, updated_by)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	`, i.ID, i.Kind, i.TemplateName, i.ContainerID, i.Status, i.Error,
+		i.InstanceType, i.VCPU, i.MemoryMB, i.UpdatedBy)
 	if err != nil {
 		return fmt.Errorf("store: gravando instância %q: %w", i.ID, err)
 	}

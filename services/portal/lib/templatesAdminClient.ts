@@ -21,6 +21,27 @@ export type ServiceTemplate = {
   binds: string[];
   network: string;
   extraHosts: string[];
+  // Tamanho aplicado quando quem lança não escolhe nenhum -- vazio cai no
+  // default global do launcher.
+  defaultInstanceType: string;
+
+  createdAt: string;
+  updatedAt: string;
+  updatedBy: string;
+};
+
+// Catálogo de tamanhos de container, no espírito dos instance types da
+// AWS -- ver services/templatesadmin/internal/store/instancetypes.go. O
+// launcher traduz vcpu/memoryMb em limites reais de cgroup no momento de
+// criar o container.
+export type InstanceType = {
+  name: string;
+  displayName: string;
+  vcpu: number;
+  memoryMb: number;
+  memorySwapMb: number | null;
+  pidsLimit: number;
+  enabled: boolean;
 
   createdAt: string;
   updatedAt: string;
@@ -56,4 +77,19 @@ export function deleteTemplate(accessToken: string, name: string) {
 
 export function listBuiltImages(accessToken: string) {
   return templatesAdminFetch("/v1/images", accessToken);
+}
+
+export function listInstanceTypes(accessToken: string) {
+  return templatesAdminFetch("/v1/instance-types", accessToken);
+}
+
+export function upsertInstanceType(accessToken: string, name: string, body: Partial<InstanceType>) {
+  return templatesAdminFetch(`/v1/instance-types/${encodeURIComponent(name)}`, accessToken, {
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
+}
+
+export function deleteInstanceType(accessToken: string, name: string) {
+  return templatesAdminFetch(`/v1/instance-types/${encodeURIComponent(name)}`, accessToken, { method: "DELETE" });
 }

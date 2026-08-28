@@ -35,6 +35,23 @@ type Template struct {
 	Binds      []string          `json:"binds"`
 	Network    string            `json:"network"`
 	ExtraHosts []string          `json:"extraHosts"`
+	// DefaultInstanceType é o tamanho aplicado quando o pedido de
+	// lançamento não escolhe nenhum. Vazio cai no default global do
+	// launcher (LAUNCHER_DEFAULT_INSTANCE_TYPE).
+	DefaultInstanceType string `json:"defaultInstanceType"`
+}
+
+// InstanceType é store.InstanceType (services/templatesadmin) tal como
+// exposto pela API -- o par (vCPU, memória) que o launcher traduz para
+// limites de cgroup ao criar o container.
+type InstanceType struct {
+	Name         string  `json:"name"`
+	DisplayName  string  `json:"displayName"`
+	VCPU         float64 `json:"vcpu"`
+	MemoryMB     int64   `json:"memoryMb"`
+	MemorySwapMB *int64  `json:"memorySwapMb"`
+	PidsLimit    int64   `json:"pidsLimit"`
+	Enabled      bool    `json:"enabled"`
 }
 
 type Client struct {
@@ -52,15 +69,28 @@ func New(templatesAdminURL string) *Client {
 // Get devolve o modelo chamado name, autenticando com o bearerToken (o
 // token de quem chamou o launcher, reenviado tal como veio).
 func (c *Client) Get(ctx context.Context, name, bearerToken string) (Template, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/v1/templates/"+name, nil)
+	var t Template
+	err := c.get(ctx, "/v1/templates/"+name, bearerToken, &t)
+	return t, err
+}
+
+// GetInstanceType devolve um tipo do catálogo de tamanhos.
+func (c *Client) GetInstanceType(ctx context.Context, name, bearerToken string) (InstanceType, error) {
+	var it InstanceType
+	err := c.get(ctx, "/v1/instance-types/"+name, bearerToken, &it)
+	return it, err
+}
+
+func (c *Client) get(ctx context.Context, path, bearerToken string, out any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
 	if err != nil {
-		return Template{}, err
+		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+bearerToken)
 
 	res, err := c.httpClient.Do(req)
 	if err != nil {
-		return Template{}, fmt.Errorf("templatesclient: chamando templatesadmin: %w", err)
+		return fmt.Errorf("templatesclient: chamando templatesadmin: %w", err)
 	}
 	defer res.Body.Close()
 
@@ -69,12 +99,11 @@ func (c *Client) Get(ctx context.Context, name, bearerToken string) (Template, e
 			Message string `json:"message"`
 		}
 		_ = json.NewDecoder(res.Body).Decode(&apiErr)
-		return Template{}, fmt.Errorf("templatesclient: templatesadmin respondeu %d: %s", res.StatusCode, apiErr.Message)
+		return fmt.Errorf("templatesclient: templatesadmin respondeu %d: %s", res.StatusCode, apiErr.Message)
 	}
 
-	var t Template
-	if err := json.NewDecoder(res.Body).Decode(&t); err != nil {
-		return Template{}, fmt.Errorf("templatesclient: decodificando resposta: %w", err)
+	if err := json.NewDecoder(res.Body).Decode(out); err != nil {
+		return fmt.Errorf("templatesclient: decodificando resposta: %w", err)
 	}
-	return t, nil
+	return nil
 }

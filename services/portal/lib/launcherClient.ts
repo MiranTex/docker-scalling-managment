@@ -17,6 +17,13 @@ export type LauncherInstance = {
   updatedAt: string;
   updatedBy: string;
   stoppedAt?: string;
+  // Tamanho aplicado a esta instância, gravado no momento do lançamento --
+  // não relido do catálogo, para editar um tipo depois não reescrever o
+  // que este container está de facto a usar. Zero/vazio em instâncias
+  // criadas antes desta feature.
+  instanceType: string;
+  vcpu: number;
+  memoryMb: number;
   // exposedHost é o hostname público desta instância (ver
   // services/launcher/internal/httpapi.labelExposeHost), lido ao vivo do
   // container -- ausente/vazio se nunca foi exposta.
@@ -43,6 +50,11 @@ export type CreateInstanceRequest = {
   // /admin/networks depois. Mesma validação de sempre no launcher (só
   // redes "base-stack.managed").
   extraNetworks?: string[];
+  // instanceType é o tamanho (vCPU/memória) a aplicar -- ver
+  // lib/templatesAdminClient.InstanceType. Vazio herda o default do
+  // modelo. Quando kind="group", é o tamanho de cada RÉPLICA; o container
+  // do próprio group usa sempre um tamanho fixo, pequeno.
+  instanceType?: string;
   // Campos abaixo só são lidos pelo launcher quando kind="group" -- ver
   // services/launcher/internal/httpapi.createInstanceRequest. Um modelo
   // (ServiceTemplate) já não tem estes campos; é aqui, ao criar o group,
@@ -74,6 +86,24 @@ async function launcherFetch(path: string, accessToken: string, init?: RequestIn
 
 export function listInstances(accessToken: string) {
   return launcherFetch("/v1/instances", accessToken);
+}
+
+// Capacity soma os recursos comprometidos por todos os containers da
+// plataforma (instâncias E réplicas) contra a capacidade declarada do
+// host. enforced=false significa que o launcher não sabe o tamanho do
+// host (LAUNCHER_HOST_MEMORY_MB por configurar) e por isso nunca recusa
+// um lançamento -- o painel passa a ser puramente informativo.
+export type Capacity = {
+  hostVcpu: number;
+  hostMemoryMb: number;
+  allocatedVcpu: number;
+  allocatedMemoryMb: number;
+  containerCount: number;
+  enforced: boolean;
+};
+
+export function getCapacity(accessToken: string) {
+  return launcherFetch("/v1/capacity", accessToken);
 }
 
 export function createInstance(accessToken: string, body: CreateInstanceRequest) {

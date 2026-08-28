@@ -39,6 +39,13 @@ type LaunchTemplate struct {
 	Binds      []string          `json:"binds,omitempty"`
 	Network    string            `json:"network,omitempty"`
 	ExtraHosts []string          `json:"extraHosts,omitempty"`
+	// InstanceType/VCPU/MemoryMB vêm já resolvidos do launcher, que os
+	// injetou neste template ao lançar o group -- este cliente só os
+	// devolve tal e qual. Reler o catálogo aqui não seria possível: o
+	// token deste group tem role "service", que o templatesadmin recusa.
+	InstanceType string  `json:"instanceType,omitempty"`
+	VCPU         float64 `json:"vcpu,omitempty"`
+	MemoryMB     int64   `json:"memoryMb,omitempty"`
 }
 
 type tokenPair struct {

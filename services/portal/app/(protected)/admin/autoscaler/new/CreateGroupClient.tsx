@@ -3,14 +3,16 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import type { ServiceTemplate } from "@/lib/templatesAdminClient";
+import type { InstanceType, ServiceTemplate } from "@/lib/templatesAdminClient";
 import type { LauncherInstance } from "@/lib/launcherClient";
+import { formatInstanceType } from "@/lib/instanceTypes";
 import NetworkPicker from "../../launcher/NetworkPicker";
 import ExtraNetworksPicker from "../../launcher/ExtraNetworksPicker";
 
 const EMPTY_GROUP_FORM = {
   templateName: "",
   targetService: "",
+  instanceType: "",
   network: "",
   extraNetworks: [] as string[],
   backendPort: "80",
@@ -25,6 +27,7 @@ const EMPTY_GROUP_FORM = {
 export default function CreateGroupClient() {
   const router = useRouter();
   const [templates, setTemplates] = useState<ServiceTemplate[] | null>(null);
+  const [instanceTypes, setInstanceTypes] = useState<InstanceType[]>([]);
   const [groupForm, setGroupForm] = useState(EMPTY_GROUP_FORM);
   const [creatingGroup, setCreatingGroup] = useState(false);
   const [groupError, setGroupError] = useState<string | null>(null);
@@ -47,6 +50,10 @@ export default function CreateGroupClient() {
 
   useEffect(() => {
     loadTemplates();
+    fetch("/api/admin/instance-types")
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data: InstanceType[]) => setInstanceTypes((data ?? []).filter((it) => it.enabled)))
+      .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -76,6 +83,7 @@ export default function CreateGroupClient() {
           templateName: groupForm.templateName,
           kind: "group",
           targetService: groupForm.targetService.trim(),
+          ...(groupForm.instanceType ? { instanceType: groupForm.instanceType } : {}),
           ...(groupForm.network.trim() ? { network: groupForm.network.trim() } : {}),
           ...(groupForm.extraNetworks.length ? { extraNetworks: groupForm.extraNetworks } : {}),
           backendPort: Number(groupForm.backendPort) || 80,
@@ -168,6 +176,25 @@ export default function CreateGroupClient() {
         onChange={(e) => setGroupForm((f) => ({ ...f, targetService: e.target.value }))}
         placeholder="laravel-app"
       />
+
+      <label htmlFor="group-instance-type">Tipo de instância de cada réplica</label>
+      <select
+        id="group-instance-type"
+        value={groupForm.instanceType}
+        onChange={(e) => setGroupForm((f) => ({ ...f, instanceType: e.target.value }))}
+      >
+        <option value="">(herdar do modelo)</option>
+        {instanceTypes.map((it) => (
+          <option key={it.name} value={it.name}>
+            {formatInstanceType(it)}
+          </option>
+        ))}
+      </select>
+      <p className="muted">
+        Limites de CPU e memória de cada RÉPLICA -- o container do próprio group usa sempre um
+        tamanho fixo, pequeno. Gerir o catálogo em{" "}
+        <a href="/admin/instance-types">/admin/instance-types</a>.
+      </p>
 
       <label htmlFor="group-network">Rede Docker (opcional, substitui a do modelo)</label>
       <NetworkPicker

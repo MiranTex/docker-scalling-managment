@@ -65,6 +65,12 @@ type ContainerInspect struct {
 		// Laravel Sail) no formato "origem:destino[:modo]" que a própria API
 		// aceita de volta em /containers/create.
 		Binds []string `json:"Binds"`
+		// Limites de cgroup do molde -- sem os copiar, um scale up por
+		// clonagem produziria réplicas sem teto nenhum a partir de um molde
+		// limitado.
+		NanoCPUs   int64 `json:"NanoCpus"`
+		Memory     int64 `json:"Memory"`
+		MemorySwap int64 `json:"MemorySwap"`
 	} `json:"HostConfig"`
 	NetworkSettings struct {
 		// IPAddress só vem preenchido quando o container está na rede
@@ -141,6 +147,15 @@ type CreateHostConfig struct {
 	// não tem relação com publicação de porta, então não conflita entre
 	// réplicas do mesmo serviço.
 	ExtraHosts []string `json:"ExtraHosts,omitempty"`
+
+	// NanoCPUs/Memory/MemorySwap são os limites de cgroup do tipo de
+	// instância da réplica (ver services/launcher/internal/httpapi/capacity.go).
+	// Só são usados no caminho de arranque a frio, em que este group cria
+	// o container direto contra o Docker -- no caminho normal quem os
+	// aplica é o launcher.
+	NanoCPUs   int64 `json:"NanoCpus,omitempty"`
+	Memory     int64 `json:"Memory,omitempty"`
+	MemorySwap int64 `json:"MemorySwap,omitempty"`
 }
 
 // CreateContainer cria (mas não inicia) um novo container e devolve seu ID.

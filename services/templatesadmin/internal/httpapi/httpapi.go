@@ -47,6 +47,10 @@ type Store interface {
 	Get(ctx context.Context, name string) (store.Template, error)
 	Upsert(ctx context.Context, t store.Template, updatedBy string) error
 	Delete(ctx context.Context, name string) error
+	ListInstanceTypes(ctx context.Context) ([]store.InstanceType, error)
+	GetInstanceType(ctx context.Context, name string) (store.InstanceType, error)
+	UpsertInstanceType(ctx context.Context, it store.InstanceType, updatedBy string) error
+	DeleteInstanceType(ctx context.Context, name string) error
 	Ping(ctx context.Context) error
 }
 
@@ -73,6 +77,10 @@ func (h *Handler) Routes() *http.ServeMux {
 	mux.HandleFunc("GET /v1/templates/{name}", h.requireRole(RoleInfraAdmin, h.handleGet))
 	mux.HandleFunc("PUT /v1/templates/{name}", h.requireRole(RoleInfraAdmin, h.handleUpsert))
 	mux.HandleFunc("DELETE /v1/templates/{name}", h.requireRole(RoleInfraAdmin, h.handleDelete))
+	mux.HandleFunc("GET /v1/instance-types", h.requireRole(RoleInfraAdmin, h.handleListInstanceTypes))
+	mux.HandleFunc("GET /v1/instance-types/{name}", h.requireRole(RoleInfraAdmin, h.handleGetInstanceType))
+	mux.HandleFunc("PUT /v1/instance-types/{name}", h.requireRole(RoleInfraAdmin, h.handleUpsertInstanceType))
+	mux.HandleFunc("DELETE /v1/instance-types/{name}", h.requireRole(RoleInfraAdmin, h.handleDeleteInstanceType))
 	mux.HandleFunc("GET /v1/images", h.requireRole(RoleInfraAdmin, h.handleListImages))
 	mux.HandleFunc("GET /healthz", h.handleHealthz)
 	mux.HandleFunc("GET /readyz", h.handleReadyz)
@@ -183,6 +191,102 @@ func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request, subject s
 	}
 
 	h.audit.Log(subject, "template.delete", name, "aplicado")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleListInstanceTypes devolve o catálogo de tamanhos. Inclui os
+// desativados -- é este ecrã que os volta a ligar; quem apresenta um
+// <select> de escolha é que filtra por "enabled".
+func (h *Handler) handleListInstanceTypes(w http.ResponseWriter, r *http.Request, _ string) {
+	types, err := h.store.ListInstanceTypes(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "erro listando tipos de instância")
+		return
+	}
+	writeJSON(w, http.StatusOK, types)
+}
+
+func (h *Handler) handleGetInstanceType(w http.ResponseWriter, r *http.Request, _ string) {
+	name := r.PathValue("name")
+	it, err := h.store.GetInstanceType(r.Context(), name)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "tipo de instância desconhecido: "+name)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "erro lendo tipo de instância")
+		return
+	}
+	writeJSON(w, http.StatusOK, it)
+}
+
+func (h *Handler) handleUpsertInstanceType(w http.ResponseWriter, r *http.Request, subject string) {
+	name := r.PathValue("name")
+	if !nameRe.MatchString(name) {
+		writeError(w, http.StatusBadRequest, "invalid_name", "nome inválido -- use só letras, números, \".\", \"_\" ou \"-\", até 128 caracteres")
+		return
+	}
+
+	// Enabled default true: o corpo típico do portal ao criar um tipo não
+	// traz a chave, e o zero value de bool diria o contrário do esperado.
+	it := store.InstanceType{Enabled: true}
+	if err := json.NewDecoder(r.Body).Decode(&it); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_body", "corpo inválido: "+err.Error())
+		return
+	}
+	it.Name = name
+
+	if it.VCPU <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid_vcpu", "\"vcpu\" tem de ser maior que zero")
+		return
+	}
+	// Limite duro do Docker: abaixo de 6 MiB o daemon recusa o container.
+	if it.MemoryMB < 6 {
+		writeError(w, http.StatusBadRequest, "invalid_memory", "\"memoryMb\" tem de ser pelo menos 6")
+		return
+	}
+	if it.MemorySwapMB != nil && *it.MemorySwapMB < it.MemoryMB {
+		writeError(w, http.StatusBadRequest, "invalid_memory_swap", "\"memorySwapMb\" não pode ser menor que \"memoryMb\"")
+		return
+	}
+	if it.PidsLimit < 0 {
+		writeError(w, http.StatusBadRequest, "invalid_pids_limit", "\"pidsLimit\" não pode ser negativo")
+		return
+	}
+
+	if err := h.store.UpsertInstanceType(r.Context(), it, subject); err != nil {
+		h.audit.Log(subject, "instance_type.upsert", name, "falhou: "+err.Error())
+		writeError(w, http.StatusInternalServerError, "internal_error", "erro gravando tipo de instância")
+		return
+	}
+
+	h.audit.Log(subject, "instance_type.upsert", name, "aplicado")
+	saved, err := h.store.GetInstanceType(r.Context(), name)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]string{"name": name})
+		return
+	}
+	writeJSON(w, http.StatusOK, saved)
+}
+
+func (h *Handler) handleDeleteInstanceType(w http.ResponseWriter, r *http.Request, subject string) {
+	name := r.PathValue("name")
+	err := h.store.DeleteInstanceType(r.Context(), name)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "tipo de instância desconhecido: "+name)
+		return
+	}
+	if errors.Is(err, store.ErrInstanceTypeInUse) {
+		writeError(w, http.StatusConflict, "in_use", "há modelos que usam "+name+" como tipo por omissão -- altere-os primeiro")
+		return
+	}
+	if err != nil {
+		h.audit.Log(subject, "instance_type.delete", name, "falhou: "+err.Error())
+		writeError(w, http.StatusInternalServerError, "internal_error", "erro apagando tipo de instância")
+		return
+	}
+
+	h.audit.Log(subject, "instance_type.delete", name, "aplicado")
 	w.WriteHeader(http.StatusNoContent)
 }
 

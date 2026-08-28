@@ -169,6 +169,28 @@ type CreateHostConfig struct {
 	// não tem relação com publicação de porta, então não conflita entre
 	// réplicas do mesmo serviço.
 	ExtraHosts []string `json:"ExtraHosts,omitempty"`
+
+	Resources
+}
+
+// Resources são os limites de recursos aplicados ao container, derivados
+// do "tipo de instância" escolhido no momento do lançamento (ver
+// services/templatesadmin, catálogo service_templates.instance_types).
+// São limites duros do cgroup: um container que tente passar do teto de
+// CPU é estrangulado, e um que passe do teto de memória é morto pelo
+// OOM-killer -- em ambos os casos sem arrastar o host nem os vizinhos.
+type Resources struct {
+	// NanoCPUs é a fração de CPU em bilionésimos: 1.5 vCPU = 1500000000.
+	NanoCPUs int64 `json:"NanoCpus,omitempty"`
+	// Memory é o teto de RAM em bytes. O daemon recusa valores abaixo de 6 MiB.
+	Memory int64 `json:"Memory,omitempty"`
+	// MemorySwap é memória + swap. Igual a Memory desativa o swap, que é o
+	// que queremos por omissão: com swap, um container que estoura o limite
+	// degrada o disco do host inteiro em vez de morrer depressa.
+	MemorySwap int64 `json:"MemorySwap,omitempty"`
+	// PidsLimit trava fork bombs. Ponteiro porque 0 é um valor legítimo
+	// (ilimitado) e omitir é diferente de mandar zero.
+	PidsLimit *int64 `json:"PidsLimit,omitempty"`
 }
 
 // CreateContainer cria (mas não inicia) um novo container e devolve seu ID.
