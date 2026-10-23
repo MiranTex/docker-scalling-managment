@@ -42,6 +42,9 @@ func (h *Handler) validateSpec(ctx context.Context, binds []string, network stri
 	if network == "host" || strings.HasPrefix(network, "container:") {
 		return fmt.Errorf("rede %q não é permitida: partilha a pilha de rede do host ou de outro container", network)
 	}
+	if err := h.checkNotProjectNetwork(ctx, network); err != nil {
+		return err
+	}
 	for _, b := range binds {
 		if err := h.validateBind(ctx, b); err != nil {
 			return err
