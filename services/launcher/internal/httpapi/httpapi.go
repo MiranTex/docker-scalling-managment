@@ -565,7 +565,10 @@ func (h *Handler) launchSolo(ctx context.Context, id string, tmpl templatesclien
 			Binds:       tmpl.Binds,
 			NetworkMode: resolveNetwork(req.Network, tmpl.Network),
 			ExtraHosts:  tmpl.ExtraHosts,
-			Resources:   resources(instanceType),
+			// Sem isto, um crash da app ou um reboot do host deixava a
+			// instância parada até alguém a recriar à mão.
+			RestartPolicy: dockerclient.UnlessStopped(),
+			Resources:     resources(instanceType),
 		},
 	})
 	if err != nil {
@@ -693,6 +696,10 @@ func (h *Handler) launchGroup(ctx context.Context, id string, tmpl templatesclie
 	groupHostConfig := &dockerclient.CreateHostConfig{
 		NetworkMode: resolveNetwork(req.Network, tmpl.Network),
 		Binds:       []string{h.groups.DockerSocket + ":/var/run/docker.sock"},
+		// O group volta sozinho depois de um crash ou reboot do host e
+		// adota as réplicas que encontrar pela label de serviço (que
+		// também sobrevivem, ver handleCreateReplica).
+		RestartPolicy: dockerclient.UnlessStopped(),
 	}
 	if h.capacity.GroupInstanceType != "" {
 		if groupType, err := h.templates.GetInstanceType(ctx, h.capacity.GroupInstanceType, token); err == nil {
@@ -831,6 +838,11 @@ func (h *Handler) handleCreateReplica(w http.ResponseWriter, r *http.Request, _,
 		Binds:       req.Binds,
 		NetworkMode: req.Network,
 		ExtraHosts:  req.ExtraHosts,
+		// Um scale down do group é sempre stop + remove explícito, que
+		// unless-stopped respeita -- só crash/reboot fazem o Docker
+		// voltar a subir a réplica, e o group conta-a como sua na
+		// próxima reconciliação.
+		RestartPolicy: dockerclient.UnlessStopped(),
 	}
 	// MemoryMB zero = group anterior a esta feature (ex: um group estático
 	// declarado em docker-compose): a réplica sobe sem limites, como sempre.
@@ -1002,8 +1014,26 @@ func (h *Handler) handleDeleteGroup(w http.ResponseWriter, r *http.Request, subj
 		return
 	}
 
+	// Antes de parar seja o que for: sem saber que réplicas são dele, o
+	// group ficaria parado com a aplicação a correr sem ninguém a geri-la.
+	targetService := containers[0].Labels[labelGroupTargetService]
+	if targetService == "" {
+		writeError(w, http.StatusConflict, "missing_target_service", "group sem label "+labelGroupTargetService+", não sei que réplicas são dele")
+		return
+	}
+
+	// Parar o group primeiro: enquanto o reconcile loop dele estiver
+	// vivo, voltaria a pedir réplicas para repor o MinReplicas assim que
+	// as começássemos a remover.
 	if err := h.docker.StopContainer(r.Context(), containerID, stopTimeoutSeconds); err != nil {
 		writeError(w, http.StatusBadGateway, "stop_failed", "erro parando group: "+err.Error())
+		return
+	}
+	// O group já não remove as réplicas no seu próprio SIGTERM (um
+	// SIGTERM também pode ser só um reboot do host) -- apagar o group é o
+	// único sítio onde a aplicação deve ir abaixo, por isso é aqui.
+	if err := h.removeGroupReplicas(r.Context(), targetService); err != nil {
+		writeError(w, http.StatusBadGateway, "remove_replicas_failed", "erro removendo réplicas do group: "+err.Error())
 		return
 	}
 	if err := h.docker.RemoveContainer(r.Context(), containerID, false); err != nil {
@@ -1015,49 +1045,46 @@ func (h *Handler) handleDeleteGroup(w http.ResponseWriter, r *http.Request, subj
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// TerminateAllGroups para e remove TODO autoscaler-group vivo (a mesma
-// descoberta por label de handleListGroups, dinamicamente lançado por
-// este launcher ou estático num docker-compose.yml como group-authd) --
-// chamado uma única vez, fora de qualquer request HTTP, no shutdown do
-// próprio launcher (ver cmd/launcher/main.go). Sem isto, um "docker
-// compose down" só derruba este launcher: nenhum group está no compose,
-// então cada um (e as réplicas que gere) ficaria órfão, ainda a correr.
-//
-// Parar um group (StopContainer, o mesmo caminho de handleDeleteGroup) já
-// basta para a cascata completa -- é o próprio processo cmd/group, ao
-// receber o SIGTERM que isso implica, quem pára/remove as suas réplicas
-// (ver services/autoscaler/cmd/group/main.go, terminateAllReplicas).
-//
-// Melhor esforço e em paralelo, mesmo raciocínio de terminateAllReplicas
-// no group: um group preso ou já morto não pode impedir os outros de
-// serem limpos, nem travar o shutdown do launcher.
-func (h *Handler) TerminateAllGroups(ctx context.Context) {
-	containers, err := h.docker.ListContainers(ctx, true, map[string][]string{
-		"label": {labelGroupRole + "=" + labelGroupRoleValue},
+// removeGroupReplicas para e remove todas as réplicas de um group,
+// encontradas pela mesma label de serviço que cada cmd/group injeta no seu
+// launch template (labelServiceKey=targetService). Em paralelo e até ao
+// fim mesmo com falhas pelo caminho, para uma réplica presa não deixar as
+// outras a correr; devolve o primeiro erro.
+func (h *Handler) removeGroupReplicas(ctx context.Context, targetService string) error {
+	replicas, err := h.docker.ListContainers(ctx, true, map[string][]string{
+		"label": {labelServiceKey + "=" + targetService},
 	})
 	if err != nil {
-		h.logger.Error("erro listando groups para encerrar", "err", err)
-		return
+		return fmt.Errorf("listando réplicas: %w", err)
 	}
 
-	var wg sync.WaitGroup
-	for _, c := range containers {
+	var (
+		wg       sync.WaitGroup
+		mu       sync.Mutex
+		firstErr error
+	)
+	for _, c := range replicas {
 		wg.Add(1)
 		go func(id string) {
 			defer wg.Done()
-			if err := h.docker.StopContainer(ctx, id, stopTimeoutSeconds); err != nil {
-				h.logger.Error("erro parando group no encerramento do launcher", "container_id", id, "err", err)
-				return
+			// Stop antes do remove (e não só remove forçado) para a app
+			// receber SIGTERM e terminar pedidos em curso.
+			err := h.docker.StopContainer(ctx, id, stopTimeoutSeconds)
+			if err == nil {
+				err = h.docker.RemoveContainer(ctx, id, false)
 			}
-			if err := h.docker.RemoveContainer(ctx, id, false); err != nil {
-				h.logger.Error("erro removendo group no encerramento do launcher", "container_id", id, "err", err)
-				return
+			if err != nil {
+				h.logger.Error("erro removendo réplica de group apagado", "container_id", id, "err", err)
+				mu.Lock()
+				if firstErr == nil {
+					firstErr = err
+				}
+				mu.Unlock()
 			}
-			h.syncInstanceStatus(ctx, id, store.StatusStopped, "launcher-shutdown")
-			h.logger.Info("group encerrado em cascata pelo launcher", "container_id", id)
 		}(c.ID)
 	}
 	wg.Wait()
+	return firstErr
 }
 
 // ReplicaSummary é uma linha de GET /v1/replicas: UMA réplica de aplicação

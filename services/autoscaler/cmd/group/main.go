@@ -94,14 +94,14 @@ func main() {
 		logger.Warn("shutdown do servidor de métricas/health não terminou a tempo", "err", err)
 	}
 
-	// O group é dono do ciclo de vida das réplicas que ele mesmo cria a
-	// partir do launch template -- nenhuma delas está no docker-compose.yml,
-	// então um `docker compose down` só derrubaria este container, deixando
-	// as réplicas órfãs (mesmo problema de bootstrap, ao contrário: agora é
-	// teardown). Igual apagar um Auto Scaling Group na AWS termina as
-	// instâncias, encerrar o group aqui remove tudo que ele gerencia.
-	terminateAllReplicas(shutdownCtx, cfg, client, logger)
-	logger.Info("group encerrado")
+	// Encerrar o processo NÃO remove as réplicas: um SIGTERM tanto pode
+	// ser "apaguem este group" como um reboot do host ou um restart do
+	// daemon, e só no primeiro caso queremos a aplicação em baixo. As
+	// réplicas têm RestartPolicy unless-stopped (ver handleCreateReplica
+	// no launcher), e ao voltar este group adota-as pela label de serviço.
+	// Apagar de propósito é sempre explícito: DELETE /v1/groups/{id} no
+	// launcher remove o group E as réplicas dele.
+	logger.Info("group encerrado; réplicas mantidas")
 }
 
 // terminateAllReplicas para e remove todos os containers do serviço

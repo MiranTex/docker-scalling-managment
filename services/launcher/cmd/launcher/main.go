@@ -69,15 +69,10 @@ func main() {
 		logger.Warn("shutdown do servidor HTTP não terminou a tempo", "err", err)
 	}
 
-	// Nenhum group está no docker-compose.yml (são lançados dinamicamente
-	// via API, ver httpapi.launchGroup) -- sem isto, "docker compose down"
-	// derrubaria só este launcher, deixando todo group (e as réplicas que
-	// gere) órfão. Contexto próprio: os 15s acima já foram gastos a
-	// drenar HTTP, e esta cascata precisa do seu próprio tempo (stop de
-	// cada group + o cleanup de réplicas que isso dispara dentro dele).
-	groupsCtx, cancelGroups := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancelGroups()
-	handler.TerminateAllGroups(groupsCtx)
+	// Groups e instâncias continuam a correr: o launcher é plano de
+	// controlo, e a sua ausência (restart, upgrade, reboot do host) não
+	// deve derrubar as aplicações. Ver "make demo-down" para limpar tudo
+	// de propósito.
 
 	logger.Info("launcher encerrado")
 }

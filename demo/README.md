@@ -450,12 +450,18 @@ quiser aparecer aqui também) -- ver `services/monitoring/README.md`,
 ## Derrubar
 
 ```sh
-docker compose -f demo/docker-compose.yml down
+make demo-down
 ```
 
-Cada group (`group-authd`, e qualquer outro group que você tenha lançado
-via launcher) remove as réplicas que criou como parte do seu shutdown
-gracioso — não fica nada órfão. Dados do auth
+Só `docker compose down` **não chega**: desligar a plataforma (launcher,
+`group-authd`) já não derruba as aplicações. Os groups e instâncias lançados
+pelo launcher, e as réplicas de todos os groups, ficam a correr. É de
+propósito: um reboot do host ou um restart do launcher não deve apagar
+nada, e tudo tem `RestartPolicy: unless-stopped`. `make demo-down` faz o
+`down` e depois remove todo container com a label `base-stack.managed=true`
+que tenha sobrado (e as redes com a mesma label). Para apagar só uma
+aplicação, usa "Parar grupo" em `/admin/autoscaler` (ou
+`DELETE /v1/groups/{id}`), que remove o group e as réplicas dele. Dados do auth
 (contas, chaves) ficam em volumes nomeados e sobrevivem a este comando:
 - `demo-database-data` / `demo-database-backup-repo` — declarados no
   Compose, `down -v` remove os dois (isto apaga também os backups locais

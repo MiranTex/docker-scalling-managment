@@ -53,11 +53,12 @@ func scaleUp(ctx context.Context, client *dockerclient.Client, members []dockerc
 		Env:    inspect.Config.Env,
 		Labels: inspect.Config.Labels,
 		HostConfig: &dockerclient.CreateHostConfig{
-			Binds:       inspect.HostConfig.Binds,
-			NetworkMode: inspect.PrimaryNetwork(),
-			NanoCPUs:    inspect.HostConfig.NanoCPUs,
-			Memory:      inspect.HostConfig.Memory,
-			MemorySwap:  inspect.HostConfig.MemorySwap,
+			Binds:         inspect.HostConfig.Binds,
+			NetworkMode:   inspect.PrimaryNetwork(),
+			NanoCPUs:      inspect.HostConfig.NanoCPUs,
+			Memory:        inspect.HostConfig.Memory,
+			MemorySwap:    inspect.HostConfig.MemorySwap,
+			RestartPolicy: dockerclient.UnlessStopped(),
 		},
 	})
 	if err != nil {
@@ -142,6 +143,9 @@ func CreateFromTemplate(ctx context.Context, client *dockerclient.Client, templa
 			// Igual a Memory desativa o swap -- mesma decisão do launcher:
 			// melhor um container morto depressa que um host a paginar.
 			MemorySwap: template.MemoryMB * 1024 * 1024,
+			// Mesma política que o launcher aplica a toda réplica (ver
+			// services/launcher/internal/httpapi, handleCreateReplica).
+			RestartPolicy: dockerclient.UnlessStopped(),
 		},
 	})
 	if err != nil {
