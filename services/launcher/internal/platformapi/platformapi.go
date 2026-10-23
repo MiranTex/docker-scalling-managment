@@ -59,6 +59,9 @@ func (a *API) Register(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /v1/projects/{project}/usage", admin(a.projectUsage))
 
+	mux.HandleFunc("GET /v1/volumes", admin(a.listVolumes))
+	mux.HandleFunc("DELETE /v1/volumes/{name}", admin(a.deleteVolume))
+
 	const addons = "/v1/projects/{project}/environments/{env}/addons"
 	mux.HandleFunc("GET "+addons, admin(a.listAddons))
 	mux.HandleFunc("POST "+addons, admin(a.createAddon))

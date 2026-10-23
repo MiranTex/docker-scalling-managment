@@ -34,6 +34,7 @@ export default function Sidebar({ role }: { role?: string }) {
       visible: infra,
       items: [
         { href: "/admin/database", label: "Base de dados" },
+        { href: "/admin/volumes", label: "Volumes" },
         { href: "/admin/secrets", label: "Segredos" },
       ],
     },

@@ -90,6 +90,7 @@ type Docker interface {
 	PullImage(ctx context.Context, ref string) error
 	PullImageWithAuth(ctx context.Context, ref string, auth *dockerclient.RegistryAuth) error
 	ContainerStats(ctx context.Context, id string) (*dockerclient.Stats, error)
+	VolumesWithUsage(ctx context.Context) ([]dockerclient.Volume, error)
 }
 
 type Config struct {

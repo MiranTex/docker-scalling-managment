@@ -112,3 +112,20 @@ func (a *API) projectUsage(w http.ResponseWriter, r *http.Request, _ principal) 
 	}
 	writeJSON(w, http.StatusOK, u)
 }
+
+func (a *API) listVolumes(w http.ResponseWriter, r *http.Request, _ principal) {
+	vols, err := a.svc.ListVolumes(r.Context())
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, vols)
+}
+
+func (a *API) deleteVolume(w http.ResponseWriter, r *http.Request, _ principal) {
+	if err := a.svc.DeleteVolume(r.Context(), r.PathValue("name")); err != nil {
+		a.fail(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

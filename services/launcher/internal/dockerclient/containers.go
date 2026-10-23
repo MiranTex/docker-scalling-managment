@@ -24,6 +24,13 @@ type Container struct {
 	NetworkSettings struct {
 		Networks map[string]json.RawMessage `json:"Networks"`
 	} `json:"NetworkSettings"`
+	// Mounts: os volumes e binds do container -- é por aqui que se sabe
+	// quem usa um volume (ver internal/platform/volumes.go).
+	Mounts []struct {
+		Type        string `json:"Type"` // "volume", "bind", ...
+		Name        string `json:"Name"`
+		Destination string `json:"Destination"`
+	} `json:"Mounts"`
 }
 
 // PrimaryNetwork devolve o nome de uma das redes do container -- só faz
