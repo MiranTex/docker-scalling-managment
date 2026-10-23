@@ -9,6 +9,7 @@ import { api, envPath } from "@/lib/platformClient";
 import ConfirmModal from "../../../admin/database/ConfirmModal";
 import AddonsTab from "./AddonsTab";
 import JobsTab from "./JobsTab";
+import NetworkTab from "./NetworkTab";
 import SecretsTab from "./SecretsTab";
 import ServicesTab from "./ServicesTab";
 
@@ -17,6 +18,7 @@ const TABS = [
   { key: "addons", label: "Addons" },
   { key: "jobs", label: "Jobs" },
   { key: "secrets", label: "Segredos" },
+  { key: "network", label: "Redes" },
   { key: "settings", label: "Definições" },
 ] as const;
 
@@ -51,6 +53,7 @@ export default function EnvironmentClient({ project, env }: { project: string; e
         {tab === "addons" && <AddonsTab project={project} env={env} />}
         {tab === "jobs" && <JobsTab project={project} env={env} />}
         {tab === "secrets" && <SecretsTab project={project} env={env} />}
+        {tab === "network" && <NetworkTab project={project} env={env} />}
         {tab === "settings" && (
           <>
             <h2>Apagar ambiente</h2>

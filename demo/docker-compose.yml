@@ -365,6 +365,10 @@ services:
       # Onde escrever o routing dos serviços de projeto (o mesmo volume que
       # o Traefik lê, ver serviço "traefik").
       LAUNCHER_TRAEFIK_DYNAMIC_DIR: /etc/traefik/dynamic
+      # Container do Prometheus (services/monitoring) que o launcher liga a
+      # cada rede de ambiente, para recolher as métricas das apps sem as
+      # tirar da sua rede.
+      LAUNCHER_PROMETHEUS_CONTAINER: "${LAUNCHER_PROMETHEUS_CONTAINER:-monitoring-prometheus-1}"
       # IPs públicos deste host (separados por vírgula). Um domínio próprio
       # de um serviço só entra no routing quando o DNS dele resolve para um
       # destes. Vazio (dev) = sem verificação, o domínio fica logo ativo.

@@ -19,6 +19,8 @@ function toForm(s: Service, joinArgs: (a: string[]) => string) {
     maxReplicas: String(s.maxReplicas),
     cpuScaleUpPercent: String(s.cpuScaleUpPercent),
     cpuScaleDownPercent: String(s.cpuScaleDownPercent),
+    metricsPort: String(s.metricsPort || ""),
+    metricsPath: s.metricsPath,
   };
 }
 
@@ -78,6 +80,8 @@ export default function ServiceConfig({
           maxReplicas: Number(form.maxReplicas),
           cpuScaleUpPercent: Number(form.cpuScaleUpPercent),
           cpuScaleDownPercent: Number(form.cpuScaleDownPercent),
+          metricsPort: Number(form.metricsPort) || 0,
+          metricsPath: form.metricsPath.trim(),
         }),
       });
       setDirty(false);
@@ -122,7 +126,19 @@ export default function ServiceConfig({
           <label htmlFor="cfg-mem">Memória por réplica (MB)</label>
           <input id="cfg-mem" value={form.memoryMb} onChange={(e) => set("memoryMb", e.target.value)} />
         </div>
+        <div>
+          <label htmlFor="cfg-metrics-port">Porta de métricas (vazio = sem métricas)</label>
+          <input id="cfg-metrics-port" value={form.metricsPort} onChange={(e) => set("metricsPort", e.target.value)} placeholder="9100" />
+        </div>
+        <div>
+          <label htmlFor="cfg-metrics-path">Caminho de métricas</label>
+          <input id="cfg-metrics-path" value={form.metricsPath} onChange={(e) => set("metricsPath", e.target.value)} placeholder="/metrics" />
+        </div>
       </div>
+      <p className="muted">
+        Com porta de métricas, o Prometheus recolhe as métricas da app (formato Prometheus) e ficam no Grafana com as
+        labels project, env e project_service.
+      </p>
       <label htmlFor="cfg-cmd">Comando (vazio = o da imagem)</label>
       <input id="cfg-cmd" value={form.cmd} onChange={(e) => set("cmd", e.target.value)} placeholder="php artisan queue:work" />
       <label htmlFor="cfg-release">Release / migrations (corre antes de cada deploy; se falhar, o deploy pára)</label>

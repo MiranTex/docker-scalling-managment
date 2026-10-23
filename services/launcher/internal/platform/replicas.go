@@ -97,6 +97,18 @@ func replicaLabels(p store.Project, e store.Environment, svc store.Service, rev 
 	labels[dockerclient.LabelInstanceType] = "service"
 	labels[dockerclient.LabelVCPU] = strconv.FormatFloat(rev.VCPU, 'f', -1, 64)
 	labels[dockerclient.LabelMemoryMB] = strconv.FormatInt(rev.MemoryMB, 10)
+	// Convenção do services/monitoring: o Prometheus descobre os containers
+	// com estas labels e chega-lhes pelo nome, porque está ligado à rede do
+	// ambiente (ver attachPlatform).
+	if rev.MetricsPort > 0 {
+		labels["prometheus.scrape"] = "true"
+		labels["prometheus.port"] = strconv.Itoa(rev.MetricsPort)
+		path := rev.MetricsPath
+		if path == "" {
+			path = "/metrics"
+		}
+		labels["prometheus.path"] = path
+	}
 	return labels
 }
 

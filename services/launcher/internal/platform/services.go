@@ -33,6 +33,8 @@ type ServiceInput struct {
 	MaxReplicas          *int      `json:"maxReplicas"`
 	CPUScaleUpPercent    *float64  `json:"cpuScaleUpPercent"`
 	CPUScaleDownPercent  *float64  `json:"cpuScaleDownPercent"`
+	MetricsPort          *int      `json:"metricsPort"`
+	MetricsPath          *string   `json:"metricsPath"`
 }
 
 // apply copia os campos preenchidos para svc.
@@ -79,6 +81,12 @@ func (in ServiceInput) apply(svc *store.Service) {
 	if in.CPUScaleDownPercent != nil {
 		svc.CPUScaleDownPercent = *in.CPUScaleDownPercent
 	}
+	if in.MetricsPort != nil {
+		svc.MetricsPort = *in.MetricsPort
+	}
+	if in.MetricsPath != nil {
+		svc.MetricsPath = strings.TrimSpace(*in.MetricsPath)
+	}
 }
 
 func validateService(svc store.Service) error {
@@ -96,6 +104,12 @@ func validateService(svc store.Service) error {
 	}
 	if svc.HealthPath != "" && !strings.HasPrefix(svc.HealthPath, "/") {
 		return invalid("o health check tem de ser um caminho começado por \"/\" (ex: /healthz)")
+	}
+	if svc.MetricsPort < 0 || svc.MetricsPort > 65535 {
+		return invalid("porta de métricas entre 1 e 65535 (ou vazia, sem métricas)")
+	}
+	if svc.MetricsPath != "" && !strings.HasPrefix(svc.MetricsPath, "/") {
+		return invalid("o caminho de métricas tem de começar por \"/\" (ex: /metrics)")
 	}
 	if svc.HealthTimeoutSeconds < 10 || svc.HealthTimeoutSeconds > 900 {
 		return invalid("tempo limite do health check entre 10 e 900 segundos")

@@ -53,6 +53,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/projects/{project}/environments", admin(a.createEnvironment))
 	mux.HandleFunc("DELETE /v1/projects/{project}/environments/{env}", admin(a.deleteEnvironment))
 
+	mux.HandleFunc("GET /v1/projects/{project}/environments/{env}/network", admin(a.getNetwork))
 	mux.HandleFunc("GET /v1/projects/{project}/environments/{env}/secrets", admin(a.listSecrets))
 	mux.HandleFunc("PUT /v1/projects/{project}/environments/{env}/secrets/{name}", admin(a.putSecret))
 	mux.HandleFunc("DELETE /v1/projects/{project}/environments/{env}/secrets/{name}", admin(a.deleteSecret))
