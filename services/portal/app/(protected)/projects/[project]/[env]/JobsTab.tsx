@@ -18,6 +18,16 @@ export default function JobsTab({ project, env }: { project: string; env: string
     }
   }
 
+  async function cancel(id: string) {
+    if (!confirm("Cancelar este job? O container é parado de imediato.")) return;
+    try {
+      await api(envPath(project, env, "jobs", id, "cancel"), { method: "POST" });
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
   async function show(id: string) {
     try {
       setOpen(await api<Job>(envPath(project, env, "jobs", id)));
@@ -69,9 +79,16 @@ export default function JobsTab({ project, env }: { project: string; env: string
                 <td>{new Date(j.createdAt).toLocaleString("pt-PT")}</td>
                 <td>{j.createdBy}</td>
                 <td>
-                  <button className="secondary" onClick={() => show(j.id)}>
-                    Output
-                  </button>
+                  <div className="actions">
+                    <button className="secondary" onClick={() => show(j.id)}>
+                      Output
+                    </button>
+                    {j.status === "running" && (
+                      <button className="danger" onClick={() => cancel(j.id)}>
+                        Cancelar
+                      </button>
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}

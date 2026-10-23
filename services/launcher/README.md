@@ -134,7 +134,7 @@ auth com role `infra-admin` ou `super-admin`, ou um token de deploy
 | `POST .../services/{s}/run` | comando pontual com a revisão atual |
 | `GET`, `POST .../services/{s}/template-update` · `POST .../services/{s}/save-as-template` | diferenças/aplicar versão nova do modelo; guardar como modelo |
 | `GET`, `POST .../services/{s}/domains` · `POST .../domains/{h}/verify` · `DELETE .../domains/{h}` | domínios próprios |
-| `GET .../environments/{e}/jobs[/{id}]` | jobs e o seu output |
+| `GET .../environments/{e}/jobs[/{id}]` · `POST .../jobs/{id}/cancel` | jobs, o seu output, e cancelar um a correr |
 
 ## Configuração
 

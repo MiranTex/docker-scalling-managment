@@ -79,7 +79,7 @@ export type Job = {
   kind: string;
   image: string;
   cmd: string[];
-  status: "running" | "succeeded" | "failed";
+  status: "running" | "succeeded" | "failed" | "cancelled";
   exitCode?: number;
   output: string;
   addonId?: string;
@@ -97,6 +97,7 @@ export type Usage = { vcpu: number; memoryMb: number; containers: number };
 export function statusBadge(status: string): string {
   if (["running", "succeeded", "healthy", "active", "ready"].includes(status)) return "badge active";
   if (["starting", "pending", "pulling", "releasing", "deploying", "switching"].includes(status)) return "badge pending";
+  if (status === "cancelled") return "badge";
   return "badge failed";
 }
 

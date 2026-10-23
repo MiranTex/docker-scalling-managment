@@ -114,6 +114,7 @@ func (a *API) Register(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /v1/projects/{project}/environments/{env}/jobs", admin(a.listJobs))
 	mux.HandleFunc("GET /v1/projects/{project}/environments/{env}/jobs/{job}", admin(a.getJob))
+	mux.HandleFunc("POST /v1/projects/{project}/environments/{env}/jobs/{job}/cancel", admin(a.cancelJob))
 }
 
 // principal é quem fez o pedido: um utilizador (Subject = id da conta) ou

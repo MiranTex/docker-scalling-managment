@@ -35,6 +35,8 @@ type fakeDocker struct {
 	cpuPercent float64
 	// failCreateImage: criar um container desta imagem falha.
 	failCreateImage string
+	// blockWait: WaitContainer só volta quando o contexto acabar.
+	blockWait bool
 }
 
 func (f *fakeDocker) PullImageWithAuth(_ context.Context, ref string, auth *dockerclient.RegistryAuth) error {
@@ -161,7 +163,15 @@ func (f *fakeDocker) InspectContainer(_ context.Context, idOrName string) (*dock
 	return &info, nil
 }
 
-func (f *fakeDocker) WaitContainer(context.Context, string) (int, error) { return f.exitCode, nil }
+// WaitContainer devolve logo, a não ser que blockWait esteja ligado: aí
+// só volta quando o contexto acabar (um job que nunca termina sozinho).
+func (f *fakeDocker) WaitContainer(ctx context.Context, _ string) (int, error) {
+	if f.blockWait {
+		<-ctx.Done()
+		return -1, ctx.Err()
+	}
+	return f.exitCode, nil
+}
 
 func (f *fakeDocker) ContainerLogs(context.Context, string, int) (string, error) { return f.logs, nil }
 

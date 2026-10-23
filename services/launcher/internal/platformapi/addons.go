@@ -129,3 +129,11 @@ func (a *API) deleteVolume(w http.ResponseWriter, r *http.Request, _ principal) 
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+func (a *API) cancelJob(w http.ResponseWriter, r *http.Request, who principal) {
+	if err := a.svc.CancelJob(r.Context(), r.PathValue("project"), r.PathValue("env"), r.PathValue("job"), who.Subject); err != nil {
+		a.fail(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
