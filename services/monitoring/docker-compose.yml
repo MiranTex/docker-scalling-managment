@@ -32,6 +32,17 @@ networks:
   docker-api-ro:
     internal: true
 
+  # Grafana + quem pode dizer-lhe quem é o utilizador (o portal, que serve
+  # o Grafana em /grafana, e o launcher, que sincroniza organizações).
+  # O Grafana só aceita o cabeçalho de identidade vindo desta sub-rede
+  # (GF_AUTH_PROXY_WHITELIST), por isso nenhuma app lhe pode chegar aqui:
+  # sem label base-stack.managed, a rede não aparece no portal.
+  grafana-proxy:
+    name: grafana-proxy
+    ipam:
+      config:
+        - subnet: 172.31.250.0/24
+
 volumes:
   prometheus-data:
   loki-data:
@@ -126,6 +137,26 @@ services:
     mem_limit: 128m
     cpus: 0.3
 
+  # Prometheus filtrado por projeto: injeta project="<valor do cabeçalho
+  # X-Project>" em TODAS as consultas (incluindo listas de labels). As
+  # fontes de dados das organizações de projeto no Grafana apontam para
+  # aqui com esse cabeçalho fixo -- quem as usa nunca vê outro projeto.
+  prom-label-proxy:
+    restart: unless-stopped
+    image: quay.io/prometheuscommunity/prom-label-proxy:v0.11.1
+    command:
+      - -label=project
+      - -header-name=X-Project
+      - -upstream=http://prometheus:9090
+      - -insecure-listen-address=0.0.0.0:8080
+      - -enable-label-apis
+    depends_on:
+      - prometheus
+    networks:
+      - observability-net
+    mem_limit: 64m
+    cpus: 0.25
+
   grafana:
     # Volta a subir depois de um crash ou reboot do host; um "docker
     # compose stop" explícito continua a ser respeitado.
@@ -140,14 +171,40 @@ services:
       GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER:-admin}"
       GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:-admin}"
       GF_USERS_ALLOW_SIGN_UP: "false"
-    volumes:
-      - ./grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      # Login da plataforma: o portal serve o Grafana em /grafana e diz-lhe
+      # quem é o utilizador -- X-WEBAUTH-USER é o id da conta (confirmado
+      # pelo launcher a partir de um token verificado), e email/nome só para
+      # mostrar. Só vale vindo da rede grafana-proxy; o login com password
+      # (o admin acima) continua para emergências em localhost:3000/grafana.
+      GF_AUTH_PROXY_ENABLED: "true"
+      GF_AUTH_PROXY_HEADER_NAME: X-WEBAUTH-USER
+      GF_AUTH_PROXY_HEADER_PROPERTY: username
+      GF_AUTH_PROXY_HEADERS: "Email:X-WEBAUTH-EMAIL Name:X-WEBAUTH-NAME"
+      GF_AUTH_PROXY_AUTO_SIGN_UP: "true"
+      # A sub-rede grafana-proxy SEM o gateway (.1): os pedidos que chegam
+      # pela porta publicada no host aparecem com o IP do gateway, e esses
+      # não podem dizer quem é o utilizador -- senão qualquer processo
+      # desta máquina entrava como quem quisesse. Os containers têm .2+.
+      GF_AUTH_PROXY_WHITELIST: "172.31.250.2/31, 172.31.250.4/30, 172.31.250.8/29, 172.31.250.16/28, 172.31.250.32/27, 172.31.250.64/26, 172.31.250.128/25"
+      # Um utilizador novo cai na organização 1 ("Sem acesso", vazia); é o
+      # launcher quem o junta às organizações dos seus projetos.
+      GF_USERS_AUTO_ASSIGN_ORG: "true"
+      GF_USERS_AUTO_ASSIGN_ORG_ID: "1"
+      GF_USERS_AUTO_ASSIGN_ORG_ROLE: Viewer
+      GF_SERVER_ROOT_URL: "${GRAFANA_ROOT_URL:-http://localhost:3100/grafana/}"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      # Websockets não passam pelo proxy do portal.
+      GF_LIVE_MAX_CONNECTIONS: "0"
+    # Sem provisioning: fontes de dados e dashboards são criados por
+    # organização pelo launcher (internal/grafanasync) -- provisionados
+    # aqui iam para a organização 1, onde caem todos os utilizadores
+    # novos, e mostravam os dados de todos os projetos.
     ports:
       # Só a partir desta máquina, como o Prometheus e o Loki.
       - "127.0.0.1:3000:3000"
     networks:
       - observability-net
+      - grafana-proxy
     depends_on:
       - prometheus
       - loki

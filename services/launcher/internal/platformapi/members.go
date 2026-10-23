@@ -49,6 +49,7 @@ func (a *API) addMember(w http.ResponseWriter, r *http.Request, who principal) {
 		a.fail(w, err)
 		return
 	}
+	a.kickGrafana()
 	writeJSON(w, http.StatusCreated, m)
 }
 
@@ -64,6 +65,7 @@ func (a *API) setMemberRole(w http.ResponseWriter, r *http.Request, _ principal)
 		a.fail(w, err)
 		return
 	}
+	a.kickGrafana()
 	writeJSON(w, http.StatusOK, m)
 }
 
@@ -72,5 +74,6 @@ func (a *API) removeMember(w http.ResponseWriter, r *http.Request, _ principal) 
 		a.fail(w, err)
 		return
 	}
+	a.kickGrafana()
 	w.WriteHeader(http.StatusNoContent)
 }

@@ -93,6 +93,10 @@ type config struct {
 	// publicIPs: os IPs públicos do host, para verificar o DNS dos
 	// domínios próprios (LAUNCHER_PUBLIC_IPS, separados por vírgula).
 	publicIPs []string
+
+	// grafana: sincronização de organizações/membros com o Grafana (ver
+	// internal/grafanasync). GRAFANA_URL vazio desliga.
+	grafanaURL, grafanaUser, grafanaPassword, grafanaDashboards string
 }
 
 func loadConfig() config {
@@ -137,6 +141,11 @@ func loadConfig() config {
 
 		traefikDynamicDir: os.Getenv("LAUNCHER_TRAEFIK_DYNAMIC_DIR"),
 		publicIPs:         envList("LAUNCHER_PUBLIC_IPS"),
+
+		grafanaURL:        os.Getenv("GRAFANA_URL"),
+		grafanaUser:       envString("GRAFANA_ADMIN_USER", "admin"),
+		grafanaPassword:   os.Getenv("GRAFANA_ADMIN_PASSWORD"),
+		grafanaDashboards: envString("LAUNCHER_GRAFANA_DASHBOARDS_DIR", "/etc/base-stack/dashboards"),
 	}
 	if cfg.selfContainer == "" {
 		cfg.selfContainer, _ = os.Hostname()

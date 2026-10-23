@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { hasInfraAdminAccess } from "@/lib/roles";
 
-type Item = { href: string; label: string; prefix?: boolean };
+type Item = { href: string; label: string; prefix?: boolean; external?: boolean };
 type Group = { title: string; items: Item[]; visible: boolean; collapsible?: boolean };
 
 // LEGACY_KEY guarda se o grupo "Legado" está aberto -- só conveniência
@@ -29,7 +29,12 @@ export default function Sidebar({ role }: { role?: string }) {
       // Toda a conta: cada uma vê os projetos de que é membro.
       title: "Plataforma",
       visible: true,
-      items: [{ href: "/projects", label: "Projetos", prefix: true }],
+      items: [
+        { href: "/projects", label: "Projetos", prefix: true },
+        // Servido pelo portal (app/grafana): cada conta vê as organizações
+        // dos seus projetos.
+        { href: "/grafana/", label: "Métricas e logs", external: true },
+      ],
     },
     {
       title: "Dados",
@@ -98,11 +103,17 @@ export default function Sidebar({ role }: { role?: string }) {
                   <div className="nav-group">{g.title}</div>
                 )}
                 {open &&
-                  g.items.map((i) => (
-                    <Link key={i.href} href={i.href} className={isActive(i) ? "active" : ""}>
-                      {i.label}
-                    </Link>
-                  ))}
+                  g.items.map((i) =>
+                    i.external ? (
+                      <a key={i.href} href={i.href} target="_blank" rel="noreferrer">
+                        {i.label} ↗
+                      </a>
+                    ) : (
+                      <Link key={i.href} href={i.href} className={isActive(i) ? "active" : ""}>
+                        {i.label}
+                      </Link>
+                    ),
+                  )}
               </div>
             );
           })}

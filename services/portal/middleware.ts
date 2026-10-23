@@ -54,5 +54,6 @@ export const config = {
     "/api/tokens/:path*",
     "/api/admin/:path*",
     "/api/platform/:path*",
+    "/grafana/:path*",
   ],
 };

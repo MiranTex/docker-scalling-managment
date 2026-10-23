@@ -31,10 +31,30 @@ própria, ou guarda dados de todos os projetos): Prometheus `9091`, Loki
 Grafana `3000`. Num servidor, acede-se por túnel SSH
 (`ssh -L 3000:127.0.0.1:3000 servidor`).
 
-O Grafana pede login: utilizador `GRAFANA_ADMIN_USER` (por defeito
-`admin`) e password `GRAFANA_ADMIN_PASSWORD` (por defeito `admin`, só para
-dev -- define uma a sério fora disso). Por agora quem entra vê os dados de
-todos os projetos; o acesso por projeto vem com os membros de projeto.
+**Grafana com o login da plataforma.** Entra-se pelo portal, em
+`/grafana` ("Métricas e logs" no menu), sem segunda password. O portal diz
+ao Grafana quem é o utilizador (modo *auth proxy*), e o Grafana só aceita
+essa identidade vinda da rede `grafana-proxy` (portal e launcher; o gateway
+fica de fora, por isso nem os processos desta máquina a conseguem forjar).
+
+Cada projeto é uma **organização** no Grafana, só com os dados desse
+projeto, e a organização **Plataforma** tem tudo (só para admins da
+plataforma). Quem é membro de um projeto entra na organização dele como
+Viewer (viewer) ou Editor (developer/admin). O launcher mantém isto
+sincronizado (ver `services/launcher/internal/grafanasync`). O isolamento é
+feito nos dados, não só na interface:
+
+- **métricas:** as organizações de projeto leem o Prometheus pelo
+  `prom-label-proxy`, que injeta `project="<slug>"` em todas as consultas;
+- **logs:** o Loki é multi-tenant e o Promtail põe os logs de cada projeto
+  no tenant desse projeto (o resto vai para `platform`).
+
+As fontes de dados e os dashboards de cada organização são criados pelo
+launcher (já não há provisioning); os JSON vêm de `grafana/dashboards`.
+
+**Acesso de emergência:** `http://localhost:3000/grafana/` com
+`GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD` (por defeito `admin`/`admin`,
+só para dev). O launcher usa estas mesmas credenciais para sincronizar.
 
 ## Como um projeto novo aparece aqui
 

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import Breadcrumbs from "@/components/Breadcrumbs";
 import Modal from "@/components/Modal";
+import GrafanaLink from "@/components/GrafanaLink";
 import PageHeader from "@/components/PageHeader";
 import TabBar, { useActiveTab } from "@/components/TabBar";
 import { api, projectPath, type ProjectDetail } from "@/lib/platformClient";
@@ -91,7 +92,11 @@ export default function ProjectClient({ project }: { project: string }) {
   return (
     <>
       <Breadcrumbs items={[{ label: "Projetos", href: "/projects" }, { label: detail.slug }]} />
-      <PageHeader title={detail.name} description={`${detail.environments.length} ambiente(s)`} />
+      <PageHeader
+        title={detail.name}
+        description={`${detail.environments.length} ambiente(s)`}
+        actions={<GrafanaLink project={project} />}
+      />
       {error && <div className="error">{error}</div>}
       <TabBar tabs={TABS} active={tab} />
 

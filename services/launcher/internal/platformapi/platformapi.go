@@ -41,6 +41,7 @@ const platformScope = "platform"
 // internal/authusers). nil desliga adicionar membros por email.
 type Users interface {
 	Resolve(ctx context.Context, bearer, email string) (id, canonicalEmail string, err error)
+	Me(ctx context.Context, bearer string) (id, email, role string, err error)
 }
 
 type API struct {
@@ -48,6 +49,7 @@ type API struct {
 	tokens  TokenVerifier
 	apiKeys APIKeys
 	users   Users
+	grafana Grafana
 	logger  *slog.Logger
 }
 
@@ -79,6 +81,8 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /v1/projects/{project}", platformAdmin(a.updateProject))
 	mux.HandleFunc("DELETE /v1/projects/{project}", platformAdmin(a.deleteProject))
 	mux.HandleFunc("GET /v1/projects/{project}/usage", viewer(a.projectUsage))
+	mux.HandleFunc("GET /v1/projects/{project}/grafana", viewer(a.projectGrafana))
+	mux.HandleFunc("POST /v1/grafana/session", a.requireUser(a.grafanaSession))
 
 	mux.HandleFunc("GET /v1/projects/{project}/members", viewer(a.listMembers))
 	mux.HandleFunc("POST /v1/projects/{project}/members", admin(a.addMember))

@@ -131,6 +131,7 @@ func (h *Handler) Routes() *http.ServeMux {
 	mux.HandleFunc("GET /v1/api-keys", h.requireAuth(h.handleListAPIKeys))
 	mux.HandleFunc("DELETE /v1/api-keys/{id}", h.requireAuth(h.handleRevokeAPIKey))
 	mux.HandleFunc("POST /v1/users/resolve", h.requireAuth(h.handleResolveUser))
+	mux.HandleFunc("GET /v1/me", h.requireAuth(h.handleMe))
 	// Gestão de utilizadores -- só super-admin. Criar/listar contas e
 	// atribuir role são ações administrativas, não algo que qualquer
 	// sessão autenticada deva conseguir fazer.
@@ -661,6 +662,29 @@ func (h *Handler) handleCreateAPIKey(w http.ResponseWriter, r *http.Request, use
 // handleListAPIKeys devolve as chaves do utilizador autenticado ("as
 // minhas chaves") -- nunca o segredo em si, só o suficiente para
 // reconhecer e revogar cada uma.
+type meResponse struct {
+	ID    string `json:"id"`
+	Email string `json:"email"`
+	Role  string `json:"role"`
+}
+
+// handleMe devolve a conta de quem pede, lida agora (a role pode ter
+// mudado desde que o access token foi emitido). O launcher usa-a para dar
+// ao Grafana o email de quem entra -- o portal não tem um email em que se
+// possa confiar (o cookie dele é legível e editável pelo browser).
+func (h *Handler) handleMe(w http.ResponseWriter, r *http.Request, userID string) {
+	user, found, err := h.users.FindUserByID(r.Context(), userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "erro lendo a conta")
+		return
+	}
+	if !found {
+		writeError(w, http.StatusNotFound, "not_found", "conta não encontrada")
+		return
+	}
+	writeJSON(w, http.StatusOK, meResponse{ID: user.ID, Email: user.Email, Role: user.Role})
+}
+
 type resolveUserRequest struct {
 	Email string `json:"email"`
 }

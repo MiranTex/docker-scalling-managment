@@ -7,6 +7,9 @@ positions:
 
 clients:
   - url: http://loki:3100/loki/api/v1/push
+    # Tenant por defeito: tudo o que não é de um projeto (plataforma,
+    # monitoring, outras apps do host). Ver pipeline_stages abaixo.
+    tenant_id: platform
 
 scrape_configs:
   # docker_sd_configs descobre automaticamente TODOS os containers Docker
@@ -57,3 +60,8 @@ scrape_configs:
         regex: "^;(.*)$"
         target_label: "compose_service"
         replacement: "${1}"
+    # Os logs de um container de projeto vão para o tenant desse projeto
+    # (o slug), para o Grafana de um projeto só conseguir ler os seus.
+    pipeline_stages:
+      - tenant:
+          label: project
