@@ -6,6 +6,7 @@ import Modal from "@/components/Modal";
 import PageHeader from "@/components/PageHeader";
 import { api, formatSpecValue, projectPath, SPEC_LABELS, type TemplateDetail, type TemplateVersion } from "@/lib/platformClient";
 import SpecForm, { specFormFrom, specFromForm, type SpecFormState } from "../SpecForm";
+import { useCan } from "@/lib/projectRole";
 
 // Resumo de uma versão: só os campos com valor, para a lista não ficar
 // enorme.
@@ -34,6 +35,7 @@ function SpecSummary({ v }: { v: TemplateVersion }) {
 }
 
 export default function TemplateClient({ project, template }: { project: string; template: string }) {
+  const canEdit = useCan("developer");
   const [detail, setDetail] = useState<TemplateDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
@@ -107,7 +109,8 @@ export default function TemplateClient({ project, template }: { project: string;
         description={detail?.description || "Cada versão é imutável. Os serviços criados a partir deste modelo mostram quando há uma versão nova."}
         actions={
           detail &&
-          !detail.archivedAt && (
+          !detail.archivedAt &&
+          canEdit && (
             <>
               <button className="primary" onClick={newVersion}>
                 Nova versão

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import Modal from "@/components/Modal";
+import { useCan } from "@/lib/projectRole";
 import {
   api,
   formatSpecValue,
@@ -25,6 +26,7 @@ export default function TemplateCard({
   service: Service;
   onChanged: () => void;
 }) {
+  const canEdit = useCan("developer");
   const ref = service.template;
   const [update, setUpdate] = useState<TemplateUpdate | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -107,12 +109,12 @@ export default function TemplateCard({
           )}
         </p>
         <div className="actions">
-          {hasUpdate && (
+          {hasUpdate && canEdit && (
             <button className="primary" onClick={showDiff}>
               v{ref!.latestVersion} disponível · ver diferenças
             </button>
           )}
-          <button className="secondary" onClick={() => setSaveOpen(true)} disabled={!service.currentRevision}>
+          <button className="secondary" onClick={() => setSaveOpen(true)} disabled={!service.currentRevision || !canEdit}>
             Guardar como modelo
           </button>
         </div>

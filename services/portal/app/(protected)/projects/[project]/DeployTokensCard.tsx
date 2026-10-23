@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api, projectPath, type DeployToken, type Environment } from "@/lib/platformClient";
+import { useCan } from "@/lib/projectRole";
 
 export default function DeployTokensCard({
   project,
@@ -12,6 +13,7 @@ export default function DeployTokensCard({
   environments: Environment[];
   apiUrl?: string;
 }) {
+  const canEdit = useCan("developer");
   const [tokens, setTokens] = useState<DeployToken[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState("");
@@ -105,9 +107,11 @@ export default function DeployTokensCard({
                   {t.revokedAt ? (
                     <span className="badge revoked">revogado</span>
                   ) : (
+                    canEdit && (
                     <button className="danger" onClick={() => revoke(t.id)}>
                       Revogar
                     </button>
+                    )
                   )}
                 </td>
               </tr>
@@ -115,7 +119,9 @@ export default function DeployTokensCard({
           </tbody>
         </table>
       )}
-      <div className="form-grid">
+      {canEdit && (
+        <>
+<div className="form-grid">
         <div>
           <label htmlFor="tok-name">Nome</label>
           <input id="tok-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="github-actions" />
@@ -135,6 +141,8 @@ export default function DeployTokensCard({
       <button className="secondary" disabled={!name.trim()} onClick={create}>
         Criar token
       </button>
+        </>
+      )}
     </div>
   );
 }

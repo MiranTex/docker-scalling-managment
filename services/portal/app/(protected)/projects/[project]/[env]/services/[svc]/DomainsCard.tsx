@@ -2,8 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { api, servicePath, statusBadge, type Domain } from "@/lib/platformClient";
+import { useCan } from "@/lib/projectRole";
 
 export default function DomainsCard({ project, env, svc }: { project: string; env: string; svc: string }) {
+  const canEdit = useCan("developer");
   const [domains, setDomains] = useState<Domain[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [hostname, setHostname] = useState("");
@@ -91,7 +93,7 @@ export default function DomainsCard({ project, env, svc }: { project: string; en
                   {d.error && <div className="muted">{d.error}</div>}
                 </td>
                 <td>
-                  <div className="actions">
+                  {canEdit && <div className="actions">
                     {d.status !== "active" && (
                       <button className="secondary" onClick={() => verify(d.hostname)}>
                         Verificar agora
@@ -100,7 +102,7 @@ export default function DomainsCard({ project, env, svc }: { project: string; en
                     <button className="danger" onClick={() => remove(d.hostname)}>
                       Remover
                     </button>
-                  </div>
+                  </div>}
                 </td>
               </tr>
             ))}
@@ -124,12 +126,14 @@ export default function DomainsCard({ project, env, svc }: { project: string; en
           </ul>
         </div>
       )}
+      {canEdit && (
       <div className="row">
         <input value={hostname} onChange={(e) => setHostname(e.target.value)} placeholder="loja.pt" />
         <button className="secondary" disabled={!hostname.trim()} onClick={add}>
           Adicionar
         </button>
       </div>
+      )}
     </div>
   );
 }

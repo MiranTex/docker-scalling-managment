@@ -4,10 +4,12 @@ import { useEffect, useState } from "react";
 import Modal from "@/components/Modal";
 import { api, envPath, formatBytes, statusBadge, type Addon, type Backup } from "@/lib/platformClient";
 import ConfirmModal from "../../../admin/database/ConfirmModal";
+import { useCan } from "@/lib/projectRole";
 
 const EMPTY = { slug: "", kind: "postgres", envVar: "", vcpu: "", memoryMb: "" };
 
 export default function AddonsTab({ project, env }: { project: string; env: string }) {
+  const canEdit = useCan("developer");
   const [addons, setAddons] = useState<Addon[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -123,9 +125,11 @@ export default function AddonsTab({ project, env }: { project: string; env: stri
         Cada addon é um container próprio deste ambiente, com volume próprio. A URL de ligação fica como segredo gerido
         (ex: <code>DATABASE_URL</code>) e é injetada em todos os serviços do ambiente.
       </p>
+        {canEdit && (
         <button className="primary" onClick={() => setOpen(true)}>
           Novo addon
         </button>
+        )}
       </div>
       {!open && error && <div className="error">{error}</div>}
       {notice && <div className="notice">{notice}</div>}
@@ -167,15 +171,17 @@ export default function AddonsTab({ project, env }: { project: string; env: stri
                   {a.kind === "postgres" ? (
                     <>
                       <label className="checkbox">
-                        <input type="checkbox" checked={a.backupEnabled} onChange={() => toggleBackups(a)} /> diário
+                        <input type="checkbox" checked={a.backupEnabled} disabled={!canEdit} onChange={() => toggleBackups(a)} /> diário
                       </label>
                       <div className="muted">
                         último: {a.lastBackupAt ? new Date(a.lastBackupAt).toLocaleString("pt-PT") : "nunca"}
                       </div>
                       <div className="actions">
-                        <button className="secondary" onClick={() => backupNow(a)}>
-                          Backup agora
-                        </button>
+                        {canEdit && (
+                          <button className="secondary" onClick={() => backupNow(a)}>
+                            Backup agora
+                          </button>
+                        )}
                         <button className="secondary" onClick={() => loadBackups(a)}>
                           Ver backups
                         </button>
@@ -186,9 +192,11 @@ export default function AddonsTab({ project, env }: { project: string; env: stri
                           {backups[a.slug].map((b) => (
                             <li key={b.file}>
                               <code>{b.file}</code> ({formatBytes(b.size)}){" "}
-                              <button className="danger" onClick={() => setRestoreTarget({ addon: a.slug, file: b.file })}>
-                                Repor
-                              </button>
+                              {canEdit && (
+                                <button className="danger" onClick={() => setRestoreTarget({ addon: a.slug, file: b.file })}>
+                                  Repor
+                                </button>
+                              )}
                             </li>
                           ))}
                         </ul>
@@ -199,9 +207,11 @@ export default function AddonsTab({ project, env }: { project: string; env: stri
                   )}
                 </td>
                 <td>
+                  {canEdit && (
                   <button className="danger" onClick={() => setDeleteTarget(a)}>
                     Apagar
                   </button>
+                  )}
                 </td>
               </tr>
             ))}

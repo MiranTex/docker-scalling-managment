@@ -1134,3 +1134,24 @@ func TestResendVerificationIssuesNewTokenForUnverifiedAccount(t *testing.T) {
 		t.Fatal("resend devia ter emitido um token novo")
 	}
 }
+
+func TestResolveUser(t *testing.T) {
+	deps := newTestDeps()
+	mux := deps.handler.Routes()
+	access := loginAndGetAccessToken(t, mux, "ana@example.test")
+	loginAndGetAccessToken(t, mux, "rui@example.test")
+
+	rec := doAuthedRequest(t, mux, http.MethodPost, "/v1/users/resolve", access, resolveUserRequest{Email: "  RUI@example.test "})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if got := decodeBody[resolveUserResponse](t, rec); got.Email != "rui@example.test" || got.ID == "" {
+		t.Errorf("resolve = %+v", got)
+	}
+	if rec := doAuthedRequest(t, mux, http.MethodPost, "/v1/users/resolve", access, resolveUserRequest{Email: "ninguem@example.test"}); rec.Code != http.StatusNotFound {
+		t.Errorf("email sem conta = %d", rec.Code)
+	}
+	if rec := doRequest(t, mux, http.MethodPost, "/v1/users/resolve", resolveUserRequest{Email: "rui@example.test"}); rec.Code != http.StatusUnauthorized {
+		t.Errorf("sem sessão = %d", rec.Code)
+	}
+}

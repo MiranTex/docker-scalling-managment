@@ -22,7 +22,14 @@ export type Environment = {
   createdBy: string;
 };
 
-export type ProjectDetail = Project & { environments: Environment[]; apiUrl?: string };
+export type ProjectDetail = Project & {
+  environments: Environment[];
+  apiUrl?: string;
+  // O que quem pede pode fazer neste projeto (ver lib/projectRole.tsx).
+  myRole?: "platform-admin" | "admin" | "developer" | "viewer";
+};
+
+export type Member = { userId: string; email: string; role: "viewer" | "developer" | "admin"; addedAt: string; addedBy: string };
 
 export type EnvSecret = {
   name: string;

@@ -6,7 +6,7 @@ import Modal from "@/components/Modal";
 import PageHeader from "@/components/PageHeader";
 import { api, type Project } from "@/lib/platformClient";
 
-export default function ProjectsClient() {
+export default function ProjectsClient({ canCreate }: { canCreate: boolean }) {
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [listError, setListError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -55,9 +55,11 @@ export default function ProjectsClient() {
         title="Projetos"
         description="Cada projeto tem ambientes isolados (rede, segredos, serviços e bases de dados próprios). Nada é partilhado entre projetos."
         actions={
+          canCreate && (
           <button className="primary" onClick={openCreate}>
             Novo projeto
           </button>
+          )
         }
       />
 
@@ -66,7 +68,7 @@ export default function ProjectsClient() {
         {!projects ? (
           <p className="muted">A carregar...</p>
         ) : projects.length === 0 ? (
-          <p className="muted">Nenhum projeto ainda.</p>
+          <p className="muted">{canCreate ? "Nenhum projeto ainda." : "Ainda não és membro de nenhum projeto -- pede a um administrador que te adicione."}</p>
         ) : (
           <table>
             <thead>

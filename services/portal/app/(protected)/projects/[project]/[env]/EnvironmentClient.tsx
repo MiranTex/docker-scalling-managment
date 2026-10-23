@@ -12,8 +12,9 @@ import JobsTab from "./JobsTab";
 import NetworkTab from "./NetworkTab";
 import SecretsTab from "./SecretsTab";
 import ServicesTab from "./ServicesTab";
+import { useCan } from "@/lib/projectRole";
 
-const TABS = [
+const ALL_TABS = [
   { key: "services", label: "Serviços" },
   { key: "addons", label: "Addons" },
   { key: "jobs", label: "Jobs" },
@@ -24,6 +25,8 @@ const TABS = [
 
 export default function EnvironmentClient({ project, env }: { project: string; env: string }) {
   const router = useRouter();
+  const isAdmin = useCan("admin");
+  const TABS = ALL_TABS.filter((t) => t.key !== "settings" || isAdmin);
   const tab = useActiveTab(TABS);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [purge, setPurge] = useState(false);

@@ -5,8 +5,10 @@ import { useEffect, useState } from "react";
 import Modal from "@/components/Modal";
 import { api, projectPath, type Template } from "@/lib/platformClient";
 import SpecForm, { emptySpecForm, specFromForm } from "./templates/SpecForm";
+import { useCan } from "@/lib/projectRole";
 
 export default function TemplatesTab({ project }: { project: string }) {
+  const canEdit = useCan("developer");
   const [list, setList] = useState<Template[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
@@ -58,9 +60,11 @@ export default function TemplatesTab({ project }: { project: string }) {
           Configurações reutilizáveis para criar serviços neste projeto. Cada gravação cria uma versão nova; os serviços
           já criados não mudam sozinhos.
         </p>
+        {canEdit && (
         <button className="primary" onClick={() => setOpen(true)}>
           Novo modelo
         </button>
+        )}
       </div>
       {!open && error && <div className="error">{error}</div>}
       {!list ? (

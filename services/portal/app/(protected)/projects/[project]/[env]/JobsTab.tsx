@@ -3,8 +3,10 @@
 import { useEffect, useState } from "react";
 import Modal from "@/components/Modal";
 import { api, envPath, statusBadge, type Job } from "@/lib/platformClient";
+import { useCan } from "@/lib/projectRole";
 
 export default function JobsTab({ project, env }: { project: string; env: string }) {
+  const canEdit = useCan("developer");
   const [jobs, setJobs] = useState<Job[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<Job | null>(null);
@@ -83,7 +85,7 @@ export default function JobsTab({ project, env }: { project: string; env: string
                     <button className="secondary" onClick={() => show(j.id)}>
                       Output
                     </button>
-                    {j.status === "running" && (
+                    {j.status === "running" && canEdit && (
                       <button className="danger" onClick={() => cancel(j.id)}>
                         Cancelar
                       </button>

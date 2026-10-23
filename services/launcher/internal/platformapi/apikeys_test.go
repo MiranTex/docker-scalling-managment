@@ -31,7 +31,7 @@ func TestPersonalAPIKeysOnPlatformAPI(t *testing.T) {
 		"ak_revogada":  {Active: false},
 	}
 	mux := http.NewServeMux()
-	New(svc, adminTokens{}, keys, nil).Register(mux)
+	New(svc, adminTokens{}, keys, nil, nil).Register(mux)
 
 	cases := []struct {
 		token, slug string
@@ -57,7 +57,7 @@ func TestPersonalAPIKeysOnPlatformAPI(t *testing.T) {
 
 	// Sem cliente de API keys, um ak_ é simplesmente recusado.
 	mux = http.NewServeMux()
-	New(svc, adminTokens{}, nil, nil).Register(mux)
+	New(svc, adminTokens{}, nil, nil, nil).Register(mux)
 	if rec := call(t, mux, "GET", "/v1/projects", "ak_ok", nil); rec.Code != http.StatusUnauthorized {
 		t.Errorf("sem cliente de API keys = %d", rec.Code)
 	}
