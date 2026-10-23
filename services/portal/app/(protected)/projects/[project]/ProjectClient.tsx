@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { api, projectPath, type ProjectDetail } from "@/lib/platformClient";
 import ConfirmModal from "../../admin/database/ConfirmModal";
+import DeployTokensCard from "./DeployTokensCard";
 import RegistriesCard from "./RegistriesCard";
 
 export default function ProjectClient({ project }: { project: string }) {
@@ -107,6 +108,7 @@ export default function ProjectClient({ project }: { project: string }) {
         </button>
       </div>
 
+      <DeployTokensCard project={project} environments={detail.environments} apiUrl={detail.apiUrl} />
       <RegistriesCard project={project} />
 
       <div className="card wide">

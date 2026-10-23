@@ -41,6 +41,8 @@ func New(svc *platform.Service, tokens TokenVerifier, logger *slog.Logger) *API 
 // launcher continuar a servir tudo na mesma porta.
 func (a *API) Register(mux *http.ServeMux) {
 	admin := a.requireAdmin
+	// deployer aceita também um token de deploy (CI) do projeto do URL.
+	deployer := a.requireAdminOrDeployToken
 
 	mux.HandleFunc("GET /v1/projects", admin(a.listProjects))
 	mux.HandleFunc("POST /v1/projects", admin(a.createProject))
@@ -70,7 +72,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	const svc = services + "/{svc}"
 	mux.HandleFunc("GET "+services, admin(a.listServices))
 	mux.HandleFunc("POST "+services, admin(a.createService))
-	mux.HandleFunc("GET "+svc, admin(a.getService))
+	mux.HandleFunc("GET "+svc, deployer(a.getService))
 	mux.HandleFunc("PATCH "+svc, admin(a.updateService))
 	mux.HandleFunc("DELETE "+svc, admin(a.deleteService))
 	mux.HandleFunc("POST "+svc+"/stop", admin(a.setServiceState("stopped")))
@@ -78,9 +80,13 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+svc+"/revisions", admin(a.listRevisions))
 	mux.HandleFunc("GET "+svc+"/replicas", admin(a.listReplicas))
 	mux.HandleFunc("POST "+svc+"/run", admin(a.runCommand))
-	mux.HandleFunc("GET "+svc+"/deployments", admin(a.listDeployments))
-	mux.HandleFunc("POST "+svc+"/deployments", admin(a.createDeployment))
-	mux.HandleFunc("GET "+svc+"/deployments/{deployment}", admin(a.getDeployment))
+	mux.HandleFunc("GET "+svc+"/deployments", deployer(a.listDeployments))
+	mux.HandleFunc("POST "+svc+"/deployments", deployer(a.createDeployment))
+	mux.HandleFunc("GET "+svc+"/deployments/{deployment}", deployer(a.getDeployment))
+
+	mux.HandleFunc("GET /v1/projects/{project}/deploy-tokens", admin(a.listDeployTokens))
+	mux.HandleFunc("POST /v1/projects/{project}/deploy-tokens", admin(a.createDeployToken))
+	mux.HandleFunc("DELETE /v1/projects/{project}/deploy-tokens/{token}", admin(a.revokeDeployToken))
 
 	mux.HandleFunc("GET /v1/projects/{project}/registries", admin(a.listRegistries))
 	mux.HandleFunc("PUT /v1/projects/{project}/registries/{registry}", admin(a.putRegistry))
@@ -90,7 +96,8 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/projects/{project}/environments/{env}/jobs/{job}", admin(a.getJob))
 }
 
-// principal é quem fez o pedido.
+// principal é quem fez o pedido: um utilizador (Subject = id da conta) ou
+// um token de deploy (Subject = "deploy-token:<nome>").
 type principal struct {
 	Subject string
 }
@@ -124,6 +131,31 @@ func (a *API) requireAdmin(next handlerFunc) http.HandlerFunc {
 			return
 		}
 		next(w, r, principal{Subject: claims.Subject})
+	}
+}
+
+// requireAdminOrDeployToken: um token "bsd_..." é validado contra o
+// projeto/ambiente do próprio URL; qualquer outro bearer segue o caminho
+// normal de requireAdmin.
+func (a *API) requireAdminOrDeployToken(next handlerFunc) http.HandlerFunc {
+	admin := a.requireAdmin(next)
+	return func(w http.ResponseWriter, r *http.Request) {
+		token := bearer(r)
+		if !strings.HasPrefix(token, platform.DeployTokenPrefix) {
+			admin(w, r)
+			return
+		}
+		t, err := a.svc.AuthorizeDeployToken(r.Context(), token, r.PathValue("project"), r.PathValue("env"))
+		switch {
+		case errors.Is(err, platform.ErrUnauthorized):
+			writeError(w, http.StatusUnauthorized, "invalid_token", err.Error())
+		case errors.Is(err, platform.ErrForbidden):
+			writeError(w, http.StatusForbidden, "forbidden", err.Error())
+		case err != nil:
+			a.fail(w, err)
+		default:
+			next(w, r, principal{Subject: "deploy-token:" + t.Name})
+		}
 	}
 }
 

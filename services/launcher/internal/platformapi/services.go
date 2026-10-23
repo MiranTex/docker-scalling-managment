@@ -1,9 +1,12 @@
 package platformapi
 
 import (
+	"context"
 	"net/http"
+	"time"
 
 	"launcher/internal/platform"
+	"launcher/internal/store"
 )
 
 func svcPath(r *http.Request) (string, string, string) {
@@ -116,6 +119,9 @@ func (a *API) getDeployment(w http.ResponseWriter, r *http.Request, _ principal)
 	writeJSON(w, http.StatusOK, dep)
 }
 
+// createDeployment devolve 202 logo, com o deploy a correr. Com ?wait=true
+// fica à espera do fim: 200 se correu bem, 422 se falhou -- assim um CI faz
+// tudo com um só `curl --fail`.
 func (a *API) createDeployment(w http.ResponseWriter, r *http.Request, who principal) {
 	var in platform.DeployInput
 	if !decode(w, r, &in) {
@@ -127,7 +133,65 @@ func (a *API) createDeployment(w http.ResponseWriter, r *http.Request, who princ
 		a.fail(w, err)
 		return
 	}
-	writeJSON(w, http.StatusAccepted, dep)
+	if r.URL.Query().Get("wait") != "true" {
+		writeJSON(w, http.StatusAccepted, dep)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), maxDeployWait)
+	defer cancel()
+	tick := time.NewTicker(2 * time.Second)
+	defer tick.Stop()
+	for dep.FinishedAt == nil {
+		select {
+		case <-ctx.Done():
+			writeJSON(w, http.StatusGatewayTimeout, dep)
+			return
+		case <-tick.C:
+		}
+		if dep, err = a.svc.GetDeployment(ctx, p, e, s, dep.ID); err != nil {
+			a.fail(w, err)
+			return
+		}
+	}
+	status := http.StatusOK
+	if dep.Status != store.DeploySucceeded {
+		status = http.StatusUnprocessableEntity
+	}
+	writeJSON(w, status, dep)
+}
+
+// maxDeployWait: um deploy com migration lenta + health checks pode
+// demorar, mas um CI não deve ficar pendurado para sempre.
+const maxDeployWait = 30 * time.Minute
+
+func (a *API) listDeployTokens(w http.ResponseWriter, r *http.Request, _ principal) {
+	tokens, err := a.svc.ListDeployTokens(r.Context(), r.PathValue("project"))
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, tokens)
+}
+
+func (a *API) createDeployToken(w http.ResponseWriter, r *http.Request, who principal) {
+	var in platform.CreateDeployTokenInput
+	if !decode(w, r, &in) {
+		return
+	}
+	t, err := a.svc.CreateDeployToken(r.Context(), r.PathValue("project"), in, who.Subject)
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, t)
+}
+
+func (a *API) revokeDeployToken(w http.ResponseWriter, r *http.Request, _ principal) {
+	if err := a.svc.RevokeDeployToken(r.Context(), r.PathValue("project"), r.PathValue("token")); err != nil {
+		a.fail(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (a *API) runCommand(w http.ResponseWriter, r *http.Request, who principal) {
