@@ -241,3 +241,48 @@ func (a *API) deleteRegistry(w http.ResponseWriter, r *http.Request, _ principal
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+func (a *API) listDomains(w http.ResponseWriter, r *http.Request, _ principal) {
+	p, e, s := svcPath(r)
+	domains, err := a.svc.ListDomains(r.Context(), p, e, s)
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, domains)
+}
+
+func (a *API) addDomain(w http.ResponseWriter, r *http.Request, who principal) {
+	var in struct {
+		Hostname string `json:"hostname"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	p, e, s := svcPath(r)
+	d, err := a.svc.AddDomain(r.Context(), p, e, s, in.Hostname, who.Subject)
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, d)
+}
+
+func (a *API) verifyDomain(w http.ResponseWriter, r *http.Request, _ principal) {
+	p, e, s := svcPath(r)
+	d, err := a.svc.VerifyDomain(r.Context(), p, e, s, r.PathValue("hostname"))
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, d)
+}
+
+func (a *API) deleteDomain(w http.ResponseWriter, r *http.Request, _ principal) {
+	p, e, s := svcPath(r)
+	if err := a.svc.DeleteDomain(r.Context(), p, e, s, r.PathValue("hostname")); err != nil {
+		a.fail(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

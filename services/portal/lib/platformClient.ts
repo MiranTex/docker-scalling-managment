@@ -218,3 +218,14 @@ export type DeployToken = {
   lastUsedAt?: string;
   revokedAt?: string;
 };
+
+export type Domain = {
+  hostname: string;
+  status: "pending" | "active" | "failed";
+  error?: string;
+  checkedAt?: string;
+  verifiedAt?: string;
+  createdAt: string;
+  expectedIps: string[];
+  expectedCname?: string;
+};

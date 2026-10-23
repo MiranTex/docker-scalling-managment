@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"regexp"
 	"strings"
 	"time"
@@ -116,6 +117,9 @@ type Config struct {
 	PublicBaseDomain string
 	// TLSCertResolver (ex: "le") liga HTTPS com certificado automático.
 	TLSCertResolver string
+	// PublicIPs são os IPs públicos deste servidor -- um domínio próprio só
+	// fica ativo quando o DNS dele resolve para um destes.
+	PublicIPs []string
 
 	// Só para testes: encurtam as esperas do deploy.
 	readyPoll        time.Duration
@@ -133,13 +137,15 @@ type Service struct {
 	// probe faz o health check HTTP/TCP a uma réplica -- substituível nos
 	// testes.
 	probe func(ctx context.Context, host string, port int, path string) error
+	// lookupHost resolve DNS -- substituível nos testes.
+	lookupHost func(ctx context.Context, host string) ([]string, error)
 }
 
 func New(db *store.DB, docker Docker, box *secretbox.Box, cfg Config, logger *slog.Logger) *Service {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Service{db: db, docker: docker, box: box, cfg: cfg, logger: logger, rt: newRuntime(), probe: defaultProbe}
+	return &Service{db: db, docker: docker, box: box, cfg: cfg, logger: logger, rt: newRuntime(), probe: defaultProbe, lookupHost: net.DefaultResolver.LookupHost}
 }
 
 // isNotFound reconhece o 404 do Docker (container/imagem/volume que não existe).

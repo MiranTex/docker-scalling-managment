@@ -74,6 +74,7 @@ func (s *Service) Kick() {
 func (s *Service) reconcileOnce(ctx context.Context) {
 	s.reconcileAddons(ctx)
 	s.reconcileServices(ctx)
+	s.recheckDomains(ctx)
 	s.syncRouting(ctx)
 }
 

@@ -87,6 +87,9 @@ type config struct {
 	// traefikDynamicDir é onde o launcher escreve o routing dos serviços
 	// de projeto (file provider do Traefik). Vazio desliga o routing.
 	traefikDynamicDir string
+	// publicIPs: os IPs públicos do host, para verificar o DNS dos
+	// domínios próprios (LAUNCHER_PUBLIC_IPS, separados por vírgula).
+	publicIPs []string
 }
 
 func loadConfig() config {
@@ -128,6 +131,7 @@ func loadConfig() config {
 		redisImage:    envString("LAUNCHER_ADDON_REDIS_IMAGE", "redis:7-alpine"),
 
 		traefikDynamicDir: os.Getenv("LAUNCHER_TRAEFIK_DYNAMIC_DIR"),
+		publicIPs:         envList("LAUNCHER_PUBLIC_IPS"),
 	}
 	if cfg.selfContainer == "" {
 		cfg.selfContainer, _ = os.Hostname()
@@ -167,6 +171,7 @@ func (c config) platformConfig() platform.Config {
 		TraefikDynamicDir:     c.traefikDynamicDir,
 		PublicBaseDomain:      c.publicBaseDomain,
 		TLSCertResolver:       c.tlsCertResolver,
+		PublicIPs:             c.publicIPs,
 	}
 }
 
