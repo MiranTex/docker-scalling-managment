@@ -45,6 +45,15 @@ congela essa configuração com uma imagem numa revisão numerada. Um
 rollback é voltar a pôr uma revisão anterior como atual. O scaling (fixo ou
 por CPU) aplica-se logo, sem deploy.
 
+**Modelos.** Cada projeto tem modelos de serviço com versões imutáveis
+(gravar = versão nova). Criar um serviço a partir de um modelo copia a
+configuração, guarda a origem (`modelo@vN`) e faz o primeiro deploy com a
+imagem do modelo, que é obrigatória. Quando há uma versão nova, a página
+do serviço mostra as diferenças e aplica **só os campos que o modelo
+mudou**, avisando quando isso substitui uma alteração feita à mão. A
+imagem que está a correr nunca muda por uma atualização do modelo: muda
+por deploy. O tipo (web/worker) é fixo desde a v1.
+
 **Env de um container de serviço**, por ordem (o último ganha):
 `PORT`, as URLs dos addons do ambiente (ex.: `DATABASE_URL`, `REDIS_URL`)
 e o env do serviço com os `${secret:NOME}` resolvidos.
@@ -113,6 +122,8 @@ auth com role `infra-admin` ou `super-admin`, ou um token de deploy
 | `POST /{p}/environments` · `DELETE /{p}/environments/{e}` | ambientes |
 | `GET`, `PUT`, `DELETE /{p}/registries[/{host}]` | credenciais de registry |
 | `GET`, `POST`, `DELETE /{p}/deploy-tokens[/{id}]` | tokens de CI |
+| `GET`, `POST /{p}/templates` · `GET`, `PATCH`, `DELETE /{p}/templates/{t}` | modelos (`DELETE` arquiva) |
+| `POST /{p}/templates/{t}/versions` | versão nova de um modelo |
 | `GET /{p}/environments/{e}/secrets` · `PUT`, `DELETE .../secrets/{nome}` | segredos (só escrita) |
 | `GET`, `POST .../addons` · `PATCH`, `DELETE .../addons/{a}` | addons |
 | `GET`, `POST .../addons/{a}/backups` · `POST .../addons/{a}/restore` | backups (Postgres) |
@@ -121,6 +132,7 @@ auth com role `infra-admin` ou `super-admin`, ou um token de deploy
 | `GET`✱, `POST`✱ `.../services/{s}/deployments` · `GET`✱ `.../deployments/{id}` | deploys e rollback (`{"revision": n}`) |
 | `GET .../services/{s}/revisions`, `/replicas` | histórico e estado ao vivo |
 | `POST .../services/{s}/run` | comando pontual com a revisão atual |
+| `GET`, `POST .../services/{s}/template-update` · `POST .../services/{s}/save-as-template` | diferenças/aplicar versão nova do modelo; guardar como modelo |
 | `GET`, `POST .../services/{s}/domains` · `POST .../domains/{h}/verify` · `DELETE .../domains/{h}` | domínios próprios |
 | `GET .../environments/{e}/jobs[/{id}]` | jobs e o seu output |
 

@@ -93,6 +93,17 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+svc+"/domains/{hostname}/verify", admin(a.verifyDomain))
 	mux.HandleFunc("DELETE "+svc+"/domains/{hostname}", admin(a.deleteDomain))
 
+	const templates = "/v1/projects/{project}/templates"
+	mux.HandleFunc("GET "+templates, admin(a.listTemplates))
+	mux.HandleFunc("POST "+templates, admin(a.createTemplate))
+	mux.HandleFunc("GET "+templates+"/{template}", admin(a.getTemplate))
+	mux.HandleFunc("PATCH "+templates+"/{template}", admin(a.updateTemplateInfo))
+	mux.HandleFunc("DELETE "+templates+"/{template}", admin(a.archiveTemplate))
+	mux.HandleFunc("POST "+templates+"/{template}/versions", admin(a.addTemplateVersion))
+	mux.HandleFunc("GET "+svc+"/template-update", admin(a.previewTemplateUpdate))
+	mux.HandleFunc("POST "+svc+"/template-update", admin(a.applyTemplateUpdate))
+	mux.HandleFunc("POST "+svc+"/save-as-template", admin(a.saveAsTemplate))
+
 	mux.HandleFunc("GET /v1/projects/{project}/deploy-tokens", admin(a.listDeployTokens))
 	mux.HandleFunc("POST /v1/projects/{project}/deploy-tokens", admin(a.createDeployToken))
 	mux.HandleFunc("DELETE /v1/projects/{project}/deploy-tokens/{token}", admin(a.revokeDeployToken))

@@ -182,7 +182,8 @@ func mapStoreErr(err error) error {
 		errors.Is(err, store.ErrAddonNotFound), errors.Is(err, store.ErrJobNotFound),
 		errors.Is(err, store.ErrServiceNotFound), errors.Is(err, store.ErrRevisionNotFound),
 		errors.Is(err, store.ErrDeploymentNotFound), errors.Is(err, store.ErrRegistryNotFound),
-		errors.Is(err, store.ErrDeployTokenNotFound):
+		errors.Is(err, store.ErrDeployTokenNotFound),
+		errors.Is(err, store.ErrTemplateNotFound), errors.Is(err, store.ErrTemplateVersionNotFound):
 		return fmt.Errorf("%w: %v", ErrNotFound, err)
 	}
 	return err

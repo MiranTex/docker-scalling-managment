@@ -12,9 +12,11 @@ import ConfirmModal from "../../admin/database/ConfirmModal";
 import DeployTokensCard from "./DeployTokensCard";
 import RegistriesCard from "./RegistriesCard";
 import SettingsCard from "./SettingsCard";
+import TemplatesTab from "./TemplatesTab";
 
 const TABS = [
   { key: "environments", label: "Ambientes" },
+  { key: "templates", label: "Modelos" },
   { key: "tokens", label: "Deploy tokens" },
   { key: "registries", label: "Registries" },
   { key: "settings", label: "Definições" },
@@ -152,6 +154,8 @@ export default function ProjectClient({ project }: { project: string }) {
       )}
 
       {tab === "tokens" && <DeployTokensCard project={project} environments={detail.environments} apiUrl={detail.apiUrl} />}
+
+      {tab === "templates" && <TemplatesTab project={project} />}
 
       {tab === "registries" && <RegistriesCard project={project} />}
 

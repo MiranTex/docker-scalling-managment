@@ -19,6 +19,7 @@ import TabBar, { useActiveTab } from "@/components/TabBar";
 import ConfirmModal from "../../../../../admin/database/ConfirmModal";
 import DomainsCard from "./DomainsCard";
 import ServiceConfig from "./ServiceConfig";
+import TemplateCard from "./TemplateCard";
 
 const TABS = [
   { key: "overview", label: "Visão geral" },
@@ -211,6 +212,8 @@ export default function ServiceClient({ project, env, svc }: { project: string; 
         </div>
 
       </div>
+
+      <TemplateCard project={project} env={env} service={service} onChanged={load} />
 
       <TabBar tabs={TABS} active={tab} />
 
