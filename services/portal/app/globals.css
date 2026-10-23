@@ -147,6 +147,15 @@ body {
   margin-top: 0;
 }
 
+/* Grupo recolhível ("Legado"): parece um título de grupo, mas é um botão. */
+.sidebar nav .nav-toggle {
+  background: transparent;
+  border: none;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
 /* Cabeçalho de página e sub-navegação por rota (ex. admin/database/*). */
 .page-header {
   display: flex;
