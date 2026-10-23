@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"launcher/internal/httpapi"
@@ -66,6 +67,9 @@ type config struct {
 	hostVCPU              float64
 	hostMemoryMB          int64
 	memoryOvercommitRatio float64
+	// allowedBindPaths -- ver httpapi.SpecPolicy. Vazio = nenhum caminho do
+	// host pode ser montado, só volumes nomeados.
+	allowedBindPaths []string
 }
 
 func loadConfig() config {
@@ -96,6 +100,8 @@ func loadConfig() config {
 		hostVCPU:              envFloat("LAUNCHER_HOST_VCPU", 0),
 		hostMemoryMB:          int64(envFloat("LAUNCHER_HOST_MEMORY_MB", 0)),
 		memoryOvercommitRatio: envFloat("LAUNCHER_MEMORY_OVERCOMMIT_RATIO", 1),
+
+		allowedBindPaths: envList("LAUNCHER_ALLOWED_BIND_PATHS"),
 	}
 
 	if cfg.databaseURL == "" {
@@ -119,6 +125,10 @@ func (c config) groupConfig() httpapi.GroupConfig {
 		SelfURL:        c.selfURL,
 		DockerSocket:   c.dockerSocket,
 	}
+}
+
+func (c config) specPolicy() httpapi.SpecPolicy {
+	return httpapi.SpecPolicy{AllowedBindPaths: c.allowedBindPaths}
 }
 
 func (c config) capacityConfig() httpapi.CapacityConfig {
@@ -168,6 +178,7 @@ func (c config) logAttrs() []any {
 	return []any{
 		"listen_addr", c.listenAddr,
 		"docker_socket", c.dockerSocket,
+		"allowed_bind_paths", c.allowedBindPaths,
 		"auth_service_url", c.authServiceURL,
 		"templatesadmin_service_url", c.templatesAdminServiceURL,
 		"secretsadmin_service_url", c.secretsAdminServiceURL,
@@ -179,4 +190,15 @@ func (c config) logAttrs() []any {
 		"host_vcpu", c.hostVCPU,
 		"host_memory_mb", c.hostMemoryMB,
 	}
+}
+
+// envList lê uma lista separada por vírgulas, ignorando entradas vazias.
+func envList(key string) []string {
+	var out []string
+	for _, v := range strings.Split(os.Getenv(key), ",") {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }

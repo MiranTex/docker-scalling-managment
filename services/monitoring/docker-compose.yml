@@ -27,7 +27,28 @@ networks:
       # na linha de comandos.
       base-stack.managed: "true"
 
+  # Só docker-api-ro + Prometheus + Promtail. Sem label base-stack.managed
+  # de propósito -- ver a rede docker-api-ro de demo/docker-compose.yml.
+  docker-api-ro:
+    internal: true
+
 services:
+  # Proxy só de leitura à frente do socket do Docker -- mesma razão do
+  # docker-api-ro de demo/docker-compose.yml: ":ro" no socket não impede
+  # nada, a API continua toda acessível.
+  docker-api-ro:
+    restart: unless-stopped
+    image: tecnativa/docker-socket-proxy:v0.4.0
+    environment:
+      CONTAINERS: "1" # docker_sd e leitura de logs (/containers/{id}/logs)
+      NETWORKS: "1"   # docker_sd do Prometheus lê as redes de cada container
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    mem_limit: 64m
+    cpus: 0.25
+    networks:
+      - docker-api-ro
+
   prometheus:
     # Volta a subir depois de um crash ou reboot do host; um "docker
     # compose stop" explícito continua a ser respeitado.
@@ -38,21 +59,16 @@ services:
       - --storage.tsdb.retention.time=6h
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      # Socket Docker: pra auto-descobrir containers via docker_sd_configs,
-      # igual ao que o Promtail já faz pra logs.
-      - /var/run/docker.sock:/var/run/docker.sock:ro
     ports:
       - "9091:9090"
+    depends_on:
+      - docker-api-ro
     networks:
       - observability-net
-    # A imagem oficial do Prometheus roda como usuário não-root (nobody);
-    # sem isto ele não tem permissão de ler o socket Docker (dono root:docker).
-    # 991 é o GID do dono do grupo do socket NESTE host (Colima -- confirme
-    # com `ls -la /var/run/docker.sock` de dentro de qualquer container
-    # deste projeto, ou `getent group docker` no host, se for reaplicar
-    # isto noutra máquina; noutro runtime Docker o valor mais comum é 999).
-    group_add:
-      - "991"
+      # Auto-descoberta via docker_sd_configs, pelo proxy só de leitura.
+      # Também acaba com o group_add do GID do socket, que mudava de host
+      # para host.
+      - docker-api-ro
     mem_limit: 256m
     cpus: 0.5
 
@@ -83,12 +99,15 @@ services:
     command: -config.file=/etc/promtail/promtail-config.yml
     volumes:
       - ./promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      # Sem /var/lib/docker/containers: docker_sd_configs lê os logs pela
+      # API, e esse diretório também tem o config.v2.json de cada
+      # container, com o Env (segredos) em claro.
     networks:
       - observability-net
+      - docker-api-ro
     depends_on:
       - loki
+      - docker-api-ro
     mem_limit: 128m
     cpus: 0.3
 

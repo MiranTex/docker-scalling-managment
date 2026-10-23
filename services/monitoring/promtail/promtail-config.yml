@@ -10,11 +10,12 @@ clients:
 
 scrape_configs:
   # docker_sd_configs descobre automaticamente TODOS os containers Docker
-  # do host (não só os do nosso compose) via o socket montado abaixo --
+  # do host (não só os do nosso compose) via o proxy só de leitura da API
+  # do Docker (docker-api-ro, ver docker-compose.yml) --
   # mesmo princípio de auto-descoberta que o cAdvisor usa pra métricas.
   - job_name: docker
     docker_sd_configs:
-      - host: unix:///var/run/docker.sock
+      - host: tcp://docker-api-ro:2375
         refresh_interval: 5s
     relabel_configs:
       # Nome do container (a API do Docker sempre prefixa com "/")

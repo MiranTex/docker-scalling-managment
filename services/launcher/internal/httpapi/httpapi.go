@@ -81,6 +81,9 @@ type Docker interface {
 	RemoveNetwork(ctx context.Context, id string) error
 	ConnectNetwork(ctx context.Context, networkID, containerID string) error
 	DisconnectNetwork(ctx context.Context, networkID, containerID string) error
+	// FindVolume só serve a SpecPolicy -- saber se um volume nomeado num
+	// spec pertence a uma stack compose (ver specpolicy.go).
+	FindVolume(ctx context.Context, name string) (*dockerclient.Volume, error)
 }
 
 // Secrets resolve ${secret:NOME} dentro de um "env" -- ver
@@ -203,16 +206,17 @@ type Handler struct {
 	// capacity descreve os tamanhos disponíveis e a capacidade do host --
 	// ver capacity.go.
 	capacity CapacityConfig
-	// logger só é usado por TerminateAllGroups (chamado fora de um request
-	// HTTP, no shutdown do próprio launcher) -- nil vira slog.Default().
+	// policy limita o que um spec pode montar/partilhar -- ver specpolicy.go.
+	policy SpecPolicy
+	// logger -- nil vira slog.Default().
 	logger *slog.Logger
 }
 
-func NewHandler(tokens TokenVerifier, s Store, docker Docker, secrets Secrets, templates Templates, groups GroupConfig, publicBaseDomain, tlsCertResolver string, capacity CapacityConfig, logger *slog.Logger) *Handler {
+func NewHandler(tokens TokenVerifier, s Store, docker Docker, secrets Secrets, templates Templates, groups GroupConfig, publicBaseDomain, tlsCertResolver string, capacity CapacityConfig, policy SpecPolicy, logger *slog.Logger) *Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Handler{tokens: tokens, store: s, docker: docker, secrets: secrets, templates: templates, groups: groups, publicBaseDomain: publicBaseDomain, tlsCertResolver: tlsCertResolver, capacity: capacity, logger: logger}
+	return &Handler{tokens: tokens, store: s, docker: docker, secrets: secrets, templates: templates, groups: groups, publicBaseDomain: publicBaseDomain, tlsCertResolver: tlsCertResolver, capacity: capacity, policy: policy, logger: logger}
 }
 
 func (h *Handler) Routes() *http.ServeMux {
@@ -358,6 +362,11 @@ func (h *Handler) handleCreateInstance(w http.ResponseWriter, r *http.Request, s
 	tmpl, err := h.templates.Get(r.Context(), req.TemplateName, token)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "template_lookup_failed", "erro lendo modelo no templatesadmin: "+err.Error())
+		return
+	}
+
+	if err := h.validateSpec(r.Context(), tmpl.Binds, resolveNetwork(req.Network, tmpl.Network)); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "spec_rejected", err.Error())
 		return
 	}
 
@@ -568,6 +577,7 @@ func (h *Handler) launchSolo(ctx context.Context, id string, tmpl templatesclien
 			// Sem isto, um crash da app ou um reboot do host deixava a
 			// instância parada até alguém a recriar à mão.
 			RestartPolicy: dockerclient.UnlessStopped(),
+			SecurityOpt:   dockerclient.AppSecurityOpt(),
 			Resources:     resources(instanceType),
 		},
 	})
@@ -833,6 +843,14 @@ func (h *Handler) handleCreateReplica(w http.ResponseWriter, r *http.Request, _,
 		return
 	}
 
+	// Revalidado em cada réplica, não só ao lançar o group: o pedido vem
+	// do group (role "service"), e quem tiver esse token monta o que
+	// quiser se o launcher confiar cegamente no spec.
+	if err := h.validateSpec(r.Context(), req.Binds, req.Network); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "spec_rejected", err.Error())
+		return
+	}
+
 	labels := req.Labels
 	hostConfig := &dockerclient.CreateHostConfig{
 		Binds:       req.Binds,
@@ -843,6 +861,7 @@ func (h *Handler) handleCreateReplica(w http.ResponseWriter, r *http.Request, _,
 		// voltar a subir a réplica, e o group conta-a como sua na
 		// próxima reconciliação.
 		RestartPolicy: dockerclient.UnlessStopped(),
+		SecurityOpt:   dockerclient.AppSecurityOpt(),
 	}
 	// MemoryMB zero = group anterior a esta feature (ex: um group estático
 	// declarado em docker-compose): a réplica sobe sem limites, como sempre.

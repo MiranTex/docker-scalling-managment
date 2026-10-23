@@ -27,6 +27,14 @@ type fakeDocker struct {
 	containers map[string]dockerclient.Container
 	calls      []string
 	created    []dockerclient.CreateContainerRequest
+	volumes    map[string]dockerclient.Volume
+}
+
+func (f *fakeDocker) FindVolume(_ context.Context, name string) (*dockerclient.Volume, error) {
+	if v, ok := f.volumes[name]; ok {
+		return &v, nil
+	}
+	return nil, nil
 }
 
 func newFakeDocker(cs ...dockerclient.Container) *fakeDocker {
@@ -114,7 +122,7 @@ func (t fakeTokens) Verify(context.Context, string) (jwtverify.Claims, error) {
 
 func newTestHandler(docker *fakeDocker, role string) *Handler {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return NewHandler(fakeTokens{role: role}, fakeStore{}, docker, fakeSecrets{}, nil, GroupConfig{}, "", "", CapacityConfig{}, logger)
+	return NewHandler(fakeTokens{role: role}, fakeStore{}, docker, fakeSecrets{}, nil, GroupConfig{}, "", "", CapacityConfig{}, SpecPolicy{}, logger)
 }
 
 func do(t *testing.T, h *Handler, method, path string, body any) *httptest.ResponseRecorder {

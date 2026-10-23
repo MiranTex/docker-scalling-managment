@@ -52,7 +52,36 @@ networks:
     name: observability-net
     external: true
 
+  # Só o proxy da API do Docker (docker-api-ro) e quem precisa de LER o
+  # Docker (traefik, templatesadmin). "internal" corta saída para fora, e
+  # nada de label base-stack.managed: sem ela, a rede não aparece em
+  # /admin/networks e nenhuma app pode ser ligada a ela -- quem lê a API
+  # do Docker lê o Env de todos os containers, ou seja, os segredos.
+  docker-api-ro:
+    internal: true
+
 services:
+  # Proxy à frente do socket do Docker que só deixa passar GETs dos
+  # endpoints listados abaixo (POST=0 é o default). Montar o socket com
+  # ":ro" NÃO protege nada -- só torna o ficheiro só de leitura, a API
+  # continua a aceitar criar containers privilegiados. Só o launcher
+  # continua com o socket direto, por ser quem cria containers.
+  docker-api-ro:
+    restart: unless-stopped
+    image: tecnativa/docker-socket-proxy:v0.4.0
+    environment:
+      CONTAINERS: "1" # traefik: descoberta de containers e labels
+      NETWORKS: "1"   # traefik: IP do container na rede escolhida
+      IMAGES: "1"     # templatesadmin: GET /v1/images
+      INFO: "1"
+      # EVENTS, PING e VERSION já vêm ligados por defeito (traefik usa os três).
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    mem_limit: 64m
+    cpus: 0.25
+    networks:
+      - docker-api-ro
+
   # Gateway único de acesso externo: publica a ÚNICA porta do host em toda
   # a plataforma (80). Nenhum container passa a publicar porta própria --
   # continuam só na rede interna, como hoje; é o Traefik quem decide para
@@ -73,6 +102,9 @@ services:
     container_name: traefik
     command:
       - --providers.docker=true
+      # Lê o Docker através do proxy só de leitura (ver docker-api-ro),
+      # nunca do socket direto.
+      - --providers.docker.endpoint=tcp://docker-api-ro:2375
       # Crítico: sem isto, o Traefik tentaria expor QUALQUER container
       # visível pelo socket, inclusive de outra app vossa não relacionada
       # -- mesmo cuidado do isolamento por base-stack.managed. Só um
@@ -122,9 +154,6 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      # Só leitura -- o Traefik nunca cria/para nada, só observa labels
-      # (mesmo espírito do mount do templatesadmin, que só lista imagens).
-      - /var/run/docker.sock:/var/run/docker.sock:ro
       # Persiste os certificados emitidos (acme.json) entre reinícios --
       # sem isto, cada restart do Traefik pediria certificados novos a
       # todo host exposto, batendo cedo nos limites de taxa da CA.
@@ -139,8 +168,11 @@ services:
       prometheus.port: "8082"
     mem_limit: 128m
     cpus: 0.25
+    depends_on:
+      - docker-api-ro
     networks:
       - auth-net
+      - docker-api-ro
       # Externa (ver bloco "networks" no topo do ficheiro) -- é o que dá ao
       # Prometheus da plataforma de observabilidade acesso de rede a este
       # container (a label sozinha não basta, bridge networks do Docker
@@ -234,9 +266,8 @@ services:
   # Postgres próprio e devolve, prontos, o launch-template.json e o
   # bloco YAML do group correspondente -- ver
   # services/templatesadmin/README.md e demo/README.md, "Criar um novo
-  # serviço autoscalado". NÃO cria containers sozinho (por isso o mount
-  # do docker.sock abaixo é só para listar imagens via GET /v1/images,
-  # nunca para criar/remover nada).
+  # serviço autoscalado". NÃO cria containers sozinho: só lista imagens
+  # (GET /v1/images), através do proxy só de leitura (docker-api-ro).
   templatesadmin:
     # Volta a subir depois de um crash ou reboot do host; um "docker
     # compose stop" explícito continua a ser respeitado.
@@ -245,20 +276,22 @@ services:
     image: templatesadmin:latest
     environment:
       TEMPLATESADMIN_DATABASE_URL: "postgres://templatesadmin:templatesadmin@database:5432/app?sslmode=disable"
+      DOCKER_SOCKET: "tcp://docker-api-ro:2375"
       AUTH_SERVICE_URL: "http://group-authd:8090"
       AUTH_ISSUER: "auth.base-stack.local"
       AUTH_AUDIENCE: "base-stack"
     labels:
       base-stack.managed: "true"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
     depends_on:
       database:
         condition: service_healthy
+      docker-api-ro:
+        condition: service_started
     mem_limit: 128m
     cpus: 0.25
     networks:
       - auth-net
+      - docker-api-ro
 
   # O único serviço que efetivamente cria containers a partir de um
   # modelo -- instâncias "solo" (uma app qualquer, sem autoscaling nenhum)
@@ -315,12 +348,18 @@ services:
       # CPU (ver o package doc de internal/httpapi/capacity.go).
       LAUNCHER_HOST_VCPU: "${LAUNCHER_HOST_VCPU:-}"
       LAUNCHER_HOST_MEMORY_MB: "${LAUNCHER_HOST_MEMORY_MB:-}"
+      # Prefixos de caminhos do HOST que um modelo pode montar em "binds",
+      # separados por vírgula (ex: "/Users/eu/code" para código-fonte em
+      # dev). Vazio (default) = só volumes nomeados. /etc, /proc, /var/run,
+      # /var/lib/docker, o socket, etc. ficam proibidos mesmo dentro de um
+      # prefixo daqui -- ver services/launcher/internal/httpapi/specpolicy.go.
+      LAUNCHER_ALLOWED_BIND_PATHS: "${LAUNCHER_ALLOWED_BIND_PATHS:-}"
     labels:
       base-stack.managed: "true"
     volumes:
       # Este é quem, de facto, fala com o Docker para criar/iniciar/parar
-      # containers -- ao contrário do mount (read-only) do templatesadmin,
-      # que só lista imagens.
+      # containers -- o único serviço da plataforma com o socket direto.
+      # Tudo o que cria passa por SpecPolicy (binds, rede).
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       database:
