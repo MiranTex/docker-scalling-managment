@@ -233,21 +233,30 @@ func withHeader(name, value string) (map[string]any, map[string]string) {
 
 // ensureDashboards envia os dashboards (com o mesmo uid em todas as
 // organizações) -- só quando mudaram desde o último envio, para não
-// encher o histórico de versões a cada minuto.
+// encher o histórico de versões a cada minuto. "Já enviado" confirma-se
+// no Grafana: um Grafana recriado volta vazio, com as organizações
+// recriadas com os mesmos ids, e a memória deste processo não sabe disso.
 func (s *Syncer) ensureDashboards(ctx context.Context, orgID int64, files []string) error {
 	for _, f := range files {
 		raw, err := os.ReadFile(filepath.Join(s.cfg.DashboardsDir, f))
 		if err != nil {
 			return fmt.Errorf("lendo dashboard %s: %w", f, err)
 		}
-		sum := sha256.Sum256(raw)
-		key := fmt.Sprintf("%d/%s", orgID, f)
-		if s.dashHash[key] == hex.EncodeToString(sum[:]) {
-			continue
-		}
 		var dash map[string]any
 		if err := json.Unmarshal(raw, &dash); err != nil {
 			return fmt.Errorf("dashboard %s inválido: %w", f, err)
+		}
+		sum := sha256.Sum256(raw)
+		key := fmt.Sprintf("%d/%s", orgID, f)
+		if s.dashHash[key] == hex.EncodeToString(sum[:]) {
+			uid, _ := dash["uid"].(string)
+			err := s.call(ctx, "GET", "/api/dashboards/uid/"+url.PathEscape(uid), orgID, nil, nil)
+			if err == nil {
+				continue
+			}
+			if !isStatus(err, http.StatusNotFound) {
+				return fmt.Errorf("confirmando dashboard %s na org %d: %w", f, orgID, err)
+			}
 		}
 		dash["id"] = nil
 		if err := s.call(ctx, "POST", "/api/dashboards/db", orgID, map[string]any{"dashboard": dash, "overwrite": true}, nil); err != nil {

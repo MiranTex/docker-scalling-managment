@@ -27,7 +27,8 @@ type fakeGrafana struct {
 	nextUser    int64
 	members     map[int64]map[string]string // org -> login -> role
 	datasources map[int64]map[string]datasource
-	dashboards  map[int64]int // org -> envios
+	dashboards  map[int64]int             // org -> envios
+	dashUIDs    map[int64]map[string]bool // org -> uids existentes
 }
 
 func newFakeGrafana() *fakeGrafana {
@@ -37,6 +38,7 @@ func newFakeGrafana() *fakeGrafana {
 		members:     map[int64]map[string]string{1: {"admin": "Admin"}},
 		datasources: map[int64]map[string]datasource{},
 		dashboards:  map[int64]int{},
+		dashUIDs:    map[int64]map[string]bool{},
 	}
 }
 
@@ -94,6 +96,16 @@ func (f *fakeGrafana) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.datasources[orgHdr][ds.UID] = ds
 	case path == "/api/dashboards/db":
 		f.dashboards[orgHdr]++
+		if f.dashUIDs[orgHdr] == nil {
+			f.dashUIDs[orgHdr] = map[string]bool{}
+		}
+		if d, ok := body["dashboard"].(map[string]any); ok {
+			f.dashUIDs[orgHdr][d["uid"].(string)] = true
+		}
+	case strings.HasPrefix(path, "/api/dashboards/uid/"):
+		if !f.dashUIDs[orgHdr][strings.TrimPrefix(path, "/api/dashboards/uid/")] {
+			http.Error(w, "not found", 404)
+		}
 	case path == "/api/users/lookup":
 		if id, ok := f.users[r.URL.Query().Get("loginOrEmail")]; ok {
 			reply(map[string]int64{"id": id})
@@ -246,5 +258,41 @@ func TestSyncOrgsDatasourcesAndMembers(t *testing.T) {
 	}
 	if grafana.members[platform]["admin"] != "Admin" {
 		t.Error("o admin de emergência nunca pode ser tirado")
+	}
+}
+
+// Um Grafana recriado perde tudo e volta a dar os mesmos ids às
+// organizações: os dashboards têm de ser reenviados, mesmo que este
+// processo se lembre de já os ter enviado.
+func TestDashboardsResentAfterGrafanaLosesThem(t *testing.T) {
+	ctx := context.Background()
+	db := storetest.New(t)
+	grafana := newFakeGrafana()
+	srv := httptest.NewServer(grafana)
+	defer srv.Close()
+	dir := t.TempDir()
+	_ = os.WriteFile(filepath.Join(dir, "projects.json"), []byte(`{"uid":"base-stack-projects","title":"x"}`), 0o644)
+	s := New(Config{URL: srv.URL + "/grafana", AdminUser: "admin", AdminPassword: "pw", DashboardsDir: dir}, db, nil)
+	if err := db.CreateProject(ctx, store.Project{ID: "p1", AccountID: store.DefaultAccountID, Slug: "loja", Name: "Loja", CreatedBy: "t"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SyncAll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	org := grafana.orgID("Projeto: loja")
+	if !grafana.dashUIDs[org]["base-stack-projects"] {
+		t.Fatal("dashboard não enviado na primeira sincronização")
+	}
+
+	// O Grafana perde tudo (recriado sem volume).
+	grafana.mu.Lock()
+	grafana.dashUIDs = map[int64]map[string]bool{}
+	grafana.mu.Unlock()
+
+	if err := s.SyncAll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !grafana.dashUIDs[org]["base-stack-projects"] {
+		t.Error("o dashboard devia ter sido reenviado depois de o Grafana o perder")
 	}
 }
