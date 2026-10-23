@@ -143,6 +143,7 @@ export default function ServiceClient({ project, env, svc }: { project: string; 
         </h1>
         {error && <div className="error">{error}</div>}
         {notice && <div className="notice">{notice}</div>}
+        {service.problem && <div className="error">{service.problem}</div>}
         <p>
           {service.kind === "web" ? `Web na porta ${service.port}` : "Worker"} ·{" "}
           {current ? (

@@ -111,6 +111,14 @@ func (s *Service) activeDomains(ctx context.Context, serviceID string) []string 
 	return out
 }
 
+// routerName é o nome do router/serviço no Traefik -- e por isso a label
+// "service" das métricas dele no Prometheus. "_" separa os slugs porque
+// nenhum slug o pode conter: com "-", o projeto "a-b"/ambiente "c" e o
+// projeto "a"/ambiente "b-c" dariam o mesmo nome.
+func routerName(p store.Project, e store.Environment, svc store.Service) string {
+	return "bs_" + p.Slug + "_" + e.Slug + "_" + svc.Slug
+}
+
 func hostRule(hosts []string) string {
 	parts := make([]string, len(hosts))
 	for i, h := range hosts {
@@ -167,7 +175,7 @@ func (s *Service) buildRouting(ctx context.Context) (traefikConfig, error) {
 			continue
 		}
 		sort.Slice(servers, func(i, j int) bool { return servers[i].URL < servers[j].URL })
-		name := "bs-" + svc.ID
+		name := routerName(p, e, svc)
 		rule := hostRule(hosts)
 		cfg.HTTP.Services[name] = traefikService{LoadBalancer: traefikLB{Servers: servers, PassHostHeader: true}}
 		httpRouter := traefikRouter{Rule: rule, EntryPoints: []string{"web"}, Service: name}

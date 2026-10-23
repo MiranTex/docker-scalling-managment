@@ -147,10 +147,12 @@ type ServiceView struct {
 	ReadyReplicas   int             `json:"readyReplicas"`
 	Deploying       bool            `json:"deploying"`
 	URLs            []string        `json:"urls"`
+	// Problem: porque é que o serviço não está como devia (ex: quota).
+	Problem string `json:"problem,omitempty"`
 }
 
 func (s *Service) serviceView(ctx context.Context, p store.Project, e store.Environment, svc store.Service) ServiceView {
-	v := ServiceView{Service: svc, URLs: []string{}, Deploying: s.rt.isDeploying(svc.ID)}
+	v := ServiceView{Service: svc, URLs: []string{}, Deploying: s.rt.isDeploying(svc.ID), Problem: s.rt.getProblem(svc.ID)}
 	if svc.CurrentRevisionID != nil {
 		if rev, err := s.db.GetRevision(ctx, *svc.CurrentRevisionID); err == nil {
 			v.CurrentRevision = &rev

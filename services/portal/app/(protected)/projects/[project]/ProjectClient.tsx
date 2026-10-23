@@ -7,6 +7,7 @@ import { api, projectPath, type ProjectDetail } from "@/lib/platformClient";
 import ConfirmModal from "../../admin/database/ConfirmModal";
 import DeployTokensCard from "./DeployTokensCard";
 import RegistriesCard from "./RegistriesCard";
+import SettingsCard from "./SettingsCard";
 
 export default function ProjectClient({ project }: { project: string }) {
   const router = useRouter();
@@ -107,6 +108,8 @@ export default function ProjectClient({ project }: { project: string }) {
           {creating ? "A criar..." : "Criar ambiente"}
         </button>
       </div>
+
+      <SettingsCard detail={detail} onSaved={load} />
 
       <DeployTokensCard project={project} environments={detail.environments} apiUrl={detail.apiUrl} />
       <RegistriesCard project={project} />

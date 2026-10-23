@@ -89,6 +89,32 @@ diferença em relação a uma instalação "normal" do `auth` (ver
   trocando `-f services/database/docker-compose.yml` por
   `-f demo/docker-compose.yml` nos comandos.
 
+## Projetos (o caminho recomendado)
+
+Com a plataforma de pé e uma conta `infra-admin` (ou `super-admin`):
+
+1. Portal → **Projetos** → cria um projeto (ex.: `loja`) e um ambiente
+   (ex.: `production`).
+2. No ambiente, separador **Addons**: cria um Postgres (`db`). A
+   `DATABASE_URL` fica como segredo gerido e é injetada em todos os
+   serviços do ambiente.
+3. Separador **Serviços**: cria um serviço `web` com a porta da tua app e
+   a imagem do primeiro deploy. Em dev fica em
+   `http://web-production-loja.127.0.0.1.nip.io`.
+4. Na página do serviço: o comando de release (ex.:
+   `php artisan migrate --force`), o env (`APP_KEY=${secret:APP_KEY}`, com
+   o segredo criado no separador **Segredos**), o scaling e os domínios
+   próprios.
+5. Na página do projeto: um **token de deploy** para o CI e as credenciais
+   do registry privado.
+
+Detalhes, API e limitações: [services/launcher/README.md](../services/launcher/README.md).
+Logs e métricas por projeto: dashboard **Projetos** no Grafana.
+
+Num host já com dados de antes do Postgres 17: com o demo em baixo, corre
+`make db-upgrade-pg17` uma vez antes de `make start-demo` (copia os dados
+do volume antigo, que fica intacto).
+
 ## Segredos (secretsadmin) e a conta de serviço do autoscaler
 
 [services/secretsadmin](../services/secretsadmin) guarda valores cifrados

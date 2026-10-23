@@ -191,6 +191,9 @@ func addonLabels(p store.Project, e store.Environment, a store.Addon) map[string
 	labels := environmentLabels(p, e)
 	labels[LabelRole] = RoleAddon
 	labels[LabelAddon] = a.ID
+	// O slug como "serviço" para os logs: no Grafana, os de uma base de
+	// dados filtram-se como os de qualquer app.
+	labels[LabelServiceSlug] = a.Slug
 	labels[dockerclient.LabelInstanceType] = "addon-" + a.Kind
 	labels[dockerclient.LabelVCPU] = strconv.FormatFloat(a.VCPU, 'f', -1, 64)
 	labels[dockerclient.LabelMemoryMB] = strconv.FormatInt(a.MemoryMB, 10)

@@ -2,6 +2,7 @@ package platform
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -167,17 +168,20 @@ func (s *Service) reconcileService(ctx context.Context, p store.Project, e store
 	s.autoscale(ctx, svc, rev, ready)
 	want := s.targetReplicas(ctx, svc)
 
+	s.rt.setProblem(svc.ID, "")
 	switch {
 	case len(current) < want:
 		envVars, err := s.containerEnv(ctx, e, rev)
 		if err != nil {
 			s.logger.Error("reconciliador: env do serviço", "service", svc.Slug, "err", err)
+			s.rt.setProblem(svc.ID, "não foi possível montar o env: "+err.Error())
 			return
 		}
 		for i := len(current); i < want; i++ {
 			name, err := s.createReplica(ctx, p, e, svc, rev, envVars)
 			if err != nil {
 				s.logger.Error("reconciliador: criando réplica", "service", svc.Slug, "err", err)
+				s.rt.setProblem(svc.ID, fmt.Sprintf("só %d de %d réplicas: %v", i, want, err))
 				return
 			}
 			s.logger.Info("reconciliador: réplica criada", "service", svc.Slug, "container", name)

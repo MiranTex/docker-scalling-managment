@@ -36,6 +36,19 @@ scrape_configs:
       # group lançado pelo launcher é opaco ("group-<hex>").
       - source_labels: ["__meta_docker_container_label_autoscaler_target_service"]
         target_label: "target_service"
+      # Projeto/ambiente/serviço dos containers de projeto (ver
+      # services/launcher/internal/platform): é por estas labels que os
+      # logs de uma app se filtram no Grafana (dashboard "Projetos"),
+      # sem depender de nomes de container (que mudam a cada deploy).
+      - source_labels: ["__meta_docker_container_label_base_stack_project"]
+        target_label: "project"
+      - source_labels: ["__meta_docker_container_label_base_stack_env"]
+        target_label: "env"
+      # Serviço (apps) ou addon (bases de dados) -- o slug, não o id.
+      - source_labels: ["__meta_docker_container_label_base_stack_service_slug"]
+        target_label: "service"
+      - source_labels: ["__meta_docker_container_label_base_stack_role"]
+        target_label: "role"
       # compose_service vazio (container fora do compose, ex: um group
       # dinâmico) cai para o nome do container, para o seletor de logs no
       # Grafana nunca ter uma opção em branco.

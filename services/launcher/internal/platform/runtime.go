@@ -19,7 +19,10 @@ type runtime struct {
 	desired   map[string]int       // serviço -> réplicas decididas pelo autoscaling
 	lastScale map[string]time.Time // serviço -> última mudança do autoscaling
 	lastEval  map[string]time.Time // serviço -> última avaliação de CPU
-	kick      chan struct{}
+	// problem é o último motivo por que o reconciliador não conseguiu pôr
+	// o serviço como devia (ex: quota esgotada) -- mostrado na UI.
+	problem map[string]string
+	kick    chan struct{}
 }
 
 func newRuntime() *runtime {
@@ -31,6 +34,7 @@ func newRuntime() *runtime {
 		desired:   map[string]int{},
 		lastScale: map[string]time.Time{},
 		lastEval:  map[string]time.Time{},
+		problem:   map[string]string{},
 		kick:      make(chan struct{}, 1),
 	}
 }
@@ -108,4 +112,20 @@ func (r *runtime) forgetDesired(svc string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.desired, svc)
+}
+
+func (r *runtime) setProblem(svc, msg string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if msg == "" {
+		delete(r.problem, svc)
+		return
+	}
+	r.problem[svc] = msg
+}
+
+func (r *runtime) getProblem(svc string) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.problem[svc]
 }
