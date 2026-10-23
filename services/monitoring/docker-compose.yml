@@ -60,7 +60,10 @@ services:
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     ports:
-      - "9091:9090"
+      # Só a partir desta máquina: o Prometheus não tem autenticação, e
+      # as métricas de todos os projetos passam por aqui. Num servidor,
+      # acede-se por túnel SSH (ssh -L 9091:127.0.0.1:9091 ...).
+      - "127.0.0.1:9091:9090"
     depends_on:
       - docker-api-ro
     networks:
@@ -85,7 +88,9 @@ services:
       # (demo/docker-compose.yml, "3100:3000"). Só afeta acesso direto à
       # API do Loki a partir do host; Grafana/Promtail continuam a falar
       # com ele pelo nome do container ("loki:3100"), nunca por aqui.
-      - "3101:3100"
+      # Só em 127.0.0.1: o Loki não tem autenticação e guarda os logs de
+      # todos os projetos.
+      - "127.0.0.1:3101:3100"
     networks:
       - observability-net
     mem_limit: 256m
@@ -117,14 +122,20 @@ services:
     restart: unless-stopped
     image: grafana/grafana:latest
     environment:
-      GF_AUTH_ANONYMOUS_ENABLED: "true"
-      GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
-      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      # Login obrigatório. A password vem de GRAFANA_ADMIN_PASSWORD; o
+      # default "admin" é só para dev (o Grafana pede para a trocar no
+      # primeiro login). Sem volume de dados, o Grafana arranca sempre do
+      # zero a partir do provisioning, por isso a variável vale sempre.
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER:-admin}"
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:-admin}"
+      GF_USERS_ALLOW_SIGN_UP: "false"
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
     ports:
-      - "3000:3000"
+      # Só a partir desta máquina, como o Prometheus e o Loki.
+      - "127.0.0.1:3000:3000"
     networks:
       - observability-net
     depends_on:
