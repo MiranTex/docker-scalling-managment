@@ -80,6 +80,9 @@ type config struct {
 	// hostname, que o Docker define como o id curto do container.
 	selfContainer    string
 	traefikContainer string
+	// prometheusContainer entra nas redes de ambiente para recolher as
+	// métricas das apps (ver platform.Config.PrometheusContainer).
+	prometheusContainer string
 
 	postgresImage string
 	redisImage    string
@@ -126,6 +129,8 @@ func loadConfig() config {
 		secretsKey:       os.Getenv("LAUNCHER_SECRETS_KEY"),
 		selfContainer:    os.Getenv("LAUNCHER_SELF_CONTAINER"),
 		traefikContainer: envString("TRAEFIK_CONTAINER", "traefik"),
+		// O nome que o compose do services/monitoring dá ao Prometheus.
+		prometheusContainer: envString("LAUNCHER_PROMETHEUS_CONTAINER", "monitoring-prometheus-1"),
 
 		postgresImage: envString("LAUNCHER_ADDON_POSTGRES_IMAGE", "postgres:17-alpine"),
 		redisImage:    envString("LAUNCHER_ADDON_REDIS_IMAGE", "redis:7-alpine"),
@@ -164,6 +169,7 @@ func (c config) platformConfig() platform.Config {
 	return platform.Config{
 		TraefikContainer:      c.traefikContainer,
 		SelfContainer:         c.selfContainer,
+		PrometheusContainer:   c.prometheusContainer,
 		PostgresImage:         c.postgresImage,
 		RedisImage:            c.redisImage,
 		HostMemoryMB:          c.hostMemoryMB,

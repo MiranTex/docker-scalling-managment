@@ -120,6 +120,10 @@ type NetworkContainer struct {
 type NetworkDetail struct {
 	Network
 	Containers []NetworkContainer `json:"containers"`
+	// Subnet/Gateway vêm do IPAM da rede (o primeiro bloco) -- só para
+	// mostrar, nunca para configurar.
+	Subnet  string `json:"subnet,omitempty"`
+	Gateway string `json:"gateway,omitempty"`
 }
 
 // InspectNetwork devolve uma rede e os containers ligados a ela. id pode
@@ -130,6 +134,12 @@ func (c *Client) InspectNetwork(ctx context.Context, id string) (*NetworkDetail,
 		Containers map[string]struct {
 			Name string `json:"Name"`
 		} `json:"Containers"`
+		IPAM struct {
+			Config []struct {
+				Subnet  string `json:"Subnet"`
+				Gateway string `json:"Gateway"`
+			} `json:"Config"`
+		} `json:"IPAM"`
 	}
 	if err := c.do(ctx, "GET", "/networks/"+url.PathEscape(id), nil, &raw); err != nil {
 		return nil, err
@@ -139,6 +149,10 @@ func (c *Client) InspectNetwork(ctx context.Context, id string) (*NetworkDetail,
 	// JSON "null", e a UI trata "null" como "ainda a carregar", não como
 	// "rede sem nenhum container ligado".
 	detail := NetworkDetail{Network: raw.Network, Containers: []NetworkContainer{}}
+	if len(raw.IPAM.Config) > 0 {
+		detail.Subnet = raw.IPAM.Config[0].Subnet
+		detail.Gateway = raw.IPAM.Config[0].Gateway
+	}
 	for containerID, info := range raw.Containers {
 		detail.Containers = append(detail.Containers, NetworkContainer{ContainerID: containerID, Name: info.Name})
 	}

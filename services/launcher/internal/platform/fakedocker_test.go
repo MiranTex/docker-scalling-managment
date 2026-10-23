@@ -235,12 +235,47 @@ func (f *fakeDocker) RemoveNetwork(_ context.Context, name string) error {
 func (f *fakeDocker) ConnectNetwork(_ context.Context, network, container string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	for _, c := range f.connected[network] {
+		if c == container {
+			return fmt.Errorf("endpoint with name %s already exists in network %s", container, network)
+		}
+	}
 	f.connected[network] = append(f.connected[network], container)
 	return nil
 }
 
 func (f *fakeDocker) DisconnectNetwork(_ context.Context, network, container string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var keep []string
+	for _, c := range f.connected[network] {
+		if c != container {
+			keep = append(keep, c)
+		}
+	}
+	f.connected[network] = keep
 	return nil
+}
+
+// InspectNetwork: membros = containers da plataforma ligados com
+// ConnectNetwork + containers criados com esta rede como NetworkMode.
+func (f *fakeDocker) InspectNetwork(_ context.Context, name string) (*dockerclient.NetworkDetail, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	labels, ok := f.networks[name]
+	if !ok {
+		return nil, fmt.Errorf("status 404: network %s not found", name)
+	}
+	d := &dockerclient.NetworkDetail{Network: dockerclient.Network{Name: name, Labels: labels}, Subnet: "172.30.0.0/16", Gateway: "172.30.0.1"}
+	for _, c := range f.connected[name] {
+		d.Containers = append(d.Containers, dockerclient.NetworkContainer{ContainerID: "id-" + c, Name: c})
+	}
+	for id, c := range f.containers {
+		if req, ok := f.created[strings.TrimPrefix(c.Names[0], "/")]; ok && req.HostConfig != nil && req.HostConfig.NetworkMode == name {
+			d.Containers = append(d.Containers, dockerclient.NetworkContainer{ContainerID: id, Name: strings.TrimPrefix(c.Names[0], "/")})
+		}
+	}
+	return d, nil
 }
 
 func (f *fakeDocker) StopContainer(context.Context, string, int) error { return nil }

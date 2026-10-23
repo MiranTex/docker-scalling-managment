@@ -26,7 +26,15 @@ Conta (só "default" por agora)
 ```
 
 **Isolamento.** Cada ambiente tem a sua rede. Os containers de um ambiente
-só estão nessa rede, e só o Traefik e o launcher se ligam a todas. Um
+só estão nessa rede, e só três componentes da plataforma se ligam a todas,
+porque são os que abrem ligações para as apps: o Traefik (tráfego), o
+launcher (health checks) e o Prometheus (métricas). O Grafana e o Loki não
+entram: nunca falam com as apps. A rede de cada ambiente vê-se no separador
+**Redes**.
+
+**Métricas da app.** Com "porta de métricas" num serviço, as réplicas ganham
+as labels `prometheus.scrape/port/path` e o Prometheus recolhe-as pela rede
+do ambiente, com as labels `project`, `env` e `project_service`. Um
 serviço chega a outro do mesmo ambiente por `http://<slug>:<porta>`, e a
 uma base de dados por `<slug-do-addon>:5432`. Nada de um projeto vê outro,
 nem a plataforma.
@@ -128,7 +136,7 @@ auth com role `infra-admin` ou `super-admin`, ou um token de deploy
 | `LAUNCHER_PUBLIC_IPS` | IPs públicos do host, para verificar o DNS dos domínios próprios |
 | `LAUNCHER_ADDON_POSTGRES_IMAGE`, `LAUNCHER_ADDON_REDIS_IMAGE` | por defeito `postgres:17-alpine`, `redis:7-alpine` |
 | `LAUNCHER_HOST_MEMORY_MB`, `LAUNCHER_MEMORY_OVERCOMMIT_RATIO` | teto de memória do host |
-| `LAUNCHER_SELF_CONTAINER`, `TRAEFIK_CONTAINER` | containers ligados a todas as redes de ambiente |
+| `LAUNCHER_SELF_CONTAINER`, `TRAEFIK_CONTAINER`, `LAUNCHER_PROMETHEUS_CONTAINER` | containers da plataforma ligados a todas as redes de ambiente (por defeito o launcher, `traefik` e `monitoring-prometheus-1`) |
 
 ## Limitações conhecidas
 

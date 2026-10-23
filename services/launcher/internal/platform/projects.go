@@ -155,15 +155,31 @@ func (s *Service) CreateEnvironment(ctx context.Context, projectSlug, envSlug, b
 	return s.db.GetEnvironment(ctx, e.ID)
 }
 
-// attachPlatform liga o Traefik e o próprio launcher à rede de um
-// ambiente. De melhor esforço: em dev o Traefik pode nem estar a correr, e
-// já estar ligado não é erro que interesse.
-func (s *Service) attachPlatform(ctx context.Context, network string) {
-	for _, c := range []string{s.cfg.TraefikContainer, s.cfg.SelfContainer} {
-		if c == "" {
-			continue
+// platformContainers são os containers da plataforma que entram nas redes
+// dos ambientes: só os que abrem ligações PARA as apps (Traefik encaminha,
+// launcher faz health checks, Prometheus recolhe métricas). O Grafana e o
+// Loki nunca falam com as apps, por isso ficam de fora.
+func (s *Service) platformContainers() []string {
+	var out []string
+	for _, c := range []string{s.cfg.TraefikContainer, s.cfg.SelfContainer, s.cfg.PrometheusContainer} {
+		if c != "" {
+			out = append(out, c)
 		}
-		if err := s.docker.ConnectNetwork(ctx, network, c); err != nil && !strings.Contains(err.Error(), "already exists") {
+	}
+	return out
+}
+
+// attachPlatform liga os containers da plataforma à rede de um ambiente.
+// De melhor esforço: em dev o monitoring pode nem estar a correr, e já
+// estar ligado não é erro que interesse.
+func (s *Service) attachPlatform(ctx context.Context, network string) {
+	for _, c := range s.platformContainers() {
+		err := s.docker.ConnectNetwork(ctx, network, c)
+		switch {
+		case err == nil, strings.Contains(err.Error(), "already exists"):
+		case isNotFound(err):
+			s.logger.Debug("container da plataforma não existe", "container", c)
+		default:
 			s.logger.Warn("não foi possível ligar container da plataforma à rede do ambiente", "network", network, "container", c, "err", err)
 		}
 	}
@@ -222,10 +238,8 @@ func (s *Service) teardownEnvironment(ctx context.Context, e store.Environment, 
 			return err
 		}
 	}
-	for _, c := range []string{s.cfg.TraefikContainer, s.cfg.SelfContainer} {
-		if c != "" {
-			_ = s.docker.DisconnectNetwork(ctx, e.Network, c)
-		}
+	for _, c := range s.platformContainers() {
+		_ = s.docker.DisconnectNetwork(ctx, e.Network, c)
 	}
 	if err := s.docker.RemoveNetwork(ctx, e.Network); err != nil && !strings.Contains(err.Error(), "404") {
 		return fmt.Errorf("removendo rede %s: %w", e.Network, err)

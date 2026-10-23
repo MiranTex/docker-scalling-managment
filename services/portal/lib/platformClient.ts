@@ -146,6 +146,8 @@ export type Service = {
   deploying: boolean;
   urls: string[];
   problem?: string;
+  metricsPort: number;
+  metricsPath: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -244,3 +246,12 @@ export type VolumeView = {
   deletable: boolean;
   reason?: string;
 };
+
+export type NetworkMember = {
+  container: string;
+  kind: "service" | "addon" | "job" | "platform" | "other";
+  name?: string;
+  state?: string;
+};
+
+export type EnvironmentNetwork = { name: string; subnet?: string; gateway?: string; members: NetworkMember[] };

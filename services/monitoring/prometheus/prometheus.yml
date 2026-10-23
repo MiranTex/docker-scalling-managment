@@ -31,6 +31,22 @@ scrape_configs:
         regex: "/(.*);(.*)"
         target_label: __address__
         replacement: "${1}:${2}"
+      # Caminho das métricas por container (label prometheus.path). Sem a
+      # label fica o default do Prometheus, /metrics -- tudo o que já era
+      # recolhido antes continua igual.
+      - source_labels: [__meta_docker_container_label_prometheus_path]
+        regex: "(.+)"
+        target_label: __metrics_path__
+      # Projeto/ambiente/serviço das apps de projeto (ver
+      # services/launcher/internal/platform), para filtrar as métricas no
+      # Grafana como os logs. "project_service" e não "service": a label
+      # "service" é demasiado comum nas métricas das próprias apps.
+      - source_labels: [__meta_docker_container_label_base_stack_project]
+        target_label: project
+      - source_labels: [__meta_docker_container_label_base_stack_env]
+        target_label: env
+      - source_labels: [__meta_docker_container_label_base_stack_service_slug]
+        target_label: project_service
       # "compose_service" (não "service"): o nosso próprio /metrics já usa a
       # label "service" pro serviço que o autoscaler gerencia (ex: "demo") --
       # se relabelássemos pra "service" aqui, colidiria e o Prometheus

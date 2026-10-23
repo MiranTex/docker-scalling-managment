@@ -100,6 +100,9 @@ type Config struct {
 	// SelfContainer é o container deste launcher -- também ligado a toda
 	// rede de ambiente, para fazer health checks às réplicas.
 	SelfContainer string
+	// PrometheusContainer é ligado a toda rede de ambiente para recolher as
+	// métricas das apps -- as apps nunca saem da sua rede. Vazio desliga.
+	PrometheusContainer string
 
 	// Imagens dos addons -- Postgres 17 e Redis por defeito, trocáveis por
 	// env (ex: para fixar uma minor version).

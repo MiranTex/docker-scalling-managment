@@ -130,3 +130,12 @@ func (a *API) deleteSecret(w http.ResponseWriter, r *http.Request, _ principal) 
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+func (a *API) getNetwork(w http.ResponseWriter, r *http.Request, _ principal) {
+	n, err := a.svc.GetEnvironmentNetwork(r.Context(), r.PathValue("project"), r.PathValue("env"))
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, n)
+}

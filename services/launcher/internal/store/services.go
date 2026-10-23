@@ -56,6 +56,8 @@ type Service struct {
 	CPUScaleDownPercent  float64   `json:"cpuScaleDownPercent"`
 	DesiredState         string    `json:"desiredState"`
 	CurrentRevisionID    *string   `json:"currentRevisionId,omitempty"`
+	MetricsPort          int       `json:"metricsPort"`
+	MetricsPath          string    `json:"metricsPath"`
 	CreatedAt            time.Time `json:"createdAt"`
 	UpdatedAt            time.Time `json:"updatedAt"`
 	CreatedBy            string    `json:"createdBy"`
@@ -63,14 +65,14 @@ type Service struct {
 
 const serviceColumns = `id, environment_id, slug, kind, port, health_path, health_timeout_seconds, cmd, env, release_cmd,
 	vcpu::float8, memory_mb, scaling_mode, replicas, min_replicas, max_replicas, cpu_scale_up_percent, cpu_scale_down_percent,
-	desired_state, current_revision_id, created_at, updated_at, created_by`
+	desired_state, current_revision_id, metrics_port, metrics_path, created_at, updated_at, created_by`
 
 func scanService(row interface{ Scan(...any) error }) (Service, error) {
 	var s Service
 	var cmd, env, release []byte
 	err := row.Scan(&s.ID, &s.EnvironmentID, &s.Slug, &s.Kind, &s.Port, &s.HealthPath, &s.HealthTimeoutSeconds, &cmd, &env, &release,
 		&s.VCPU, &s.MemoryMB, &s.ScalingMode, &s.Replicas, &s.MinReplicas, &s.MaxReplicas, &s.CPUScaleUpPercent, &s.CPUScaleDownPercent,
-		&s.DesiredState, &s.CurrentRevisionID, &s.CreatedAt, &s.UpdatedAt, &s.CreatedBy)
+		&s.DesiredState, &s.CurrentRevisionID, &s.MetricsPort, &s.MetricsPath, &s.CreatedAt, &s.UpdatedAt, &s.CreatedBy)
 	if err != nil {
 		return Service{}, err
 	}
@@ -151,12 +153,12 @@ func (db *DB) CreateService(ctx context.Context, s Service) error {
 	_, err := db.sql.ExecContext(ctx, `
 		INSERT INTO launcher.services (id, environment_id, slug, kind, port, health_path, health_timeout_seconds, cmd, env, release_cmd,
 			vcpu, memory_mb, scaling_mode, replicas, min_replicas, max_replicas, cpu_scale_up_percent, cpu_scale_down_percent,
-			desired_state, created_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
+			desired_state, created_by, metrics_port, metrics_path)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)`,
 		s.ID, s.EnvironmentID, s.Slug, s.Kind, s.Port, s.HealthPath, s.HealthTimeoutSeconds,
 		marshalList(s.Cmd), marshalList(s.Env), marshalList(s.ReleaseCmd),
 		s.VCPU, s.MemoryMB, s.ScalingMode, s.Replicas, s.MinReplicas, s.MaxReplicas, s.CPUScaleUpPercent, s.CPUScaleDownPercent,
-		s.DesiredState, s.CreatedBy)
+		s.DesiredState, s.CreatedBy, s.MetricsPort, s.MetricsPath)
 	if isUniqueViolation(err) {
 		return ErrConflict
 	}
@@ -171,11 +173,12 @@ func (db *DB) UpdateService(ctx context.Context, s Service) error {
 	res, err := db.sql.ExecContext(ctx, `
 		UPDATE launcher.services SET port = $2, health_path = $3, health_timeout_seconds = $4, cmd = $5, env = $6, release_cmd = $7,
 			vcpu = $8, memory_mb = $9, scaling_mode = $10, replicas = $11, min_replicas = $12, max_replicas = $13,
-			cpu_scale_up_percent = $14, cpu_scale_down_percent = $15, desired_state = $16, updated_at = now()
+			cpu_scale_up_percent = $14, cpu_scale_down_percent = $15, desired_state = $16,
+			metrics_port = $17, metrics_path = $18, updated_at = now()
 		WHERE id = $1`,
 		s.ID, s.Port, s.HealthPath, s.HealthTimeoutSeconds, marshalList(s.Cmd), marshalList(s.Env), marshalList(s.ReleaseCmd),
 		s.VCPU, s.MemoryMB, s.ScalingMode, s.Replicas, s.MinReplicas, s.MaxReplicas,
-		s.CPUScaleUpPercent, s.CPUScaleDownPercent, s.DesiredState)
+		s.CPUScaleUpPercent, s.CPUScaleDownPercent, s.DesiredState, s.MetricsPort, s.MetricsPath)
 	if err != nil {
 		return fmt.Errorf("store: atualizando serviço %q: %w", s.Slug, err)
 	}
@@ -213,18 +216,20 @@ type Revision struct {
 	HealthTimeoutSeconds int       `json:"healthTimeoutSeconds"`
 	VCPU                 float64   `json:"vcpu"`
 	MemoryMB             int64     `json:"memoryMb"`
+	MetricsPort          int       `json:"metricsPort"`
+	MetricsPath          string    `json:"metricsPath"`
 	CreatedAt            time.Time `json:"createdAt"`
 	CreatedBy            string    `json:"createdBy"`
 }
 
 const revisionColumns = `id, service_id, number, image, cmd, env, release_cmd, port, health_path, health_timeout_seconds,
-	vcpu::float8, memory_mb, created_at, created_by`
+	vcpu::float8, memory_mb, metrics_port, metrics_path, created_at, created_by`
 
 func scanRevision(row interface{ Scan(...any) error }) (Revision, error) {
 	var r Revision
 	var cmd, env, release []byte
 	err := row.Scan(&r.ID, &r.ServiceID, &r.Number, &r.Image, &cmd, &env, &release, &r.Port, &r.HealthPath, &r.HealthTimeoutSeconds,
-		&r.VCPU, &r.MemoryMB, &r.CreatedAt, &r.CreatedBy)
+		&r.VCPU, &r.MemoryMB, &r.MetricsPort, &r.MetricsPath, &r.CreatedAt, &r.CreatedBy)
 	if err != nil {
 		return Revision{}, err
 	}
@@ -239,12 +244,12 @@ func scanRevision(row interface{ Scan(...any) error }) (Revision, error) {
 func (db *DB) CreateRevision(ctx context.Context, r Revision) (Revision, error) {
 	row := db.sql.QueryRowContext(ctx, `
 		INSERT INTO launcher.revisions (id, service_id, number, image, cmd, env, release_cmd, port, health_path, health_timeout_seconds,
-			vcpu, memory_mb, created_by)
+			vcpu, memory_mb, created_by, metrics_port, metrics_path)
 		VALUES ($1, $2, (SELECT COALESCE(MAX(number), 0) + 1 FROM launcher.revisions WHERE service_id = $2),
-			$3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+			$3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		RETURNING `+revisionColumns,
 		r.ID, r.ServiceID, r.Image, marshalList(r.Cmd), marshalList(r.Env), marshalList(r.ReleaseCmd),
-		r.Port, r.HealthPath, r.HealthTimeoutSeconds, r.VCPU, r.MemoryMB, r.CreatedBy)
+		r.Port, r.HealthPath, r.HealthTimeoutSeconds, r.VCPU, r.MemoryMB, r.CreatedBy, r.MetricsPort, r.MetricsPath)
 	out, err := scanRevision(row)
 	if isUniqueViolation(err) {
 		return Revision{}, ErrConflict

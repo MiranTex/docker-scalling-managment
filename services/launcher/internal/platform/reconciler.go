@@ -13,11 +13,14 @@ const (
 	backupCheckEvery  = 15 * time.Minute
 	backupEvery       = 24 * time.Hour
 	firstBackupAfter  = time.Hour
+	// reattachEvery: um container da plataforma recriado (ex: o Prometheus
+	// depois de um "compose up" do monitoring) perde as redes de ambiente.
+	reattachEvery = time.Minute
 )
 
 // Run é o ciclo de vida da plataforma: no arranque limpa o que ficou a meio
 // de uma execução anterior, e depois converge periodicamente o Docker para
-// o que está na base (addons e, na fase seguinte, serviços). Bloqueia até
+// o que está na base (addons, serviços, domínios e routing). Bloqueia até
 // ctx terminar.
 func (s *Service) Run(ctx context.Context) {
 	s.startupCleanup(ctx)
@@ -27,6 +30,8 @@ func (s *Service) Run(ctx context.Context) {
 	defer tick.Stop()
 	backups := time.NewTicker(backupCheckEvery)
 	defer backups.Stop()
+	reattach := time.NewTicker(reattachEvery)
+	defer reattach.Stop()
 
 	s.reconcileOnce(ctx)
 	for {
@@ -37,6 +42,8 @@ func (s *Service) Run(ctx context.Context) {
 			s.reconcileOnce(ctx)
 		case <-s.rt.kick:
 			s.reconcileOnce(ctx)
+		case <-reattach.C:
+			s.AttachPlatformToAll(ctx)
 		case <-backups.C:
 			s.runDueBackups(ctx)
 		}

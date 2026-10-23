@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"strings"
 	"testing"
 
 	"launcher/internal/dockerclient"
@@ -22,7 +23,7 @@ func newTestService(t *testing.T) (*Service, *fakeDocker) {
 		t.Fatal(err)
 	}
 	docker := newFakeDocker()
-	return New(db, docker, box, Config{TraefikContainer: "traefik", SelfContainer: "launcher"}, nil), docker
+	return New(db, docker, box, Config{TraefikContainer: "traefik", SelfContainer: "launcher", PrometheusContainer: "prometheus"}, nil), docker
 }
 
 func TestProjectAndEnvironmentLifecycle(t *testing.T) {
@@ -50,8 +51,8 @@ func TestProjectAndEnvironmentLifecycle(t *testing.T) {
 	if labels[LabelProject] != "loja" || labels[LabelEnvironmentID] != env.ID || labels[dockerclient.PlatformLabel] != "true" {
 		t.Errorf("labels da rede = %v", labels)
 	}
-	if got := docker.connected["bs-loja-production"]; len(got) != 2 {
-		t.Errorf("containers ligados à rede = %v, queria traefik e launcher", got)
+	if got := docker.connected["bs-loja-production"]; strings.Join(got, ",") != "traefik,launcher,prometheus" {
+		t.Errorf("containers ligados à rede = %v, queria traefik, launcher e prometheus", got)
 	}
 	if _, err := svc.CreateEnvironment(ctx, "loja", "production", "tester"); !errors.Is(err, ErrConflict) {
 		t.Fatalf("ambiente repetido: err = %v", err)
