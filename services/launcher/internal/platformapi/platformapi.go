@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strings"
 
+	"launcher/internal/apikeyclient"
 	"launcher/internal/jwtverify"
 	"launcher/internal/platform"
 )
@@ -24,17 +25,29 @@ type TokenVerifier interface {
 	Verify(ctx context.Context, tokenString string) (jwtverify.Claims, error)
 }
 
-type API struct {
-	svc    *platform.Service
-	tokens TokenVerifier
-	logger *slog.Logger
+// APIKeys valida API keys pessoais (ak_...) -- ver internal/apikeyclient.
+// nil desliga-as: só access tokens.
+type APIKeys interface {
+	Introspect(ctx context.Context, key string) (apikeyclient.Result, error)
 }
 
-func New(svc *platform.Service, tokens TokenVerifier, logger *slog.Logger) *API {
+// platformScope é o scope que uma API key pessoal precisa para chegar a
+// esta API: uma key criada para outra coisa não ganha acesso à plataforma
+// só porque o dono é admin.
+const platformScope = "platform"
+
+type API struct {
+	svc     *platform.Service
+	tokens  TokenVerifier
+	apiKeys APIKeys
+	logger  *slog.Logger
+}
+
+func New(svc *platform.Service, tokens TokenVerifier, apiKeys APIKeys, logger *slog.Logger) *API {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &API{svc: svc, tokens: tokens, logger: logger}
+	return &API{svc: svc, tokens: tokens, apiKeys: apiKeys, logger: logger}
 }
 
 // Register acrescenta as rotas a um mux existente (o do httpapi), para o
@@ -134,12 +147,17 @@ func bearer(r *http.Request) string {
 }
 
 // requireAdmin aceita um access token do auth service com role
-// infra-admin (ou super-admin, o bypass universal da plataforma).
+// infra-admin (ou super-admin, o bypass universal da plataforma), ou uma
+// API key pessoal com o scope "platform" cujo dono tenha uma dessas roles.
 func (a *API) requireAdmin(next handlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token := bearer(r)
 		if token == "" {
 			writeError(w, http.StatusUnauthorized, "missing_token", "cabeçalho Authorization: Bearer <token> é obrigatório")
+			return
+		}
+		if strings.HasPrefix(token, apikeyclient.Prefix) {
+			a.withAPIKey(w, r, token, next)
 			return
 		}
 		claims, err := a.tokens.Verify(r.Context(), token)
@@ -177,6 +195,27 @@ func (a *API) requireAdminOrDeployToken(next handlerFunc) http.HandlerFunc {
 		default:
 			next(w, r, principal{Subject: "deploy-token:" + t.Name})
 		}
+	}
+}
+
+func (a *API) withAPIKey(w http.ResponseWriter, r *http.Request, key string, next handlerFunc) {
+	if a.apiKeys == nil {
+		writeError(w, http.StatusUnauthorized, "invalid_token", "API keys não estão ligadas nesta API")
+		return
+	}
+	res, err := a.apiKeys.Introspect(r.Context(), key)
+	switch {
+	case err != nil:
+		a.logger.Error("validando API key", "err", err)
+		writeError(w, http.StatusBadGateway, "auth_unavailable", "não foi possível validar a API key")
+	case !res.Active:
+		writeError(w, http.StatusUnauthorized, "invalid_token", "API key inválida, expirada ou revogada")
+	case !res.HasScope(platformScope):
+		writeError(w, http.StatusForbidden, "forbidden", "esta API key não tem o scope \""+platformScope+"\"")
+	case res.Role != roleInfraAdmin && res.Role != roleSuperAdmin:
+		writeError(w, http.StatusForbidden, "forbidden", "o dono desta API key não tem a role "+roleInfraAdmin)
+	default:
+		next(w, r, principal{Subject: res.Owner})
 	}
 }
 

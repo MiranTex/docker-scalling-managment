@@ -59,7 +59,7 @@ func TestDeployTokenScope(t *testing.T) {
 	box, _ := secretbox.New(base64.StdEncoding.EncodeToString(key))
 	svc := platform.New(storetest.New(t), netDocker{}, box, platform.Config{}, nil)
 	mux := http.NewServeMux()
-	New(svc, adminTokens{}, nil).Register(mux)
+	New(svc, adminTokens{}, nil, nil).Register(mux)
 
 	for _, p := range []string{"loja", "blog"} {
 		if _, err := svc.CreateProject(ctx, platform.CreateProjectInput{Slug: p}, "t"); err != nil {
