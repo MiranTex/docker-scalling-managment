@@ -12,8 +12,15 @@ import (
 // é pelas labels que se sabe se o volume pertence a uma stack compose
 // (ver internal/httpapi, SpecPolicy).
 type Volume struct {
-	Name   string            `json:"Name"`
-	Labels map[string]string `json:"Labels"`
+	Name      string            `json:"Name"`
+	Labels    map[string]string `json:"Labels"`
+	Driver    string            `json:"Driver"`
+	CreatedAt string            `json:"CreatedAt"`
+	// UsageData só vem preenchido em /system/df (ver VolumesWithUsage).
+	UsageData *struct {
+		Size     int64 `json:"Size"`     // bytes; -1 = desconhecido
+		RefCount int64 `json:"RefCount"` // containers que o montam
+	} `json:"UsageData,omitempty"`
 }
 
 // FindVolume devolve o volume com exatamente este nome, ou nil se ainda
@@ -68,6 +75,19 @@ func (c *Client) ListVolumesByLabel(ctx context.Context, label string) ([]Volume
 		Volumes []Volume `json:"Volumes"`
 	}
 	if err := c.do(ctx, "GET", "/volumes?filters="+url.QueryEscape(string(filters)), nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Volumes, nil
+}
+
+// VolumesWithUsage lista todos os volumes com o espaço que ocupam. É a
+// mesma conta do `docker system df -v` -- percorre o disco, por isso não
+// se chama em ciclo, só quando alguém abre a lista.
+func (c *Client) VolumesWithUsage(ctx context.Context) ([]Volume, error) {
+	var resp struct {
+		Volumes []Volume `json:"Volumes"`
+	}
+	if err := c.do(ctx, "GET", "/system/df?type=volume", nil, &resp); err != nil {
 		return nil, err
 	}
 	return resp.Volumes, nil

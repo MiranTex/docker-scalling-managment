@@ -230,3 +230,17 @@ export type Domain = {
   expectedIps: string[];
   expectedCname?: string;
 };
+
+export type VolumeView = {
+  name: string;
+  createdAt: string;
+  sizeBytes: number;
+  status: "in-use" | "free" | "orphan";
+  project: string;
+  environment?: string;
+  addon?: string;
+  kind?: "data" | "backups";
+  usedBy: { container: string; state: string; path: string }[];
+  deletable: boolean;
+  reason?: string;
+};

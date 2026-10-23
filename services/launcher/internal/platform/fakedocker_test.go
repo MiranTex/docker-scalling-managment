@@ -192,6 +192,22 @@ func (f *fakeDocker) ListVolumesByLabel(_ context.Context, label string) ([]dock
 	return out, nil
 }
 
+// VolumesWithUsage devolve os volumes com um tamanho fixo de 1 MiB.
+func (f *fakeDocker) VolumesWithUsage(context.Context) ([]dockerclient.Volume, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []dockerclient.Volume
+	for name, labels := range f.volumes {
+		v := dockerclient.Volume{Name: name, Labels: labels, Driver: "local"}
+		v.UsageData = &struct {
+			Size     int64 `json:"Size"`
+			RefCount int64 `json:"RefCount"`
+		}{Size: 1 << 20}
+		out = append(out, v)
+	}
+	return out, nil
+}
+
 func (f *fakeDocker) InspectImage(context.Context, string) (*dockerclient.ImageInspect, error) {
 	return &dockerclient.ImageInspect{ID: "sha256:x"}, nil
 }
