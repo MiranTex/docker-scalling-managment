@@ -22,16 +22,30 @@ type traefikConfig struct {
 }
 
 type traefikHTTP struct {
-	Routers  map[string]traefikRouter  `json:"routers"`
-	Services map[string]traefikService `json:"services"`
+	Routers     map[string]traefikRouter     `json:"routers"`
+	Services    map[string]traefikService    `json:"services"`
+	Middlewares map[string]traefikMiddleware `json:"middlewares,omitempty"`
 }
 
 type traefikRouter struct {
 	Rule        string      `json:"rule"`
 	EntryPoints []string    `json:"entryPoints"`
 	Service     string      `json:"service"`
+	Middlewares []string    `json:"middlewares,omitempty"`
 	TLS         *traefikTLS `json:"tls,omitempty"`
 }
+
+type traefikMiddleware struct {
+	RedirectScheme *struct {
+		Scheme    string `json:"scheme"`
+		Permanent bool   `json:"permanent"`
+	} `json:"redirectScheme,omitempty"`
+}
+
+// redirectMiddleware manda HTTP para HTTPS quando há certificados. O
+// challenge HTTP-01 da Let's Encrypt não é afetado: o Traefik dá ao seu
+// router de ACME prioridade sobre qualquer outro na porta 80.
+const redirectMiddleware = "bs-redirect-https"
 
 type traefikTLS struct {
 	CertResolver string `json:"certResolver"`
@@ -83,9 +97,18 @@ func (s *Service) serviceHosts(ctx context.Context, p store.Project, e store.Env
 	return hosts
 }
 
-// activeDomains é preenchido na fase dos domínios próprios.
+// activeDomains são os domínios próprios com DNS verificado.
 func (s *Service) activeDomains(ctx context.Context, serviceID string) []string {
-	return nil
+	domains, err := s.db.ListActiveDomains(ctx, serviceID)
+	if err != nil {
+		s.logger.Error("routing: domínios do serviço", "service_id", serviceID, "err", err)
+		return nil
+	}
+	out := make([]string, len(domains))
+	for i, d := range domains {
+		out[i] = d.Hostname
+	}
+	return out
 }
 
 func hostRule(hosts []string) string {
@@ -147,10 +170,20 @@ func (s *Service) buildRouting(ctx context.Context) (traefikConfig, error) {
 		name := "bs-" + svc.ID
 		rule := hostRule(hosts)
 		cfg.HTTP.Services[name] = traefikService{LoadBalancer: traefikLB{Servers: servers, PassHostHeader: true}}
-		cfg.HTTP.Routers[name] = traefikRouter{Rule: rule, EntryPoints: []string{"web"}, Service: name}
+		httpRouter := traefikRouter{Rule: rule, EntryPoints: []string{"web"}, Service: name}
 		if s.cfg.TLSCertResolver != "" {
+			httpRouter.Middlewares = []string{redirectMiddleware}
 			cfg.HTTP.Routers[name+"-tls"] = traefikRouter{Rule: rule, EntryPoints: []string{"websecure"}, Service: name, TLS: &traefikTLS{CertResolver: s.cfg.TLSCertResolver}}
 		}
+		cfg.HTTP.Routers[name] = httpRouter
+	}
+	if s.cfg.TLSCertResolver != "" && len(cfg.HTTP.Routers) > 0 {
+		var mw traefikMiddleware
+		mw.RedirectScheme = &struct {
+			Scheme    string `json:"scheme"`
+			Permanent bool   `json:"permanent"`
+		}{Scheme: "https", Permanent: true}
+		cfg.HTTP.Middlewares = map[string]traefikMiddleware{redirectMiddleware: mw}
 	}
 	return cfg, nil
 }

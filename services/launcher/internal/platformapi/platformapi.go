@@ -84,6 +84,11 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+svc+"/deployments", deployer(a.createDeployment))
 	mux.HandleFunc("GET "+svc+"/deployments/{deployment}", deployer(a.getDeployment))
 
+	mux.HandleFunc("GET "+svc+"/domains", admin(a.listDomains))
+	mux.HandleFunc("POST "+svc+"/domains", admin(a.addDomain))
+	mux.HandleFunc("POST "+svc+"/domains/{hostname}/verify", admin(a.verifyDomain))
+	mux.HandleFunc("DELETE "+svc+"/domains/{hostname}", admin(a.deleteDomain))
+
 	mux.HandleFunc("GET /v1/projects/{project}/deploy-tokens", admin(a.listDeployTokens))
 	mux.HandleFunc("POST /v1/projects/{project}/deploy-tokens", admin(a.createDeployToken))
 	mux.HandleFunc("DELETE /v1/projects/{project}/deploy-tokens/{token}", admin(a.revokeDeployToken))

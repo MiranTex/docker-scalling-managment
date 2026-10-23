@@ -365,6 +365,10 @@ services:
       # Onde escrever o routing dos serviços de projeto (o mesmo volume que
       # o Traefik lê, ver serviço "traefik").
       LAUNCHER_TRAEFIK_DYNAMIC_DIR: /etc/traefik/dynamic
+      # IPs públicos deste host (separados por vírgula). Um domínio próprio
+      # de um serviço só entra no routing quando o DNS dele resolve para um
+      # destes. Vazio (dev) = sem verificação, o domínio fica logo ativo.
+      LAUNCHER_PUBLIC_IPS: "${LAUNCHER_PUBLIC_IPS:-}"
       LAUNCHER_SECRETS_KEY: "${LAUNCHER_SECRETS_KEY:-Gb6oAL1A3uEIJGpHTDeN4YkGTQzI3LDAlii+jX18x6o=}"
     labels:
       base-stack.managed: "true"

@@ -15,6 +15,7 @@ import {
   type Service,
 } from "@/lib/platformClient";
 import ConfirmModal from "../../../../../admin/database/ConfirmModal";
+import DomainsCard from "./DomainsCard";
 import ServiceConfig from "./ServiceConfig";
 
 export default function ServiceClient({ project, env, svc }: { project: string; env: string; svc: string }) {
@@ -327,6 +328,8 @@ export default function ServiceClient({ project, env, svc }: { project: string; 
           </button>
         </div>
       </div>
+
+      {service.kind === "web" && <DomainsCard project={project} env={env} svc={svc} />}
 
       <ServiceConfig project={project} env={env} service={service} onSaved={load} joinArgs={joinArgs} />
 
