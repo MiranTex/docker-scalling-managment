@@ -1,5 +1,6 @@
 "use client";
 
+import PageHeader from "@/components/PageHeader";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -36,17 +37,17 @@ export default function AutoscalerListClient() {
   }, []);
 
   return (
-    <div className="card wide">
-      <div className="row">
-        <h1>Autoscalers</h1>
-        <Link href="/admin/autoscaler/new" className="secondary">
-          + Criar grupo
+    <>
+    <PageHeader
+      title="Autoscalers"
+      description="Cada linha é um autoscaler-group vivo, descoberto dinamicamente contra o launcher (GET /v1/groups)."
+      actions={
+        <Link href="/admin/autoscaler/new" className="primary">
+          Criar grupo
         </Link>
-      </div>
-      <p className="muted">
-        Cada linha é um autoscaler-group vivo, descoberto dinamicamente contra o launcher (ver
-        services/launcher, GET /v1/groups) -- não uma lista configurada à mão.
-      </p>
+      }
+    />
+    <div className="card wide">
       {listError && <div className="error">{listError}</div>}
       {!instances ? (
         <p className="muted">A carregar...</p>
@@ -99,5 +100,6 @@ export default function AutoscalerListClient() {
         </table>
       )}
     </div>
+    </>
   );
 }

@@ -181,7 +181,7 @@ export function listGroups(accessToken: string) {
 // nem todo group foi lançado por ele, ex: um group estático num compose). É esta função,
 // não deleteInstance, que o ecrã /admin/autoscaler usa para "Parar
 // grupo" -- deliberadamente não exposta em /admin/launcher (ver
-// LauncherAdminClient.tsx).
+// InstancesClient.tsx).
 export function deleteGroup(accessToken: string, containerId: string) {
   return launcherFetch(`/v1/groups/${encodeURIComponent(containerId)}`, accessToken, { method: "DELETE" });
 }

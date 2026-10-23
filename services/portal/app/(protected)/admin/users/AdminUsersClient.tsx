@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Modal from "@/components/Modal";
+import PageHeader from "@/components/PageHeader";
 import type { AdminUser, TokenPair } from "@/lib/authClient";
 
 const ROLES = ["user", "admin", "infra-admin", "super-admin", "service"];
@@ -20,7 +22,7 @@ export default function AdminUsersClient() {
   const [savingID, setSavingID] = useState<string | null>(null);
   const [mintingID, setMintingID] = useState<string | null>(null);
   const [mintedTokens, setMintedTokens] = useState<MintedTokens | null>(null);
-
+  const [creating, setCreating] = useState(false);
   async function loadUsers() {
     const res = await fetch("/api/admin/users");
     if (res.ok) setUsers(await res.json());
@@ -47,6 +49,7 @@ export default function AdminUsersClient() {
       }
       setEmail("");
       setPassword("");
+      setCreating(false);
       await loadUsers();
     } finally {
       setLoading(false);
@@ -101,46 +104,67 @@ export default function AdminUsersClient() {
 
   return (
     <>
-      <div className="card wide">
-        <h1>Criar utilizador</h1>
-        <p className="muted">
-          Ao contrário do registo público, esta conta já nasce com o e-mail
-          verificado — és tu, como super-admin, que estás a garantir por ela.
-        </p>
-        {error && <div className="error">{error}</div>}
-        <form onSubmit={handleCreate}>
-          <label htmlFor="email">E-mail</label>
-          <input id="email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
-          <label htmlFor="password">Senha (mínimo 8 caracteres)</label>
-          <input
-            id="password"
-            type="password"
-            required
-            minLength={8}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
-          {role === "service" && (
-            <p className="muted">
-              A senha é exigida na criação, mas o autoscaler autentica-se com o refresh token gerado abaixo.
-            </p>
-          )}
-          <label htmlFor="role">Role</label>
-          <select id="role" value={role} onChange={(e) => setRole(e.target.value)}>
-            {ROLES.map((r) => (
-              <option key={r} value={r}>
-                {r}
-              </option>
-            ))}
-          </select>
-          <button className="primary" type="submit" disabled={loading}>
-            {loading ? "A criar..." : "Criar utilizador"}
+      <PageHeader
+        title="Utilizadores"
+        actions={
+          <button
+            className="primary"
+            onClick={() => {
+              setError(null);
+              setCreating(true);
+            }}
+          >
+            Novo utilizador
           </button>
-        </form>
-      </div>
+        }
+      />
+      {error && !creating && <div className="error">{error}</div>}
+      {creating && (
+        <Modal title="Criar utilizador" onClose={() => setCreating(false)}>
+          <p className="muted">
+            Ao contrário do registo público, esta conta já nasce com o e-mail verificado — és tu, como super-admin, que
+            estás a garantir por ela.
+          </p>
+          {error && <div className="error">{error}</div>}
+          <form onSubmit={handleCreate}>
+            <label htmlFor="email">E-mail</label>
+            <input id="email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+            <label htmlFor="password">Senha (mínimo 8 caracteres)</label>
+            <input
+              id="password"
+              type="password"
+              required
+              minLength={8}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+            {role === "service" && (
+              <p className="muted">
+                A senha é exigida na criação, mas o autoscaler autentica-se com o refresh token gerado na lista.
+              </p>
+            )}
+            <label htmlFor="role">Role</label>
+            <select id="role" value={role} onChange={(e) => setRole(e.target.value)}>
+              {ROLES.map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
+            </select>
+            <div className="row">
+              <button className="primary" type="submit" disabled={loading}>
+                {loading ? "A criar..." : "Criar utilizador"}
+              </button>
+              <button className="secondary" type="button" onClick={() => setCreating(false)}>
+                Cancelar
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
 
       <div className="card wide">
-        <h1>Utilizadores</h1>
+        <h2>Contas</h2>
         {mintedTokens && (
           <div className="notice">
             <strong>Guarda estes tokens agora. Não serão mostrados novamente.</strong>

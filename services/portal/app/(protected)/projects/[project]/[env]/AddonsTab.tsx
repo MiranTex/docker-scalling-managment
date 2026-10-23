@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Modal from "@/components/Modal";
 import { api, envPath, formatBytes, statusBadge, type Addon, type Backup } from "@/lib/platformClient";
 import ConfirmModal from "../../../admin/database/ConfirmModal";
 
@@ -12,6 +13,7 @@ export default function AddonsTab({ project, env }: { project: string; env: stri
   const [notice, setNotice] = useState<string | null>(null);
   const [form, setForm] = useState(EMPTY);
   const [saving, setSaving] = useState(false);
+  const [open, setOpen] = useState(false);
   const [backups, setBackups] = useState<Record<string, Backup[]>>({});
   const [deleteTarget, setDeleteTarget] = useState<Addon | null>(null);
   const [purge, setPurge] = useState(false);
@@ -47,6 +49,7 @@ export default function AddonsTab({ project, env }: { project: string; env: stri
         }),
       });
       setForm(EMPTY);
+      setOpen(false);
       await load();
     } catch (e) {
       setError((e as Error).message);
@@ -115,11 +118,16 @@ export default function AddonsTab({ project, env }: { project: string; env: stri
 
   return (
     <>
-      <p className="muted">
+      <div className="page-header">
+      <p className="muted" style={{ margin: 0 }}>
         Cada addon é um container próprio deste ambiente, com volume próprio. A URL de ligação fica como segredo gerido
         (ex: <code>DATABASE_URL</code>) e é injetada em todos os serviços do ambiente.
       </p>
-      {error && <div className="error">{error}</div>}
+        <button className="primary" onClick={() => setOpen(true)}>
+          Novo addon
+        </button>
+      </div>
+      {!open && error && <div className="error">{error}</div>}
       {notice && <div className="notice">{notice}</div>}
       {!addons ? (
         <p className="muted">A carregar...</p>
@@ -201,7 +209,9 @@ export default function AddonsTab({ project, env }: { project: string; env: stri
         </table>
       )}
 
-      <h2>Novo addon</h2>
+      {open && (
+        <Modal title="Novo addon" onClose={() => setOpen(false)}>
+          {error && <div className="error">{error}</div>}
       <div className="form-grid">
         <div>
           <label htmlFor="addon-kind">Tipo</label>
@@ -237,9 +247,14 @@ export default function AddonsTab({ project, env }: { project: string; env: stri
           <input id="addon-mem" value={form.memoryMb} onChange={(e) => setForm({ ...form, memoryMb: e.target.value })} />
         </div>
       </div>
-      <button className="secondary" disabled={saving || !form.slug.trim()} onClick={create}>
+      <button className="primary" disabled={saving || !form.slug.trim()} onClick={create}>
         {saving ? "A criar..." : "Criar addon"}
       </button>
+          <button className="secondary" onClick={() => setOpen(false)}>
+            Cancelar
+          </button>
+        </Modal>
+      )}
 
       {deleteTarget && (
         <ConfirmModal

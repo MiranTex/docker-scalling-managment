@@ -97,7 +97,7 @@ export function getBackupJob(accessToken: string, id: string) {
 
 // PITR -- irreversível a partir do momento em que é disparado (ver
 // services/database/README.md). A confirmação "escreve o nome da BD"
-// acontece na UI (DatabaseAdminClient), antes deste pedido sequer sair
+// acontece na UI (RestoreClient), antes deste pedido sequer sair
 // do browser -- isto é só o transporte.
 
 export function triggerRestore(accessToken: string, type: string, target: string) {

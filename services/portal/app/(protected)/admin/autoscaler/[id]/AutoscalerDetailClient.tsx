@@ -1,5 +1,6 @@
 "use client";
 
+import PageHeader from "@/components/PageHeader";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -190,16 +191,17 @@ export default function AutoscalerDetailClient({ id }: { id: string }) {
 
   return (
     <>
-      <div className="card wide">
-        <div className="row">
-          <h1>
-            {instance.label}
-            {status && <> -- {status.target_service}</>}
-          </h1>
-          <Link href="/admin/autoscaler" className="muted">
-            ← Voltar à lista
+      <PageHeader
+        title={instance.label}
+        description={status ? `Serviço: ${status.target_service}` : undefined}
+        actions={
+          <Link href="/admin/autoscaler" className="secondary">
+            Voltar
           </Link>
-        </div>
+        }
+      />
+      <div className="detail-grid">
+      <div className="card wide">
         {loadError && <div className="error">{loadError}</div>}
         {instance.error && <div className="error">{instance.error}</div>}
 
@@ -297,7 +299,7 @@ export default function AutoscalerDetailClient({ id }: { id: string }) {
       </div>
 
       {status && (
-        <>
+        <div>
           <div className="card wide">
             <h1>Policy de scaling</h1>
             <p className="muted">
@@ -388,8 +390,9 @@ export default function AutoscalerDetailClient({ id }: { id: string }) {
               {stoppingGroup ? "A parar..." : "Parar grupo"}
             </button>
           </div>
-        </>
+        </div>
       )}
+      </div>
 
       {confirmRestart && status && (
         <ConfirmModal

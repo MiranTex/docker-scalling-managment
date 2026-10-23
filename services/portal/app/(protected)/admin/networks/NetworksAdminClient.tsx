@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Modal from "@/components/Modal";
 import type { ContainerSummary, DockerNetwork, NetworkDetail } from "@/lib/launcherClient";
 import ConfirmModal from "../database/ConfirmModal";
 
@@ -27,6 +28,7 @@ export default function NetworksAdminClient() {
   const [newName, setNewName] = useState("");
   const [createError, setCreateError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
 
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -109,6 +111,7 @@ export default function NetworksAdminClient() {
         return;
       }
       setNewName("");
+      setCreateOpen(false);
       await loadNetworks();
       selectNetwork(name);
     } catch {
@@ -190,7 +193,18 @@ export default function NetworksAdminClient() {
   return (
     <>
       <div className="card wide">
-        <h1>Redes</h1>
+        <div className="page-header">
+          <h2 style={{ margin: 0 }}>Redes</h2>
+          <button
+            className="primary"
+            onClick={() => {
+              setCreateError(null);
+              setCreateOpen(true);
+            }}
+          >
+            Criar rede
+          </button>
+        </div>
         <p className="muted">
           Redes Docker definidas pelo utilizador -- é aqui que se escolhe/cria a rede usada ao
           lançar uma instância (<a href="/admin/launcher">/admin/launcher</a>) ou criar um grupo (
@@ -268,8 +282,8 @@ export default function NetworksAdminClient() {
         )}
       </div>
 
-      <div className="card wide">
-        <h1>Criar rede</h1>
+      {createOpen && (
+      <Modal title="Criar rede" onClose={() => setCreateOpen(false)}>
         {createError && <div className="error">{createError}</div>}
         <label htmlFor="new-network-name">Nome</label>
         <input
@@ -280,15 +294,19 @@ export default function NetworksAdminClient() {
           placeholder="rede-do-projeto-x"
         />
         <div className="row">
-          <button className="secondary" disabled={creating} onClick={handleCreate}>
+          <button className="primary" disabled={creating} onClick={handleCreate}>
             {creating ? "A criar..." : "Criar rede"}
           </button>
+          <button className="secondary" onClick={() => setCreateOpen(false)}>
+            Cancelar
+          </button>
         </div>
-      </div>
+      </Modal>
+      )}
 
       {selectedName && (
         <div className="card wide">
-          <h1>{selectedName}</h1>
+          <h2>{selectedName}</h2>
           {detailError && <div className="error">{detailError}</div>}
           {connectionError && <div className="error">{connectionError}</div>}
 
@@ -348,6 +366,7 @@ export default function NetworksAdminClient() {
           )}
         </div>
       )}
+
 
       {deleteTarget && (
         <ConfirmModal

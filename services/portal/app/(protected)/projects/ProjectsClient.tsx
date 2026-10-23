@@ -2,11 +2,14 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import Modal from "@/components/Modal";
+import PageHeader from "@/components/PageHeader";
 import { api, type Project } from "@/lib/platformClient";
 
 export default function ProjectsClient() {
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [listError, setListError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
   const [slug, setSlug] = useState("");
   const [name, setName] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
@@ -25,6 +28,11 @@ export default function ProjectsClient() {
     load();
   }, []);
 
+  function openCreate() {
+    setFormError(null);
+    setCreating(true);
+  }
+
   async function handleCreate() {
     setFormError(null);
     setSaving(true);
@@ -32,6 +40,7 @@ export default function ProjectsClient() {
       await api("projects", { method: "POST", body: JSON.stringify({ slug: slug.trim(), name: name.trim() }) });
       setSlug("");
       setName("");
+      setCreating(false);
       await load();
     } catch (e) {
       setFormError((e as Error).message);
@@ -42,12 +51,17 @@ export default function ProjectsClient() {
 
   return (
     <>
+      <PageHeader
+        title="Projetos"
+        description="Cada projeto tem ambientes isolados (rede, segredos, serviços e bases de dados próprios). Nada é partilhado entre projetos."
+        actions={
+          <button className="primary" onClick={openCreate}>
+            Novo projeto
+          </button>
+        }
+      />
+
       <div className="card wide">
-        <h1>Projetos</h1>
-        <p className="muted">
-          Cada projeto tem ambientes isolados (rede, segredos, serviços e bases de dados próprios). Nada é
-          partilhado entre projetos.
-        </p>
         {listError && <div className="error">{listError}</div>}
         {!projects ? (
           <p className="muted">A carregar...</p>
@@ -79,23 +93,24 @@ export default function ProjectsClient() {
         )}
       </div>
 
-      <div className="card wide">
-        <h1>Novo projeto</h1>
-        {formError && <div className="error">{formError}</div>}
-        <label htmlFor="project-slug">Slug</label>
-        <input
-          id="project-slug"
-          value={slug}
-          onChange={(e) => setSlug(e.target.value)}
-          placeholder="loja"
-        />
-        <p className="muted">Fixo depois de criado: entra nos nomes de redes, containers e hostnames.</p>
-        <label htmlFor="project-name">Nome</label>
-        <input id="project-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Loja online" />
-        <button className="secondary" disabled={saving || !slug.trim()} onClick={handleCreate}>
-          {saving ? "A criar..." : "Criar projeto"}
-        </button>
-      </div>
+      {creating && (
+        <Modal title="Novo projeto" onClose={() => setCreating(false)}>
+          {formError && <div className="error">{formError}</div>}
+          <label htmlFor="project-slug">Slug</label>
+          <input id="project-slug" value={slug} onChange={(e) => setSlug(e.target.value)} placeholder="loja" autoFocus />
+          <p className="muted">Fixo depois de criado: entra nos nomes de redes, containers e hostnames.</p>
+          <label htmlFor="project-name">Nome</label>
+          <input id="project-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Loja online" />
+          <div className="row">
+            <button className="primary" disabled={saving || !slug.trim()} onClick={handleCreate}>
+              {saving ? "A criar..." : "Criar projeto"}
+            </button>
+            <button className="secondary" onClick={() => setCreating(false)}>
+              Cancelar
+            </button>
+          </div>
+        </Modal>
+      )}
     </>
   );
 }

@@ -1,6 +1,9 @@
 import { cookies } from "next/headers";
+import PageHeader from "@/components/PageHeader";
 import { decodeJwtPayload } from "@/lib/jwt";
+import { hasInfraAdminAccess } from "@/lib/roles";
 import { ACCESS_COOKIE, EMAIL_COOKIE } from "@/lib/session";
+import OverviewPanel from "./OverviewPanel";
 
 export default async function DashboardPage() {
   const cookieStore = await cookies();
@@ -10,9 +13,11 @@ export default async function DashboardPage() {
   const exp = claims?.exp ? new Date((claims.exp as number) * 1000) : null;
 
   return (
+    <>
+      <PageHeader title="Visão geral" description={email ? `Sessão ativa como ${email}.` : undefined} />
+      {hasInfraAdminAccess(claims?.role as string | undefined) && <OverviewPanel />}
     <div className="card wide">
-      <h1>Sessão</h1>
-      <p className="notice">Sessão ativa{email ? ` como ${email}` : ""}.</p>
+      <h2>Sessão</h2>
       <table>
         <tbody>
           <tr>
@@ -39,5 +44,6 @@ export default async function DashboardPage() {
         não precisas de entrar de novo a cada expiração.
       </p>
     </div>
+    </>
   );
 }

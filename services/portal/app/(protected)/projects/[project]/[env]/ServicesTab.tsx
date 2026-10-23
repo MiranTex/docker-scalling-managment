@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import Modal from "@/components/Modal";
 import { api, envPath, statusBadge, type Service } from "@/lib/platformClient";
 
 const EMPTY = { slug: "", kind: "web", port: "8080", healthPath: "/", image: "" };
@@ -11,6 +12,7 @@ export default function ServicesTab({ project, env }: { project: string; env: st
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState(EMPTY);
   const [saving, setSaving] = useState(false);
+  const [open, setOpen] = useState(false);
 
   async function load() {
     try {
@@ -47,6 +49,7 @@ export default function ServicesTab({ project, env }: { project: string; env: st
         });
       }
       setForm(EMPTY);
+      setOpen(false);
       await load();
     } catch (e) {
       setError((e as Error).message);
@@ -67,11 +70,19 @@ export default function ServicesTab({ project, env }: { project: string; env: st
 
   return (
     <>
-      {error && <div className="error">{error}</div>}
+      <div className="page-header">
+        <p className="muted" style={{ margin: 0 }}>
+          Web na porta da tua app, ou um worker de filas.
+        </p>
+        <button className="primary" onClick={() => setOpen(true)}>
+          Novo serviço
+        </button>
+      </div>
+      {!open && error && <div className="error">{error}</div>}
       {!services ? (
         <p className="muted">A carregar...</p>
       ) : services.length === 0 ? (
-        <p className="muted">Sem serviços. Cria um abaixo (ex: web na porta da tua app, ou um worker de filas).</p>
+        <p className="muted">Sem serviços ainda.</p>
       ) : (
         <table>
           <thead>
@@ -127,7 +138,9 @@ export default function ServicesTab({ project, env }: { project: string; env: st
         </table>
       )}
 
-      <h2>Novo serviço</h2>
+      {open && (
+        <Modal title="Novo serviço" onClose={() => setOpen(false)}>
+          {error && <div className="error">{error}</div>}
       <div className="form-grid">
         <div>
           <label htmlFor="svc-slug">Slug</label>
@@ -167,9 +180,14 @@ export default function ServicesTab({ project, env }: { project: string; env: st
           />
         </div>
       </div>
-      <button className="secondary" disabled={saving || !form.slug.trim()} onClick={create}>
+      <button className="primary" disabled={saving || !form.slug.trim()} onClick={create}>
         {saving ? "A criar..." : "Criar serviço"}
       </button>
+          <button className="secondary" onClick={() => setOpen(false)}>
+            Cancelar
+          </button>
+        </Modal>
+      )}
     </>
   );
 }

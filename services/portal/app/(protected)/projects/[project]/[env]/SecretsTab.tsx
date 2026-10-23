@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Modal from "@/components/Modal";
 import { api, envPath, type EnvSecret } from "@/lib/platformClient";
 
 export default function SecretsTab({ project, env }: { project: string; env: string }) {
@@ -9,6 +10,7 @@ export default function SecretsTab({ project, env }: { project: string; env: str
   const [name, setName] = useState("");
   const [value, setValue] = useState("");
   const [saving, setSaving] = useState(false);
+  const [open, setOpen] = useState(false);
 
   async function load() {
     try {
@@ -30,6 +32,7 @@ export default function SecretsTab({ project, env }: { project: string; env: str
       await api(envPath(project, env, "secrets", name.trim()), { method: "PUT", body: JSON.stringify({ value }) });
       setName("");
       setValue("");
+      setOpen(false);
       await load();
     } catch (e) {
       setError((e as Error).message);
@@ -50,11 +53,16 @@ export default function SecretsTab({ project, env }: { project: string; env: str
 
   return (
     <>
-      <p className="muted">
+      <div className="page-header">
+      <p className="muted" style={{ margin: 0 }}>
         Usa num serviço como <code>{"NOME=${secret:NOME}"}</code>. Os valores nunca voltam a ser mostrados. Os
         segredos geridos pela plataforma (credenciais de addons) não se editam à mão.
       </p>
-      {error && <div className="error">{error}</div>}
+        <button className="primary" onClick={() => setOpen(true)}>
+          Criar / substituir
+        </button>
+      </div>
+      {!open && error && <div className="error">{error}</div>}
       {!secrets ? (
         <p className="muted">A carregar...</p>
       ) : secrets.length === 0 ? (
@@ -91,7 +99,9 @@ export default function SecretsTab({ project, env }: { project: string; env: str
           </tbody>
         </table>
       )}
-      <h2>Criar / substituir</h2>
+      {open && (
+        <Modal title="Criar / substituir segredo" onClose={() => setOpen(false)}>
+          {error && <div className="error">{error}</div>}
       <div className="form-grid">
         <div>
           <label htmlFor="secret-name">Nome</label>
@@ -108,9 +118,14 @@ export default function SecretsTab({ project, env }: { project: string; env: str
           />
         </div>
       </div>
-      <button className="secondary" disabled={saving || !name.trim()} onClick={save}>
+      <button className="primary" disabled={saving || !name.trim()} onClick={save}>
         {saving ? "A gravar..." : "Gravar"}
       </button>
+          <button className="secondary" onClick={() => setOpen(false)}>
+            Cancelar
+          </button>
+        </Modal>
+      )}
     </>
   );
 }
