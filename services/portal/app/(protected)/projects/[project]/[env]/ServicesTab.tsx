@@ -3,9 +3,9 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import Modal from "@/components/Modal";
-import { api, envPath, projectPath, statusBadge, type Service, type Template } from "@/lib/platformClient";
+import { api, envPath, projectPath, splitArgs, statusBadge, type Service, type Template } from "@/lib/platformClient";
 
-const EMPTY = { slug: "", kind: "web", port: "8080", healthPath: "/", image: "", template: "", templateVersion: "" };
+const EMPTY = { slug: "", kind: "web", port: "8080", healthPath: "/", cmd: "", image: "", template: "", templateVersion: "" };
 
 export default function ServicesTab({ project, env }: { project: string; env: string }) {
   const [services, setServices] = useState<Service[] | null>(null);
@@ -76,6 +76,7 @@ export default function ServicesTab({ project, env }: { project: string; env: st
         body: JSON.stringify({
           slug: form.slug.trim(),
           kind: form.kind,
+          cmd: splitArgs(form.cmd),
           ...(web ? { port: Number(form.port), healthPath: form.healthPath.trim() } : {}),
         }),
       });
@@ -282,6 +283,15 @@ export default function ServicesTab({ project, env }: { project: string; env: st
             </div>
           </>
         )}
+        <div>
+          <label htmlFor="svc-cmd">Comando (vazio = o da imagem)</label>
+          <input
+            id="svc-cmd"
+            value={form.cmd}
+            onChange={(e) => setForm({ ...form, cmd: e.target.value })}
+            placeholder={form.kind === "worker" ? "php artisan queue:work" : ""}
+          />
+        </div>
         <div>
           <label htmlFor="svc-image">Imagem para o primeiro deploy (opcional)</label>
           <input

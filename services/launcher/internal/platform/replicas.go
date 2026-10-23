@@ -151,9 +151,40 @@ func (s *Service) createReplica(ctx context.Context, p store.Project, e store.En
 
 // errReplicaDied: a réplica morreu ou está a reiniciar em ciclo -- não vale
 // a pena esperar pelo health check.
-type errReplicaDied struct{ msg string }
+type errReplicaDied struct {
+	container string
+	msg       string
+}
 
-func (e errReplicaDied) Error() string { return e.msg }
+func (e errReplicaDied) Error() string   { return e.msg }
+func (e errReplicaDied) replica() string { return e.container }
+
+// errReplicaUnhealthy: a réplica corre mas não passou no health check a
+// tempo.
+type errReplicaUnhealthy struct {
+	container string
+	msg       string
+}
+
+func (e errReplicaUnhealthy) Error() string   { return e.msg }
+func (e errReplicaUnhealthy) replica() string { return e.container }
+
+// exitHint explica os exit codes que mais confundem. 0 é o caso de uma
+// imagem base (ubuntu, alpine...): o processo dela é uma shell que, sem
+// terminal, termina logo -- com sucesso.
+func exitHint(code int) string {
+	switch code {
+	case 0:
+		return " -- o processo principal terminou sem erro: a imagem não tem um processo que fique a correr (ex: uma imagem base como ubuntu). Define um comando que não termine"
+	case 126:
+		return " -- o comando existe mas não tem permissão de execução"
+	case 127:
+		return " -- o comando não existe na imagem"
+	case 137:
+		return " -- morto à força (SIGKILL), normalmente por falta de memória: aumenta a memória por réplica"
+	}
+	return ""
+}
 
 // probeReplica verifica se uma réplica está pronta: worker = a correr há
 // workerReadyAfter; web = health check HTTP (ou só TCP, sem caminho
@@ -169,10 +200,10 @@ func (s *Service) probeReplica(ctx context.Context, name string, rev store.Revis
 		return err
 	}
 	if !info.State.Running {
-		return errReplicaDied{fmt.Sprintf("a réplica %s terminou (exit code %d)", name, info.State.ExitCode)}
+		return errReplicaDied{name, fmt.Sprintf("a réplica %s terminou (exit code %d)%s", name, info.State.ExitCode, exitHint(info.State.ExitCode))}
 	}
 	if failFast && info.RestartCount > 0 {
-		return errReplicaDied{fmt.Sprintf("a réplica %s já reiniciou %d vez(es) -- a aplicação está a falhar no arranque", name, info.RestartCount)}
+		return errReplicaDied{name, fmt.Sprintf("a réplica %s já reiniciou %d vez(es) -- o processo principal está a terminar logo depois de arrancar (ver o log abaixo)", name, info.RestartCount)}
 	}
 	if rev.Port == 0 {
 		if wait := s.workerReadyAfter(); time.Since(info.State.StartedAt) < wait {

@@ -437,3 +437,37 @@ func TestQuotaBlocksScaleUpAndIsReported(t *testing.T) {
 		t.Errorf("depois de subir a quota: problema %q, réplicas %d", view.Problem, len(appContainers(docker, "")))
 	}
 }
+
+// Depois de um primeiro deploy falhado, o redeploy sem imagem tenta outra
+// vez a mesma (ex: depois de corrigir o comando).
+func TestRedeployAfterFailedFirstDeploy(t *testing.T) {
+	ctx := context.Background()
+	svc, docker, _, _ := newDeployService(t)
+	if _, err := svc.CreateService(ctx, "loja", "prod", ServiceInput{Slug: "box", Kind: "worker"}, "t"); err != nil {
+		t.Fatal(err)
+	}
+	// A réplica morre logo (como a ubuntu sem comando).
+	docker.failStartState = "exited"
+	docker.logs = "bash: sem terminal\n"
+	dep, _ := svc.Deploy(ctx, "loja", "prod", "box", DeployInput{Image: "ubuntu:24.04"}, "t")
+	d := waitDeploy(t, svc, "box", dep.ID)
+	if d.Status != store.DeployFailed || !strings.Contains(d.Error, "exit code 0") || !strings.Contains(d.Error, "não tem um processo que fique a correr") {
+		t.Fatalf("erro do deploy = %q", d.Error)
+	}
+	full, _ := svc.GetDeployment(ctx, "loja", "prod", "box", dep.ID)
+	if !strings.Contains(full.Log, "últimas linhas do log") || !strings.Contains(full.Log, docker.logs) {
+		t.Errorf("o log do deploy devia ter o log da réplica:\n%s", full.Log)
+	}
+
+	docker.failStartState = ""
+	if _, err := svc.UpdateService(ctx, "loja", "prod", "box", ServiceInput{Cmd: listp("sleep", "infinity")}); err != nil {
+		t.Fatal(err)
+	}
+	dep, err := svc.Deploy(ctx, "loja", "prod", "box", DeployInput{}, "t")
+	if err != nil {
+		t.Fatalf("redeploy sem revisão atual: %v", err)
+	}
+	if d := waitDeploy(t, svc, "box", dep.ID); d.Status != store.DeploySucceeded || d.Image != "ubuntu:24.04" {
+		t.Errorf("redeploy = %s %s: %s", d.Status, d.Image, d.Error)
+	}
+}
