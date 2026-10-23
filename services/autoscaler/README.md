@@ -23,11 +23,13 @@ via unix socket — sem depender do SDK oficial.
   ele do load balancer primeiro, espera `DRAIN_TIMEOUT_SECONDS` pras
   requisições em andamento terminarem, só então para e remove.
 - **Desliga graciosamente**: ao receber SIGTERM/SIGINT, drena as requisições
-  HTTP em andamento (`SHUTDOWN_TIMEOUT_SECONDS`) e depois **remove todas as
-  réplicas que gerencia** — igual apagar um Auto Scaling Group na AWS
-  termina as instâncias. Isso evita réplicas órfãs quando o group é
-  desligado via `docker compose down`. Efeito colateral: um crash/restart do
-  próprio group também limpa e reconstrói as réplicas do zero.
+  HTTP em andamento (`SHUTDOWN_TIMEOUT_SECONDS`) e sai **sem remover as
+  réplicas**. Um SIGTERM tanto pode ser "apaguem este group" como um reboot
+  do host, e só no primeiro caso a aplicação deve ir abaixo. As réplicas têm
+  `RestartPolicy: unless-stopped` e, quando o group volta, adota-as pela
+  label de serviço. Apagar de propósito é explícito: `DELETE /v1/groups/{id}`
+  no launcher remove o group e as réplicas dele. `POST /v1/restart` continua
+  a recriar todas as réplicas.
 - **Expõe observabilidade**: `/healthz`, `/readyz` e `/metrics` (Prometheus)
   num servidor HTTP separado do proxy, logs estruturados via `log/slog`
   (JSON por padrão).

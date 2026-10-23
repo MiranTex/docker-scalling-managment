@@ -156,6 +156,23 @@ type CreateHostConfig struct {
 	NanoCPUs   int64 `json:"NanoCpus,omitempty"`
 	Memory     int64 `json:"Memory,omitempty"`
 	MemorySwap int64 `json:"MemorySwap,omitempty"`
+
+	// RestartPolicy -- mesma decisão do launcher (ver
+	// services/launcher/internal/dockerclient.UnlessStopped): ponteiro
+	// porque omitir = "no", o default do Docker.
+	RestartPolicy *RestartPolicy `json:"RestartPolicy,omitempty"`
+}
+
+// RestartPolicy segue o formato de HostConfig.RestartPolicy da API do Docker.
+type RestartPolicy struct {
+	Name              string `json:"Name"`
+	MaximumRetryCount int    `json:"MaximumRetryCount,omitempty"`
+}
+
+// UnlessStopped volta a subir o container depois de um crash ou de um
+// reboot do daemon, mas não depois de um stop explícito (scale down).
+func UnlessStopped() *RestartPolicy {
+	return &RestartPolicy{Name: "unless-stopped"}
 }
 
 // CreateContainer cria (mas não inicia) um novo container e devolve seu ID.

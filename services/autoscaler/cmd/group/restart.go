@@ -21,8 +21,7 @@ type snapshotSink interface {
 }
 
 // restartGroup implementa o "restart lógico" pedido via POST /v1/restart:
-// repete exatamente o mesmo caminho já usado no shutdown (SIGTERM) --
-// termina todas as réplicas geridas por este group -- e a seguir reconstrói
+// termina todas as réplicas geridas por este group e a seguir reconstrói
 // a partir do MinReplicas configurado.
 //
 // Nota importante sobre o que isto NÃO faz: cfg.launchTemplate foi

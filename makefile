@@ -1,4 +1,4 @@
-.PHONY: build-images migrations-status migrations-check
+.PHONY: build-images migrations-status migrations-check start-demo demo-down start-monitoring
 
 DEMO_COMPOSE ?= demo/docker-compose.yml
 PGUSER ?= app
@@ -49,6 +49,20 @@ migrations-check:
 
 start-demo:
 	docker compose -f $(DEMO_COMPOSE) up -d
+
+# "compose down" só derruba a plataforma: groups, instâncias e réplicas
+# lançados pelo launcher sobrevivem de propósito (ver "Derrubar" em
+# demo/README.md). Groups param primeiro para nenhum repor réplicas a meio.
+# observability-net fica: pertence a services/monitoring.
+demo-down:
+	docker compose -f $(DEMO_COMPOSE) down
+	@ids=$$(docker ps -q --filter label=autoscaler.role=group); \
+	if [ -n "$$ids" ]; then docker stop $$ids >/dev/null; fi
+	@ids=$$(docker ps -aq --filter label=base-stack.managed=true); \
+	if [ -n "$$ids" ]; then docker stop $$ids >/dev/null; docker rm $$ids; fi
+	@for net in $$(docker network ls --filter label=base-stack.managed=true --format '{{.Name}}'); do \
+		[ "$$net" = observability-net ] || docker network rm "$$net" >/dev/null || true; \
+	done
 
 start-monitoring:
 	docker compose -f services/monitoring/docker-compose.yml up -d

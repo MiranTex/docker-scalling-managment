@@ -169,8 +169,28 @@ type CreateHostConfig struct {
 	// não tem relação com publicação de porta, então não conflita entre
 	// réplicas do mesmo serviço.
 	ExtraHosts []string `json:"ExtraHosts,omitempty"`
+	// RestartPolicy diz ao daemon o que fazer quando o container morre ou
+	// o próprio daemon reinicia (ex: reboot do host). Ponteiro porque
+	// omitir = "no", o default do Docker.
+	RestartPolicy *RestartPolicy `json:"RestartPolicy,omitempty"`
 
 	Resources
+}
+
+// RestartPolicy segue o formato de HostConfig.RestartPolicy da API do Docker.
+type RestartPolicy struct {
+	// Name: "no", "always", "unless-stopped" ou "on-failure".
+	Name string `json:"Name"`
+	// MaximumRetryCount só é respeitado com "on-failure".
+	MaximumRetryCount int `json:"MaximumRetryCount,omitempty"`
+}
+
+// UnlessStopped volta a subir o container se ele morrer ou se o daemon
+// reiniciar, mas NÃO depois de um stop explícito (scale down, "parar" no
+// portal) -- é o que torna um stop pedido por nós definitivo e um crash ou
+// reboot do host transparente.
+func UnlessStopped() *RestartPolicy {
+	return &RestartPolicy{Name: "unless-stopped"}
 }
 
 // Resources são os limites de recursos aplicados ao container, derivados

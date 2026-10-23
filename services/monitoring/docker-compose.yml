@@ -29,6 +29,9 @@ networks:
 
 services:
   prometheus:
+    # Volta a subir depois de um crash ou reboot do host; um "docker
+    # compose stop" explícito continua a ser respeitado.
+    restart: unless-stopped
     image: prom/prometheus:latest
     command:
       - --config.file=/etc/prometheus/prometheus.yml
@@ -54,6 +57,9 @@ services:
     cpus: 0.5
 
   loki:
+    # Volta a subir depois de um crash ou reboot do host; um "docker
+    # compose stop" explícito continua a ser respeitado.
+    restart: unless-stopped
     image: grafana/loki:latest
     command: -config.file=/etc/loki/loki-config.yml
     volumes:
@@ -70,6 +76,9 @@ services:
     cpus: 0.5
 
   promtail:
+    # Volta a subir depois de um crash ou reboot do host; um "docker
+    # compose stop" explícito continua a ser respeitado.
+    restart: unless-stopped
     image: grafana/promtail:latest
     command: -config.file=/etc/promtail/promtail-config.yml
     volumes:
@@ -84,6 +93,9 @@ services:
     cpus: 0.3
 
   grafana:
+    # Volta a subir depois de um crash ou reboot do host; um "docker
+    # compose stop" explícito continua a ser respeitado.
+    restart: unless-stopped
     image: grafana/grafana:latest
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "true"

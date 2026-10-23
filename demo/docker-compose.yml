@@ -60,6 +60,9 @@ services:
   # services/launcher/internal/httpapi, labelExposeHost) quando uma
   # instância/group pede para ser exposta.
   traefik:
+    # Volta a subir depois de um crash ou reboot do host; um "docker
+    # compose stop" explícito continua a ser respeitado.
+    restart: unless-stopped
     # v3.6.1+ é obrigatório aqui -- versões anteriores têm a versão da API
     # do Docker fixa em 1.24 no seu provider, e o Docker Engine 29+ deixou
     # de aceitar qualquer coisa abaixo de 1.44 ("client version 1.24 is too
@@ -153,6 +156,9 @@ services:
   # Já vem com backups em rotina + PITR (pgBackRest) e Adminer, mesmo
   # aqui no demo -- ver services/database/README.md.
   database:
+    # Volta a subir depois de um crash ou reboot do host; um "docker
+    # compose stop" explícito continua a ser respeitado.
+    restart: unless-stopped
     build: ../services/database
     image: database-service:latest
     environment:
@@ -199,6 +205,9 @@ services:
   # só contas "service" (ex: group-authd, ver SECRETS_REFRESH_TOKEN
   # abaixo) conseguem resolver um nome para o valor em claro.
   secretsadmin:
+    # Volta a subir depois de um crash ou reboot do host; um "docker
+    # compose stop" explícito continua a ser respeitado.
+    restart: unless-stopped
     build: ../services/secretsadmin
     image: secretsadmin:latest
     environment:
@@ -229,6 +238,9 @@ services:
   # do docker.sock abaixo é só para listar imagens via GET /v1/images,
   # nunca para criar/remover nada).
   templatesadmin:
+    # Volta a subir depois de um crash ou reboot do host; um "docker
+    # compose stop" explícito continua a ser respeitado.
+    restart: unless-stopped
     build: ../services/templatesadmin
     image: templatesadmin:latest
     environment:
@@ -257,6 +269,9 @@ services:
   # SECRETS_REFRESH_TOKEN próprios) -- ver services/launcher/README.md e
   # demo/README.md.
   launcher:
+    # Volta a subir depois de um crash ou reboot do host; um "docker
+    # compose stop" explícito continua a ser respeitado.
+    restart: unless-stopped
     build: ../services/launcher
     image: launcher:latest
     environment:
@@ -314,17 +329,18 @@ services:
     cpus: 0.25
     networks:
       - auth-net
-    # Default do Docker (10s) não chega: no SIGTERM, o launcher ainda
-    # drena HTTP (15s) e depois pede a cada group vivo para se desligar,
-    # o que dispara o cleanup de réplicas de cada um (ver
-    # cmd/launcher/main.go, TerminateAllGroups) -- sem isto, "docker
-    # compose down" mataria o launcher a meio da cascata.
-    stop_grace_period: 50s
+    # Default do Docker (10s) não chega para drenar os pedidos HTTP em
+    # curso (15s, ver cmd/launcher/main.go). O launcher já não derruba os
+    # groups ao desligar -- ver "Derrubar" em demo/README.md.
+    stop_grace_period: 20s
 
   # Só para dev: browser de tabelas + SQL ad-hoc contra o Postgres
   # partilhado. Nunca exponha esta porta fora da tua máquina/rede de
   # confiança (Adminer não tem rate-limit nem MFA próprios).
   adminer:
+    # Volta a subir depois de um crash ou reboot do host; um "docker
+    # compose stop" explícito continua a ser respeitado.
+    restart: unless-stopped
     image: adminer:latest
     environment:
       ADMINER_DEFAULT_SERVER: database
@@ -350,6 +366,9 @@ services:
   # por IP na rede auth-net + BACKEND_PORT, nunca porta publicada) -- de
   # fora, nada muda: localhost:8081 continua sendo "o auth service".
   group-authd:
+    # Volta a subir depois de um crash ou reboot do host; um "docker
+    # compose stop" explícito continua a ser respeitado.
+    restart: unless-stopped
     image: autoscaler-group:latest
     environment:
       TARGET_SERVICE: auth
@@ -456,14 +475,16 @@ services:
     networks:
       - auth-net
       - observability-net
-    # Default do Docker (10s) mal chega para o pr\u00f3prio shutdownTimeout de
-    # cmd/group (ver services/autoscaler/cmd/group/config.go) somado ao
-    # cleanup das suas r\u00e9plicas (terminateAllReplicas, tamb\u00e9m com grace
-    # pr\u00f3prio) -- sem isto, "docker compose down" mata este group cedo
-    # demais, deixando r\u00e9plicas de auth \u00f3rf\u00e3s.
+    # Default do Docker (10s) mal chega para o próprio shutdownTimeout de
+    # cmd/group (ver services/autoscaler/cmd/group/config.go). As réplicas
+    # de auth NÃO são removidas quando este group desliga -- ver "Derrubar"
+    # em demo/README.md.
     stop_grace_period: 30s
 
   portal:
+    # Volta a subir depois de um crash ou reboot do host; um "docker
+    # compose stop" explícito continua a ser respeitado.
+    restart: unless-stopped
     image: portal:latest
     environment:
       # Aponta pro PROXY do group-authd, não direto pra uma réplica --
