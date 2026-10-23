@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"launcher/internal/httpapi"
+	"launcher/internal/platform"
 )
 
 // config reúne tudo que este processo precisa, vindo de variáveis de
@@ -70,6 +71,15 @@ type config struct {
 	// allowedBindPaths -- ver httpapi.SpecPolicy. Vazio = nenhum caminho do
 	// host pode ser montado, só volumes nomeados.
 	allowedBindPaths []string
+
+	// secretsKey cifra os segredos de ambiente (ver internal/secretbox).
+	// Vazio desliga-os: a API recusa gravar em vez de guardar em claro.
+	secretsKey string
+	// selfContainer é o nome/id do container deste launcher, ligado a
+	// toda rede de ambiente para fazer health checks às réplicas. Vazio =
+	// hostname, que o Docker define como o id curto do container.
+	selfContainer    string
+	traefikContainer string
 }
 
 func loadConfig() config {
@@ -102,6 +112,13 @@ func loadConfig() config {
 		memoryOvercommitRatio: envFloat("LAUNCHER_MEMORY_OVERCOMMIT_RATIO", 1),
 
 		allowedBindPaths: envList("LAUNCHER_ALLOWED_BIND_PATHS"),
+
+		secretsKey:       os.Getenv("LAUNCHER_SECRETS_KEY"),
+		selfContainer:    os.Getenv("LAUNCHER_SELF_CONTAINER"),
+		traefikContainer: envString("TRAEFIK_CONTAINER", "traefik"),
+	}
+	if cfg.selfContainer == "" {
+		cfg.selfContainer, _ = os.Hostname()
 	}
 
 	if cfg.databaseURL == "" {
@@ -125,6 +142,10 @@ func (c config) groupConfig() httpapi.GroupConfig {
 		SelfURL:        c.selfURL,
 		DockerSocket:   c.dockerSocket,
 	}
+}
+
+func (c config) platformConfig() platform.Config {
+	return platform.Config{TraefikContainer: c.traefikContainer, SelfContainer: c.selfContainer}
 }
 
 func (c config) specPolicy() httpapi.SpecPolicy {
@@ -179,6 +200,8 @@ func (c config) logAttrs() []any {
 		"listen_addr", c.listenAddr,
 		"docker_socket", c.dockerSocket,
 		"allowed_bind_paths", c.allowedBindPaths,
+		"environment_secrets_enabled", c.secretsKey != "",
+		"self_container", c.selfContainer,
 		"auth_service_url", c.authServiceURL,
 		"templatesadmin_service_url", c.templatesAdminServiceURL,
 		"secretsadmin_service_url", c.secretsAdminServiceURL,
