@@ -714,6 +714,10 @@ type introspectResponse struct {
 	Active bool     `json:"active"`
 	Owner  string   `json:"owner,omitempty"`
 	Scopes []string `json:"scopes,omitempty"`
+	// Role é a role ATUAL do dono, lida agora e não quando a key foi
+	// emitida: perder a role de admin corta logo o que as keys dessa
+	// pessoa conseguem fazer. Vazia para keys M2M sem conta por trás.
+	Role string `json:"role,omitempty"`
 }
 
 // handleIntrospectAPIKey é chamado por OUTRO serviço, de posse de uma API
@@ -734,7 +738,11 @@ func (h *Handler) handleIntrospectAPIKey(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusOK, introspectResponse{Active: false})
 		return
 	}
-	writeJSON(w, http.StatusOK, introspectResponse{Active: true, Owner: key.Owner, Scopes: key.Scopes})
+	resp := introspectResponse{Active: true, Owner: key.Owner, Scopes: key.Scopes}
+	if user, found, err := h.users.FindUserByID(r.Context(), key.Owner); err == nil && found {
+		resp.Role = user.Role
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // oauthStateCookie é o nome do cookie que carrega o state entre

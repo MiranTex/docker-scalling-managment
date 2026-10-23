@@ -13,6 +13,9 @@ const TTL_OPTIONS = [
 export default function TokensPage() {
   const [keys, setKeys] = useState<ApiKeyListItem[]>([]);
   const [scopes, setScopes] = useState("");
+  // Acrescenta o scope "platform": dá a este token acesso à API de
+  // projetos (só funciona se a tua conta for infra-admin ou super-admin).
+  const [platform, setPlatform] = useState(false);
   const [ttl, setTtl] = useState("");
   const [created, setCreated] = useState<ApiKeyCreated | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -36,6 +39,7 @@ export default function TokensPage() {
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean);
+      if (platform && !scopeList.includes("platform")) scopeList.push("platform");
       const res = await fetch("/api/tokens", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -51,6 +55,7 @@ export default function TokensPage() {
       }
       setCreated(data);
       setScopes("");
+      setPlatform(false);
       await loadKeys();
     } finally {
       setLoading(false);
@@ -85,6 +90,17 @@ export default function TokensPage() {
             value={scopes}
             onChange={(e) => setScopes(e.target.value)}
           />
+          <label className="checkbox">
+            <input type="checkbox" checked={platform} onChange={(e) => setPlatform(e.target.checked)} /> Acesso à API da
+            plataforma (projetos, deploys, segredos...)
+          </label>
+          {platform && (
+            <p className="error">
+              Este token passa a poder fazer tudo o que fazes nos projetos, a partir de qualquer script e até fora desta
+              máquina. Usa uma validade e guarda-o como um segredo. Só funciona enquanto a tua conta for infra-admin ou
+              super-admin.
+            </p>
+          )}
           <label htmlFor="ttl">Validade</label>
           <select id="ttl" value={ttl} onChange={(e) => setTtl(e.target.value)}>
             {TTL_OPTIONS.map((opt) => (

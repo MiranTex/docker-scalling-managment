@@ -22,6 +22,7 @@ import (
 
 	"github.com/joho/godotenv"
 
+	"launcher/internal/apikeyclient"
 	"launcher/internal/dockerclient"
 	"launcher/internal/httpapi"
 	"launcher/internal/jwtverify"
@@ -62,7 +63,7 @@ func main() {
 	go platformSvc.Run(ctx)
 
 	mux := handler.Routes()
-	platformapi.New(platformSvc, tokens, logger).Register(mux)
+	platformapi.New(platformSvc, tokens, apikeyclient.New(cfg.authServiceURL), logger).Register(mux)
 
 	srv := &http.Server{
 		Addr:    cfg.listenAddr,

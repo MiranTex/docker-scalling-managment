@@ -843,6 +843,10 @@ func TestCreateAndIntrospectAPIKey(t *testing.T) {
 	if !introspected.Active || len(introspected.Scopes) != 2 {
 		t.Fatalf("introspecção inesperada: %+v", introspected)
 	}
+	// A role vem do dono, lida no momento -- uma conta nova é "user".
+	if introspected.Role != "user" {
+		t.Errorf("role = %q, queria \"user\"", introspected.Role)
+	}
 }
 
 func TestListAPIKeysRequiresAuth(t *testing.T) {

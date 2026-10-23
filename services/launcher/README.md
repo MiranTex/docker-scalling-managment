@@ -111,9 +111,13 @@ aparece na UI.
 
 ## API
 
-Todas as rotas exigem `Authorization: Bearer <token>`: um access token do
-auth com role `infra-admin` ou `super-admin`, ou um token de deploy
-(`bsd_...`) nas rotas marcadas com ✱.
+Todas as rotas exigem `Authorization: Bearer <token>`, um de:
+- um access token do auth com role `infra-admin` ou `super-admin`;
+- uma **API key pessoal** (`ak_...`, página "API tokens" do portal) com o
+  scope `platform`, cujo dono tenha uma dessas roles. A role é lida no auth
+  a cada validação (com cache de 30s), por isso tirar a role ao dono corta
+  logo o acesso das keys dele. Para scripts;
+- um token de deploy (`bsd_...`), só nas rotas marcadas com ✱.
 
 | Método e caminho (`/v1/projects/...`) | |
 |---|---|
