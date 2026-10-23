@@ -32,6 +32,10 @@ networks:
   docker-api-ro:
     internal: true
 
+volumes:
+  prometheus-data:
+  loki-data:
+
 services:
   # Proxy só de leitura à frente do socket do Docker -- mesma razão do
   # docker-api-ro de demo/docker-compose.yml: ":ro" no socket não impede
@@ -59,6 +63,9 @@ services:
       - --storage.tsdb.retention.time=6h
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # Séries temporais fora do container: recriá-lo (ex: uma config nova)
+      # já não apaga o histórico. A retenção continua a ser a de cima.
+      - prometheus-data:/prometheus
     ports:
       # Só a partir desta máquina: o Prometheus não tem autenticação, e
       # as métricas de todos os projetos passam por aqui. Num servidor,
@@ -83,6 +90,9 @@ services:
     command: -config.file=/etc/loki/loki-config.yml
     volumes:
       - ./loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      # path_prefix do loki-config.yml: chunks, índice e WAL. Sem isto,
+      # recriar o container apagava os logs de todos os projetos.
+      - loki-data:/loki
     ports:
       # 3101 no host, não 3100 -- colide com o portal do demo
       # (demo/docker-compose.yml, "3100:3000"). Só afeta acesso direto à
