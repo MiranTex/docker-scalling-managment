@@ -70,8 +70,11 @@ start-monitoring:
 # que fica intacto) para o novo cluster 17 do demo. Corre-se UMA vez, com
 # o demo em baixo: sobe um Postgres 16 temporário sobre o volume antigo
 # (sem archive_mode, porque o pgBackRest não existe nessa imagem), sobe
-# só o "database" novo, e passa tudo com pg_dumpall. Os "role ... already
-# exists" no fim são esperados: o db-init do cluster novo já criou as roles.
+# só o "database" novo, e passa tudo com pg_dumpall. Erros como "role ...
+# already exists", "database app already exists" ou "is being accessed by
+# other users" são esperados e inofensivos: o cluster novo já criou as
+# roles e a base (e o dbadmin está ligado a ela), e os dados entram dentro
+# delas na mesma.
 OLD_DB_VOLUME ?= demo_demo-database-data
 db-upgrade-pg17:
 	@docker volume inspect $(OLD_DB_VOLUME) >/dev/null 2>&1 || { echo "volume $(OLD_DB_VOLUME) não existe -- nada para migrar"; exit 1; }

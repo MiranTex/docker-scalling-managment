@@ -75,7 +75,10 @@ func randomPassword() string {
 
 func addonURL(a store.Addon, password string) string {
 	if a.Kind == store.AddonRedis {
-		return fmt.Sprintf("redis://:%s@%s:6379/0", password, a.Slug)
+		// "default" explícito: com o utilizador vazio ("redis://:pw@..."),
+		// redis-cli e vários clientes mandam AUTH "" <pw>, que o Redis 6+
+		// recusa (WRONGPASS).
+		return fmt.Sprintf("redis://default:%s@%s:6379/0", password, a.Slug)
 	}
 	return fmt.Sprintf("postgres://%s:%s@%s:5432/%s?sslmode=disable", addonPGUser, password, a.Slug, addonPGDatabase)
 }
@@ -191,6 +194,9 @@ func addonLabels(p store.Project, e store.Environment, a store.Addon) map[string
 	labels := environmentLabels(p, e)
 	labels[LabelRole] = RoleAddon
 	labels[LabelAddon] = a.ID
+	// O slug como "serviço" para os logs: no Grafana, os de uma base de
+	// dados filtram-se como os de qualquer app.
+	labels[LabelServiceSlug] = a.Slug
 	labels[dockerclient.LabelInstanceType] = "addon-" + a.Kind
 	labels[dockerclient.LabelVCPU] = strconv.FormatFloat(a.VCPU, 'f', -1, 64)
 	labels[dockerclient.LabelMemoryMB] = strconv.FormatInt(a.MemoryMB, 10)
@@ -308,6 +314,8 @@ func (s *Service) DeleteAddon(ctx context.Context, projectSlug, envSlug, addonSl
 	if err != nil {
 		return err
 	}
+	s.reconcileMu.Lock()
+	defer s.reconcileMu.Unlock()
 	name := addonContainerName(p, e, a)
 	_ = s.docker.StopContainer(ctx, name, 30)
 	if err := s.docker.RemoveContainer(ctx, name, true); err != nil && !isNotFound(err) {

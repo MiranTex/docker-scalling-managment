@@ -72,6 +72,8 @@ func (s *Service) Kick() {
 }
 
 func (s *Service) reconcileOnce(ctx context.Context) {
+	s.reconcileMu.Lock()
+	defer s.reconcileMu.Unlock()
 	s.reconcileAddons(ctx)
 	s.reconcileServices(ctx)
 	s.recheckDomains(ctx)
@@ -160,8 +162,10 @@ func (s *Service) reconcileAddons(ctx context.Context) {
 		s.logger.Error("reconciliador: listando addons", "err", err)
 		return
 	}
+	known := map[string]bool{}
 	scopes := s.newScopeCache()
 	for _, a := range addons {
+		known[a.ID] = true
 		p, e, err := scopes.get(ctx, a.EnvironmentID)
 		if err != nil {
 			s.logger.Error("reconciliador: ambiente do addon", "addon", a.Slug, "err", err)
@@ -187,6 +191,21 @@ func (s *Service) reconcileAddons(ctx context.Context) {
 			if err := s.docker.StartContainer(ctx, name); err != nil {
 				s.logger.Error("reconciliador: arrancando addon", "addon", name, "err", err)
 			}
+		}
+	}
+
+	// Containers de addons que já não existem na base (apagados com o
+	// launcher em baixo, ou sobras de uma remoção interrompida). Os
+	// volumes ficam: só um purge explícito apaga dados.
+	containers, err := s.docker.ListContainers(ctx, true, map[string][]string{"label": {LabelRole + "=" + RoleAddon}})
+	if err != nil {
+		return
+	}
+	for _, c := range containers {
+		if !known[c.Labels[LabelAddon]] {
+			s.logger.Info("reconciliador: container de addon inexistente", "container", containerName(c))
+			_ = s.docker.StopContainer(ctx, c.ID, 30)
+			_ = s.docker.RemoveContainer(ctx, c.ID, true)
 		}
 	}
 }

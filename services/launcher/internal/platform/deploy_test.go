@@ -24,7 +24,7 @@ type probeSwitch struct {
 func (p *probeSwitch) probe(_ context.Context, host string, _ int, _ string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if c, ok := p.docker.containers[host]; ok && p.failOn[c.Image] {
+	if c, ok := p.docker.byName(host); ok && p.failOn[c.Image] {
 		return errors.New("connection refused")
 	}
 	return nil
@@ -71,11 +71,13 @@ func waitDeploy(t *testing.T, svc *Service, svcSlug, id string) store.Deployment
 	return store.Deployment{}
 }
 
+// appContainers devolve os NOMES das réplicas (é por nome que a
+// plataforma as trata: routing, health check, estado em memória).
 func appContainers(d *fakeDocker, image string) []string {
 	var out []string
 	for _, c := range d.byRole(RoleApp) {
 		if image == "" || c.Image == image {
-			out = append(out, c.ID)
+			out = append(out, containerName(c))
 		}
 	}
 	return out
@@ -151,6 +153,9 @@ func TestDeployHealthGatedRollout(t *testing.T) {
 		t.Errorf("as réplicas v1 deviam continuar: %v", got)
 	}
 	view, _ := svc.GetService(ctx, "loja", "prod", "web")
+	if view.ReadyReplicas != 2 {
+		t.Errorf("readyReplicas = %d, queria 2", view.ReadyReplicas)
+	}
 	if view.CurrentRevision == nil || view.CurrentRevision.Number != 1 {
 		t.Errorf("revisão atual = %+v, queria 1", view.CurrentRevision)
 	}
@@ -163,7 +168,7 @@ func TestDeployHealthGatedRollout(t *testing.T) {
 	if d := waitDeploy(t, svc, "web", dep.ID); d.Status != store.DeploySucceeded {
 		t.Fatalf("deploy 3 = %s: %s", d.Status, d.Error)
 	}
-	if got := appContainers(docker, ""); len(got) != 2 || docker.containers[got[0]].Image != "app:3" {
+	if got := appContainers(docker, "app:3"); len(got) != 2 || len(appContainers(docker, "")) != 2 {
 		t.Errorf("depois do deploy 3 = %v", got)
 	}
 
@@ -262,13 +267,9 @@ func TestReconcilerScalesAndReplacesReplicas(t *testing.T) {
 
 	// Uma réplica parada por fora é substituída.
 	victim := appContainers(docker, "")[0]
-	docker.mu.Lock()
-	c := docker.containers[victim]
-	c.State = "exited"
-	docker.containers[victim] = c
-	docker.mu.Unlock()
+	docker.setState(victim, "exited")
 	svc.reconcileOnce(ctx)
-	if _, ok := docker.containers[victim]; ok {
+	if _, ok := docker.byName(victim); ok {
 		t.Error("a réplica parada devia ter sido removida")
 	}
 	if got := appContainers(docker, ""); len(got) != 3 {
@@ -394,5 +395,45 @@ func TestValidateService(t *testing.T) {
 		if err := validateService(s); !errors.Is(err, ErrInvalid) {
 			t.Errorf("caso %d devia ser inválido: %+v", i, s)
 		}
+	}
+}
+
+func TestQuotaBlocksScaleUpAndIsReported(t *testing.T) {
+	ctx := context.Background()
+	svc, docker, _, _ := newDeployService(t)
+	if _, err := svc.CreateService(ctx, "loja", "prod", ServiceInput{Slug: "web", Kind: "web", Port: intp(80), MemoryMB: func() *int64 { v := int64(256); return &v }()}, "t"); err != nil {
+		t.Fatal(err)
+	}
+	dep, _ := svc.Deploy(ctx, "loja", "prod", "web", DeployInput{Image: "app:1"}, "t")
+	waitDeploy(t, svc, "web", dep.ID)
+
+	// Quota para 2 réplicas de 256 MB; pedir 3 deixa a terceira de fora.
+	mem := int64(512)
+	if _, err := svc.UpdateProject(ctx, "loja", UpdateProjectInput{QuotaMemoryMB: &mem}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.UpdateService(ctx, "loja", "prod", "web", ServiceInput{Replicas: intp(3)}); err != nil {
+		t.Fatal(err)
+	}
+	svc.reconcileOnce(ctx)
+	if got := appContainers(docker, ""); len(got) != 2 {
+		t.Errorf("réplicas = %d, queria 2 (quota)", len(got))
+	}
+	view, _ := svc.GetService(ctx, "loja", "prod", "web")
+	if !strings.Contains(view.Problem, "quota") || !strings.Contains(view.Problem, "2 de 3") {
+		t.Errorf("problema reportado = %q", view.Problem)
+	}
+	usage, _ := svc.ProjectUsage(ctx, "loja")
+	if usage.MemoryMB != 512 || usage.Containers != 2 {
+		t.Errorf("uso = %+v", usage)
+	}
+
+	// Com a quota resolvida, o problema desaparece.
+	mem = 2048
+	_, _ = svc.UpdateProject(ctx, "loja", UpdateProjectInput{QuotaMemoryMB: &mem})
+	svc.reconcileOnce(ctx)
+	view, _ = svc.GetService(ctx, "loja", "prod", "web")
+	if view.Problem != "" || len(appContainers(docker, "")) != 3 {
+		t.Errorf("depois de subir a quota: problema %q, réplicas %d", view.Problem, len(appContainers(docker, "")))
 	}
 }

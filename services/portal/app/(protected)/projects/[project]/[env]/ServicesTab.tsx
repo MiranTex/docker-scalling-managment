@@ -96,6 +96,7 @@ export default function ServicesTab({ project, env }: { project: string; env: st
                   </td>
                   <td>
                     <span className={st.cls}>{st.label}</span>
+                    {s.problem && <div className="muted">{s.problem}</div>}
                   </td>
                   <td>
                     {s.currentRevision ? (

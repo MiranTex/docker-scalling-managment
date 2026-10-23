@@ -79,45 +79,80 @@ func newFakeDocker() *fakeDocker {
 	}
 }
 
+// find aceita id ou nome, como a API do Docker. Chamar com f.mu já tomado.
+func (f *fakeDocker) find(idOrName string) (string, bool) {
+	if _, ok := f.containers[idOrName]; ok {
+		return idOrName, true
+	}
+	for id, c := range f.containers {
+		if len(c.Names) > 0 && c.Names[0] == "/"+idOrName {
+			return id, true
+		}
+	}
+	return "", false
+}
+
+// byName devolve o container com este nome (para os testes).
+func (f *fakeDocker) byName(name string) (dockerclient.Container, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	id, ok := f.find(name)
+	return f.containers[id], ok
+}
+
+// setState muda o estado de um container (ex: simular um "docker stop").
+func (f *fakeDocker) setState(name, state string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if id, ok := f.find(name); ok {
+		c := f.containers[id]
+		c.State = state
+		f.containers[id] = c
+	}
+}
+
 func (f *fakeDocker) CreateContainer(_ context.Context, name string, req dockerclient.CreateContainerRequest) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if _, ok := f.containers[name]; ok {
+	if _, ok := f.find(name); ok {
 		return "", fmt.Errorf("status 409: name %s in use", name)
 	}
 	if f.failCreateImage != "" && req.Image == f.failCreateImage {
 		return "", fmt.Errorf("status 500: falha simulada")
 	}
 	f.created[name] = req
-	f.containers[name] = dockerclient.Container{ID: name, Names: []string{"/" + name}, Image: req.Image, State: "created", Labels: req.Labels}
+	id := "cid-" + name
+	f.containers[id] = dockerclient.Container{ID: id, Names: []string{"/" + name}, Image: req.Image, State: "created", Labels: req.Labels}
 	if req.Labels[LabelRole] == RoleJob {
 		f.lastJobCmd = req.Cmd
 	}
-	return name, nil
+	return id, nil
 }
 
-func (f *fakeDocker) StartContainer(_ context.Context, id string) error {
+func (f *fakeDocker) StartContainer(_ context.Context, idOrName string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	c, ok := f.containers[id]
+	id, ok := f.find(idOrName)
 	if !ok {
-		return fmt.Errorf("status 404: no such container %s", id)
+		return fmt.Errorf("status 404: no such container %s", idOrName)
 	}
+	c := f.containers[id]
 	c.State = "running"
 	f.containers[id] = c
 	return nil
 }
 
-func (f *fakeDocker) InspectContainer(_ context.Context, id string) (*dockerclient.ContainerInspect, error) {
+func (f *fakeDocker) InspectContainer(_ context.Context, idOrName string) (*dockerclient.ContainerInspect, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	c, ok := f.containers[id]
+	id, ok := f.find(idOrName)
 	if !ok {
-		return nil, fmt.Errorf("status 404: no such container %s", id)
+		return nil, fmt.Errorf("status 404: no such container %s", idOrName)
 	}
+	c := f.containers[id]
 	var info dockerclient.ContainerInspect
 	info.ID = c.ID
-	info.Name = "/" + id
+	info.Name = c.Names[0]
 	info.Config.Image = c.Image
 	info.Config.Labels = c.Labels
 	info.State.Status = c.State
@@ -194,14 +229,15 @@ func (f *fakeDocker) DisconnectNetwork(_ context.Context, network, container str
 
 func (f *fakeDocker) StopContainer(context.Context, string, int) error { return nil }
 
-func (f *fakeDocker) RemoveContainer(_ context.Context, id string, _ bool) error {
+func (f *fakeDocker) RemoveContainer(_ context.Context, idOrName string, _ bool) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if _, ok := f.containers[id]; !ok {
-		return fmt.Errorf("status 404: no such container %s", id)
+	id, ok := f.find(idOrName)
+	if !ok {
+		return fmt.Errorf("status 404: no such container %s", idOrName)
 	}
 	delete(f.containers, id)
-	f.removed = append(f.removed, id)
+	f.removed = append(f.removed, idOrName)
 	return nil
 }
 

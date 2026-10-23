@@ -84,6 +84,8 @@ func (s *Service) DeleteProject(ctx context.Context, slug string, purgeData bool
 	if err != nil {
 		return err
 	}
+	// O routing sai no próximo reconcile, pedido já.
+	defer s.Kick()
 	for _, e := range envs {
 		if err := s.teardownEnvironment(ctx, e, purgeData); err != nil {
 			return fmt.Errorf("apagando ambiente %q: %w", e.Slug, err)
@@ -186,6 +188,7 @@ func (s *Service) DeleteEnvironment(ctx context.Context, projectSlug, envSlug st
 	if err != nil {
 		return err
 	}
+	defer s.Kick()
 	return s.teardownEnvironment(ctx, e, purgeData)
 }
 
@@ -193,6 +196,17 @@ func (s *Service) DeleteEnvironment(ctx context.Context, projectSlug, envSlug st
 // addons, jobs), desliga a plataforma da rede, apaga a rede e por fim a
 // linha (que leva consigo segredos e o resto, por ON DELETE CASCADE).
 func (s *Service) teardownEnvironment(ctx context.Context, e store.Environment, purgeData bool) error {
+	s.reconcileMu.Lock()
+	defer s.reconcileMu.Unlock()
+	services, err := s.db.ListServices(ctx, e.ID)
+	if err != nil {
+		return err
+	}
+	for _, svc := range services {
+		if s.rt.isDeploying(svc.ID) {
+			return fmt.Errorf("%w: o serviço %s tem um deploy em curso -- espera que acabe", ErrConflict, svc.Slug)
+		}
+	}
 	containers, err := s.docker.ListContainers(ctx, true, map[string][]string{"label": {LabelEnvironmentID + "=" + e.ID}})
 	if err != nil {
 		return fmt.Errorf("listando containers do ambiente: %w", err)

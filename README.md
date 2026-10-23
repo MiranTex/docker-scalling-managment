@@ -13,8 +13,11 @@ services/
   autoscaler/    autoscaler + load balancer de containers Docker (Go)
   monitoring/    plataforma de observabilidade: Prometheus + Loki + Promtail + Grafana
   auth/          autenticação: registo/login, JWT (RS256) + JWKS, refresh tokens
-  portal/        frontend: login, controlo de sessão, API tokens pessoais (Next.js)
-  database/      Postgres partilhado (um schema por serviço), backups + PITR, Adminer em dev
+  portal/        frontend: login, sessão, projetos, deploys, administração (Next.js)
+  database/      Postgres 17 da plataforma (um schema por serviço), backups + PITR, Adminer em dev
+  launcher/      API de plataforma: projetos, ambientes, serviços, addons, deploys, domínios
+  secretsadmin/  segredos globais do fluxo antigo (modelos/instâncias)
+  templatesadmin/ modelos de serviço e tipos de instância do fluxo antigo
 demo/            compose de exemplo ligando autoscaler + monitoring + auth + portal, pra testar end-to-end
 ```
 
@@ -22,6 +25,24 @@ Cada serviço em `services/` é autossuficiente: tem seu próprio
 `docker-compose.yml` (ou instruções de build) e README, e pode ser usado
 isoladamente em qualquer projeto, sem depender dos outros. `demo/` existe só
 pra mostrar os dois funcionando juntos e servir de referência de integração.
+
+## Projetos
+
+A plataforma organiza o que corre em **projetos**, cada um com
+**ambientes** isolados (rede, segredos, bases de dados e serviços
+próprios). Dentro de um ambiente:
+
+- **serviços** web ou worker, com deploy por revisões imutáveis, health
+  check antes de receber tráfego, migrations como passo de release,
+  rollback, e scaling fixo ou automático por CPU;
+- **addons** Postgres 17 e Redis, um container e um volume por addon, com
+  backups diários e restore (Postgres);
+- **domínios próprios** com HTTPS automático, ativos quando o DNS aponta
+  para o servidor;
+- **tokens de deploy** por projeto, para o CI.
+
+Ver [services/launcher/README.md](services/launcher/README.md) e o
+separador **Projetos** no portal.
 
 ## Serviços
 

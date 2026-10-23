@@ -145,6 +145,7 @@ export type Service = {
   readyReplicas: number;
   deploying: boolean;
   urls: string[];
+  problem?: string;
   createdAt: string;
   updatedAt: string;
 };

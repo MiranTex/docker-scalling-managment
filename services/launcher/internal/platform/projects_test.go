@@ -59,8 +59,8 @@ func TestProjectAndEnvironmentLifecycle(t *testing.T) {
 
 	// Um container do ambiente tem de desaparecer com ele, e um de outro
 	// ambiente não.
-	docker.containers["app-1"] = dockerclient.Container{ID: "app-1", Labels: map[string]string{LabelEnvironmentID: env.ID}}
-	docker.containers["other"] = dockerclient.Container{ID: "other", Labels: map[string]string{LabelEnvironmentID: "outro"}}
+	docker.containers["app-1"] = dockerclient.Container{ID: "app-1", Names: []string{"/app-1"}, Labels: map[string]string{LabelEnvironmentID: env.ID}}
+	docker.containers["other"] = dockerclient.Container{ID: "other", Names: []string{"/other"}, Labels: map[string]string{LabelEnvironmentID: "outro"}}
 
 	if err := svc.DeleteProject(ctx, "loja", false); err != nil {
 		t.Fatal(err)
