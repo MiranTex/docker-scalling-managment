@@ -148,6 +148,7 @@ export type Service = {
   problem?: string;
   metricsPort: number;
   metricsPath: string;
+  template?: TemplateRef;
   createdAt: string;
   updatedAt: string;
 };
@@ -255,3 +256,88 @@ export type NetworkMember = {
 };
 
 export type EnvironmentNetwork = { name: string; subnet?: string; gateway?: string; members: NetworkMember[] };
+
+export type TemplateSpec = {
+  kind: "web" | "worker";
+  port: number;
+  healthPath: string;
+  healthTimeoutSeconds: number;
+  cmd: string[];
+  env: string[];
+  releaseCmd: string[];
+  vcpu: number;
+  memoryMb: number;
+  scalingMode: "fixed" | "auto";
+  replicas: number;
+  minReplicas: number;
+  maxReplicas: number;
+  cpuScaleUpPercent: number;
+  cpuScaleDownPercent: number;
+  metricsPort: number;
+  metricsPath: string;
+};
+
+export type Template = {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  latestVersion: number;
+  usedBy: number;
+  archivedAt?: string;
+  createdAt: string;
+  createdBy: string;
+};
+
+export type TemplateVersion = {
+  id: string;
+  version: number;
+  image: string;
+  notes: string;
+  spec: TemplateSpec;
+  createdAt: string;
+  createdBy: string;
+};
+
+export type TemplateDetail = Template & { versions: TemplateVersion[] };
+
+export type TemplateRef = { slug: string; name: string; version: number; latestVersion: number; archived: boolean };
+
+export type FieldChange = { field: string; from: unknown; to: unknown; current: unknown; overrides: boolean };
+
+export type TemplateUpdate = {
+  template: string;
+  fromVersion: number;
+  toVersion: number;
+  changes: FieldChange[];
+  notes: { version: number; notes: string }[];
+};
+
+// Nome de cada campo da spec como aparece no formulário do serviço.
+export const SPEC_LABELS: Record<string, string> = {
+  kind: "Tipo",
+  port: "Porta",
+  healthPath: "Health check",
+  healthTimeoutSeconds: "Tempo para ficar saudável (s)",
+  vcpu: "vCPU por réplica",
+  memoryMb: "Memória por réplica (MB)",
+  metricsPort: "Porta de métricas",
+  metricsPath: "Caminho de métricas",
+  cmd: "Comando",
+  releaseCmd: "Release / migrations",
+  env: "Variáveis de ambiente",
+  scalingMode: "Modo de scaling",
+  replicas: "Réplicas",
+  minReplicas: "Mínimo de réplicas",
+  maxReplicas: "Máximo de réplicas",
+  cpuScaleUpPercent: "Sobe acima de (% CPU)",
+  cpuScaleDownPercent: "Desce abaixo de (% CPU)",
+};
+
+// formatSpecValue mostra um valor da spec de forma legível na tabela de
+// diferenças (listas uma por linha, vazio como "—").
+export function formatSpecValue(v: unknown): string {
+  if (Array.isArray(v)) return v.length ? v.join("\n") : "—";
+  if (v === "" || v === null || v === undefined || v === 0) return "—";
+  return String(v);
+}

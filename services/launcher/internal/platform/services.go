@@ -35,6 +35,13 @@ type ServiceInput struct {
 	CPUScaleDownPercent  *float64  `json:"cpuScaleDownPercent"`
 	MetricsPort          *int      `json:"metricsPort"`
 	MetricsPath          *string   `json:"metricsPath"`
+
+	// Só na criação: copiar a configuração de um modelo do projeto (versão
+	// 0 = a mais recente) e fazer logo o primeiro deploy, com Image se
+	// preenchida ou a imagem do modelo.
+	Template        string `json:"template"`
+	TemplateVersion int    `json:"templateVersion"`
+	Image           string `json:"image"`
 }
 
 // apply copia os campos preenchidos para svc.
@@ -163,10 +170,12 @@ type ServiceView struct {
 	URLs            []string        `json:"urls"`
 	// Problem: porque é que o serviço não está como devia (ex: quota).
 	Problem string `json:"problem,omitempty"`
+	// Template: de que modelo/versão veio, e qual a mais recente.
+	Template *TemplateRef `json:"template,omitempty"`
 }
 
 func (s *Service) serviceView(ctx context.Context, p store.Project, e store.Environment, svc store.Service) ServiceView {
-	v := ServiceView{Service: svc, URLs: []string{}, Deploying: s.rt.isDeploying(svc.ID), Problem: s.rt.getProblem(svc.ID)}
+	v := ServiceView{Service: svc, URLs: []string{}, Deploying: s.rt.isDeploying(svc.ID), Problem: s.rt.getProblem(svc.ID), Template: s.templateRef(ctx, svc)}
 	if svc.CurrentRevisionID != nil {
 		if rev, err := s.db.GetRevision(ctx, *svc.CurrentRevisionID); err == nil {
 			v.CurrentRevision = &rev
@@ -218,6 +227,9 @@ func (s *Service) CreateService(ctx context.Context, projectSlug, envSlug string
 	}
 	if err := validSlug("slug do serviço", in.Slug); err != nil {
 		return ServiceView{}, err
+	}
+	if in.Template != "" {
+		return s.createServiceFromTemplate(ctx, p, e, in, by)
 	}
 	svc := store.Service{
 		ID: newID(), EnvironmentID: e.ID, Slug: in.Slug, Kind: in.Kind,

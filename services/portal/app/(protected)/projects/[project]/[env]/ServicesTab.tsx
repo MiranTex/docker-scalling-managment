@@ -3,9 +3,9 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import Modal from "@/components/Modal";
-import { api, envPath, statusBadge, type Service } from "@/lib/platformClient";
+import { api, envPath, projectPath, statusBadge, type Service, type Template } from "@/lib/platformClient";
 
-const EMPTY = { slug: "", kind: "web", port: "8080", healthPath: "/", image: "" };
+const EMPTY = { slug: "", kind: "web", port: "8080", healthPath: "/", image: "", template: "", templateVersion: "" };
 
 export default function ServicesTab({ project, env }: { project: string; env: string }) {
   const [services, setServices] = useState<Service[] | null>(null);
@@ -13,6 +13,9 @@ export default function ServicesTab({ project, env }: { project: string; env: st
   const [form, setForm] = useState(EMPTY);
   const [saving, setSaving] = useState(false);
   const [open, setOpen] = useState(false);
+  // Modelos ativos do projeto, para "criar a partir de um modelo".
+  const [templates, setTemplates] = useState<Template[]>([]);
+  const [fromTemplate, setFromTemplate] = useState(false);
 
   async function load() {
     try {
@@ -28,6 +31,40 @@ export default function ServicesTab({ project, env }: { project: string; env: st
     const t = setInterval(load, 4000);
     return () => clearInterval(t);
   }, [project, env]);
+
+  useEffect(() => {
+    if (!open) return;
+    api<Template[]>(projectPath(project, "templates"))
+      .then((list) => setTemplates(list.filter((t) => !t.archivedAt)))
+      .catch(() => setTemplates([]));
+  }, [open, project]);
+
+  const chosen = templates.find((t) => t.slug === form.template);
+
+  async function createFromTemplate() {
+    setError(null);
+    setSaving(true);
+    try {
+      // O launcher copia a configuração do modelo e faz logo o primeiro
+      // deploy (com a imagem do modelo, ou a indicada aqui).
+      await api(envPath(project, env, "services"), {
+        method: "POST",
+        body: JSON.stringify({
+          slug: form.slug.trim(),
+          template: form.template,
+          templateVersion: Number(form.templateVersion) || 0,
+          image: form.image.trim(),
+        }),
+      });
+      setForm(EMPTY);
+      setOpen(false);
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
 
   async function create() {
     setError(null);
@@ -141,6 +178,81 @@ export default function ServicesTab({ project, env }: { project: string; env: st
       {open && (
         <Modal title="Novo serviço" onClose={() => setOpen(false)}>
           {error && <div className="error">{error}</div>}
+          <div className="tabs">
+            <button className={!fromTemplate ? "tab active" : "tab"} onClick={() => setFromTemplate(false)}>
+              Do zero
+            </button>
+            <button className={fromTemplate ? "tab active" : "tab"} onClick={() => setFromTemplate(true)}>
+              A partir de um modelo
+            </button>
+          </div>
+          {fromTemplate ? (
+            <>
+              {templates.length === 0 ? (
+                <p className="muted">
+                  Este projeto ainda não tem modelos -- cria-os em <Link href={`/projects/${project}?tab=templates`}>Modelos</Link>.
+                </p>
+              ) : (
+                <div className="form-grid">
+                  <div>
+                    <label htmlFor="svc-tslug">Slug</label>
+                    <input id="svc-tslug" value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value })} placeholder="web" />
+                  </div>
+                  <div>
+                    <label htmlFor="svc-template">Modelo</label>
+                    <select
+                      id="svc-template"
+                      value={form.template}
+                      onChange={(e) => setForm({ ...form, template: e.target.value, templateVersion: "" })}
+                    >
+                      <option value="">escolhe...</option>
+                      {templates.map((t) => (
+                        <option key={t.id} value={t.slug}>
+                          {t.name} ({t.slug})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  {chosen && (
+                    <div>
+                      <label htmlFor="svc-tversion">Versão</label>
+                      <select
+                        id="svc-tversion"
+                        value={form.templateVersion}
+                        onChange={(e) => setForm({ ...form, templateVersion: e.target.value })}
+                      >
+                        <option value="">mais recente (v{chosen.latestVersion})</option>
+                        {Array.from({ length: chosen.latestVersion }, (_, i) => chosen.latestVersion - i).map((n) => (
+                          <option key={n} value={n}>
+                            v{n}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                  <div>
+                    <label htmlFor="svc-timage">Imagem (vazio = a do modelo)</label>
+                    <input
+                      id="svc-timage"
+                      value={form.image}
+                      onChange={(e) => setForm({ ...form, image: e.target.value })}
+                      placeholder="ghcr.io/eu/app:1.0.0"
+                    />
+                  </div>
+                </div>
+              )}
+              <p className="muted">O serviço fica com a configuração do modelo e arranca logo com o primeiro deploy.</p>
+              <div className="row">
+                <button className="secondary" onClick={() => setOpen(false)}>
+                  Cancelar
+                </button>
+                <button className="primary" disabled={saving || !form.slug.trim() || !form.template} onClick={createFromTemplate}>
+                  {saving ? "A criar..." : "Criar e fazer deploy"}
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
       <div className="form-grid">
         <div>
           <label htmlFor="svc-slug">Slug</label>
@@ -186,6 +298,8 @@ export default function ServicesTab({ project, env }: { project: string; env: st
           <button className="secondary" onClick={() => setOpen(false)}>
             Cancelar
           </button>
+            </>
+          )}
         </Modal>
       )}
     </>

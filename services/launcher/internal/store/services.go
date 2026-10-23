@@ -36,43 +36,47 @@ const (
 )
 
 type Service struct {
-	ID                   string    `json:"id"`
-	EnvironmentID        string    `json:"environmentId"`
-	Slug                 string    `json:"slug"`
-	Kind                 string    `json:"kind"`
-	Port                 int       `json:"port"`
-	HealthPath           string    `json:"healthPath"`
-	HealthTimeoutSeconds int       `json:"healthTimeoutSeconds"`
-	Cmd                  []string  `json:"cmd"`
-	Env                  []string  `json:"env"`
-	ReleaseCmd           []string  `json:"releaseCmd"`
-	VCPU                 float64   `json:"vcpu"`
-	MemoryMB             int64     `json:"memoryMb"`
-	ScalingMode          string    `json:"scalingMode"`
-	Replicas             int       `json:"replicas"`
-	MinReplicas          int       `json:"minReplicas"`
-	MaxReplicas          int       `json:"maxReplicas"`
-	CPUScaleUpPercent    float64   `json:"cpuScaleUpPercent"`
-	CPUScaleDownPercent  float64   `json:"cpuScaleDownPercent"`
-	DesiredState         string    `json:"desiredState"`
-	CurrentRevisionID    *string   `json:"currentRevisionId,omitempty"`
-	MetricsPort          int       `json:"metricsPort"`
-	MetricsPath          string    `json:"metricsPath"`
-	CreatedAt            time.Time `json:"createdAt"`
-	UpdatedAt            time.Time `json:"updatedAt"`
-	CreatedBy            string    `json:"createdBy"`
+	ID                   string   `json:"id"`
+	EnvironmentID        string   `json:"environmentId"`
+	Slug                 string   `json:"slug"`
+	Kind                 string   `json:"kind"`
+	Port                 int      `json:"port"`
+	HealthPath           string   `json:"healthPath"`
+	HealthTimeoutSeconds int      `json:"healthTimeoutSeconds"`
+	Cmd                  []string `json:"cmd"`
+	Env                  []string `json:"env"`
+	ReleaseCmd           []string `json:"releaseCmd"`
+	VCPU                 float64  `json:"vcpu"`
+	MemoryMB             int64    `json:"memoryMb"`
+	ScalingMode          string   `json:"scalingMode"`
+	Replicas             int      `json:"replicas"`
+	MinReplicas          int      `json:"minReplicas"`
+	MaxReplicas          int      `json:"maxReplicas"`
+	CPUScaleUpPercent    float64  `json:"cpuScaleUpPercent"`
+	CPUScaleDownPercent  float64  `json:"cpuScaleDownPercent"`
+	DesiredState         string   `json:"desiredState"`
+	CurrentRevisionID    *string  `json:"currentRevisionId,omitempty"`
+	MetricsPort          int      `json:"metricsPort"`
+	MetricsPath          string   `json:"metricsPath"`
+	// TemplateID/TemplateVersion: de que modelo e versão foi copiada a
+	// configuração (nil = criado à mão, ou modelo apagado).
+	TemplateID      *string   `json:"templateId,omitempty"`
+	TemplateVersion *int      `json:"templateVersion,omitempty"`
+	CreatedAt       time.Time `json:"createdAt"`
+	UpdatedAt       time.Time `json:"updatedAt"`
+	CreatedBy       string    `json:"createdBy"`
 }
 
 const serviceColumns = `id, environment_id, slug, kind, port, health_path, health_timeout_seconds, cmd, env, release_cmd,
 	vcpu::float8, memory_mb, scaling_mode, replicas, min_replicas, max_replicas, cpu_scale_up_percent, cpu_scale_down_percent,
-	desired_state, current_revision_id, metrics_port, metrics_path, created_at, updated_at, created_by`
+	desired_state, current_revision_id, metrics_port, metrics_path, template_id, template_version, created_at, updated_at, created_by`
 
 func scanService(row interface{ Scan(...any) error }) (Service, error) {
 	var s Service
 	var cmd, env, release []byte
 	err := row.Scan(&s.ID, &s.EnvironmentID, &s.Slug, &s.Kind, &s.Port, &s.HealthPath, &s.HealthTimeoutSeconds, &cmd, &env, &release,
 		&s.VCPU, &s.MemoryMB, &s.ScalingMode, &s.Replicas, &s.MinReplicas, &s.MaxReplicas, &s.CPUScaleUpPercent, &s.CPUScaleDownPercent,
-		&s.DesiredState, &s.CurrentRevisionID, &s.MetricsPort, &s.MetricsPath, &s.CreatedAt, &s.UpdatedAt, &s.CreatedBy)
+		&s.DesiredState, &s.CurrentRevisionID, &s.MetricsPort, &s.MetricsPath, &s.TemplateID, &s.TemplateVersion, &s.CreatedAt, &s.UpdatedAt, &s.CreatedBy)
 	if err != nil {
 		return Service{}, err
 	}
