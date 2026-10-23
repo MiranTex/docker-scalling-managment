@@ -4,10 +4,12 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import Modal from "@/components/Modal";
 import { api, envPath, projectPath, splitArgs, statusBadge, type Service, type Template } from "@/lib/platformClient";
+import { useCan } from "@/lib/projectRole";
 
 const EMPTY = { slug: "", kind: "web", port: "8080", healthPath: "/", cmd: "", image: "", template: "", templateVersion: "" };
 
 export default function ServicesTab({ project, env }: { project: string; env: string }) {
+  const canEdit = useCan("developer");
   const [services, setServices] = useState<Service[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState(EMPTY);
@@ -112,9 +114,11 @@ export default function ServicesTab({ project, env }: { project: string; env: st
         <p className="muted" style={{ margin: 0 }}>
           Web na porta da tua app, ou um worker de filas.
         </p>
+        {canEdit && (
         <button className="primary" onClick={() => setOpen(true)}>
           Novo serviço
         </button>
+        )}
       </div>
       {!open && error && <div className="error">{error}</div>}
       {!services ? (

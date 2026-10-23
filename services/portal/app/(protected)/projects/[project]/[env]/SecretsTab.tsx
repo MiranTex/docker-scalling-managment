@@ -3,8 +3,10 @@
 import { useEffect, useState } from "react";
 import Modal from "@/components/Modal";
 import { api, envPath, type EnvSecret } from "@/lib/platformClient";
+import { useCan } from "@/lib/projectRole";
 
 export default function SecretsTab({ project, env }: { project: string; env: string }) {
+  const canEdit = useCan("developer");
   const [secrets, setSecrets] = useState<EnvSecret[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState("");
@@ -58,9 +60,11 @@ export default function SecretsTab({ project, env }: { project: string; env: str
         Usa num serviço como <code>{"NOME=${secret:NOME}"}</code>. Os valores nunca voltam a ser mostrados. Os
         segredos geridos pela plataforma (credenciais de addons) não se editam à mão.
       </p>
+        {canEdit && (
         <button className="primary" onClick={() => setOpen(true)}>
           Criar / substituir
         </button>
+        )}
       </div>
       {!open && error && <div className="error">{error}</div>}
       {!secrets ? (
@@ -88,7 +92,7 @@ export default function SecretsTab({ project, env }: { project: string; env: str
                   {new Date(s.updatedAt).toLocaleString("pt-PT")} · {s.updatedBy}
                 </td>
                 <td>
-                  {!s.managedBy && (
+                  {!s.managedBy && canEdit && (
                     <button className="danger" onClick={() => remove(s.name)}>
                       Apagar
                     </button>

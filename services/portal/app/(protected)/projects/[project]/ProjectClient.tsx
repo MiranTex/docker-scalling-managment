@@ -13,9 +13,12 @@ import DeployTokensCard from "./DeployTokensCard";
 import RegistriesCard from "./RegistriesCard";
 import SettingsCard from "./SettingsCard";
 import TemplatesTab from "./TemplatesTab";
+import { useCan } from "@/lib/projectRole";
+import MembersTab from "./MembersTab";
 
-const TABS = [
+const ALL_TABS = [
   { key: "environments", label: "Ambientes" },
+  { key: "members", label: "Membros" },
   { key: "templates", label: "Modelos" },
   { key: "tokens", label: "Deploy tokens" },
   { key: "registries", label: "Registries" },
@@ -24,6 +27,10 @@ const TABS = [
 
 export default function ProjectClient({ project }: { project: string }) {
   const router = useRouter();
+  const isAdmin = useCan("admin");
+  const isPlatformAdmin = useCan("platform-admin");
+  // Definições = quotas e apagar o projeto: só admins da plataforma.
+  const TABS = ALL_TABS.filter((t) => t.key !== "settings" || isPlatformAdmin);
   const tab = useActiveTab(TABS);
   const [detail, setDetail] = useState<ProjectDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -92,6 +99,7 @@ export default function ProjectClient({ project }: { project: string }) {
         <div className="card wide">
           <div className="page-header">
             <h2 style={{ margin: 0 }}>Ambientes</h2>
+            {isAdmin && (
             <button
               className="primary"
               onClick={() => {
@@ -101,6 +109,7 @@ export default function ProjectClient({ project }: { project: string }) {
             >
               Novo ambiente
             </button>
+            )}
           </div>
           {detail.environments.length === 0 ? (
             <p className="muted">Ainda sem ambientes. Cria pelo menos um (ex: production).</p>
@@ -156,6 +165,8 @@ export default function ProjectClient({ project }: { project: string }) {
       {tab === "tokens" && <DeployTokensCard project={project} environments={detail.environments} apiUrl={detail.apiUrl} />}
 
       {tab === "templates" && <TemplatesTab project={project} />}
+
+      {tab === "members" && <MembersTab project={project} />}
 
       {tab === "registries" && <RegistriesCard project={project} />}
 

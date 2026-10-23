@@ -26,8 +26,9 @@ export default function Sidebar({ role }: { role?: string }) {
       ],
     },
     {
+      // Toda a conta: cada uma vê os projetos de que é membro.
       title: "Plataforma",
-      visible: infra,
+      visible: true,
       items: [{ href: "/projects", label: "Projetos", prefix: true }],
     },
     {

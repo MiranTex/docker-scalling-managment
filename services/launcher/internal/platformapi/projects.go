@@ -1,14 +1,21 @@
 package platformapi
 
 import (
+	"context"
 	"net/http"
 
 	"launcher/internal/platform"
 	"launcher/internal/store"
 )
 
-func (a *API) listProjects(w http.ResponseWriter, r *http.Request, _ principal) {
-	projects, err := a.svc.ListProjects(r.Context())
+// listProjects: um admin da plataforma vê todos; qualquer outra conta só
+// os projetos de que é membro.
+func (a *API) listProjects(w http.ResponseWriter, r *http.Request, who principal) {
+	list := a.svc.ListProjects
+	if !who.PlatformAdmin {
+		list = func(ctx context.Context) ([]store.Project, error) { return a.svc.ListProjectsForUser(ctx, who.Subject) }
+	}
+	projects, err := list(r.Context())
 	if err != nil {
 		a.fail(w, err)
 		return
@@ -36,9 +43,13 @@ type projectDetail struct {
 	Environments []store.Environment `json:"environments"`
 	// APIURL é onde o CI chama a API (ver platform.APIURL).
 	APIURL string `json:"apiUrl,omitempty"`
+	// MyRole é o que quem pede pode fazer aqui: "platform-admin" ou o seu
+	// papel de membro -- para a UI esconder o que não pode usar (quem
+	// decide é sempre a API).
+	MyRole string `json:"myRole"`
 }
 
-func (a *API) getProject(w http.ResponseWriter, r *http.Request, _ principal) {
+func (a *API) getProject(w http.ResponseWriter, r *http.Request, who principal) {
 	slug := r.PathValue("project")
 	p, err := a.svc.GetProject(r.Context(), slug)
 	if err != nil {
@@ -50,7 +61,11 @@ func (a *API) getProject(w http.ResponseWriter, r *http.Request, _ principal) {
 		a.fail(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, projectDetail{Project: p, Environments: envs, APIURL: a.svc.APIURL()})
+	myRole := who.Role
+	if who.PlatformAdmin {
+		myRole = "platform-admin"
+	}
+	writeJSON(w, http.StatusOK, projectDetail{Project: p, Environments: envs, APIURL: a.svc.APIURL(), MyRole: myRole})
 }
 
 func (a *API) updateProject(w http.ResponseWriter, r *http.Request, _ principal) {

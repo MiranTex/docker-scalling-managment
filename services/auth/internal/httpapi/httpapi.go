@@ -130,6 +130,7 @@ func (h *Handler) Routes() *http.ServeMux {
 	mux.HandleFunc("POST /v1/api-keys", h.requireAuth(h.handleCreateAPIKey))
 	mux.HandleFunc("GET /v1/api-keys", h.requireAuth(h.handleListAPIKeys))
 	mux.HandleFunc("DELETE /v1/api-keys/{id}", h.requireAuth(h.handleRevokeAPIKey))
+	mux.HandleFunc("POST /v1/users/resolve", h.requireAuth(h.handleResolveUser))
 	// Gestão de utilizadores -- só super-admin. Criar/listar contas e
 	// atribuir role são ações administrativas, não algo que qualquer
 	// sessão autenticada deva conseguir fazer.
@@ -660,6 +661,41 @@ func (h *Handler) handleCreateAPIKey(w http.ResponseWriter, r *http.Request, use
 // handleListAPIKeys devolve as chaves do utilizador autenticado ("as
 // minhas chaves") -- nunca o segredo em si, só o suficiente para
 // reconhecer e revogar cada uma.
+type resolveUserRequest struct {
+	Email string `json:"email"`
+}
+
+type resolveUserResponse struct {
+	ID    string `json:"id"`
+	Email string `json:"email"`
+}
+
+// handleResolveUser devolve a conta de UM email exato -- é o que o
+// launcher usa para adicionar alguém como membro de um projeto, pedido
+// por quem administra esse projeto (que pode ser uma conta normal). Não
+// lista nem pesquisa: só confirma um email que quem pergunta já conhece.
+func (h *Handler) handleResolveUser(w http.ResponseWriter, r *http.Request, _ string) {
+	var req resolveUserRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	email := strings.ToLower(strings.TrimSpace(req.Email))
+	if email == "" {
+		writeError(w, http.StatusBadRequest, "invalid_email", "email é obrigatório")
+		return
+	}
+	user, found, err := h.users.FindUserByEmail(r.Context(), email)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "erro procurando a conta")
+		return
+	}
+	if !found {
+		writeError(w, http.StatusNotFound, "not_found", "não existe nenhuma conta com este email")
+		return
+	}
+	writeJSON(w, http.StatusOK, resolveUserResponse{ID: user.ID, Email: user.Email})
+}
+
 func (h *Handler) handleListAPIKeys(w http.ResponseWriter, r *http.Request, userID string) {
 	keys, err := h.apiKeys.List(r.Context(), userID)
 	if err != nil {

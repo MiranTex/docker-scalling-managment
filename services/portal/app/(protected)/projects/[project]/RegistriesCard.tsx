@@ -2,10 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { api, projectPath, type RegistryCredential } from "@/lib/platformClient";
+import { useCan } from "@/lib/projectRole";
 
 // Credenciais de registries privados, usadas no pull das imagens de deploy
 // de qualquer ambiente do projeto.
 export default function RegistriesCard({ project }: { project: string }) {
+  const canEdit = useCan("developer");
   const [list, setList] = useState<RegistryCredential[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState({ registry: "", username: "", password: "" });
@@ -64,16 +66,20 @@ export default function RegistriesCard({ project }: { project: string }) {
                 <td>{r.username}</td>
                 <td>{new Date(r.updatedAt).toLocaleString("pt-PT")}</td>
                 <td>
+                  {canEdit && (
                   <button className="danger" onClick={() => remove(r.registry)}>
                     Apagar
                   </button>
+                  )}
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
       )}
-      <div className="form-grid">
+      {canEdit && (
+        <>
+<div className="form-grid">
         <div>
           <label htmlFor="reg-host">Registry</label>
           <input id="reg-host" value={form.registry} onChange={(e) => setForm({ ...form, registry: e.target.value })} placeholder="ghcr.io" />
@@ -100,6 +106,8 @@ export default function RegistriesCard({ project }: { project: string }) {
       >
         Gravar credenciais
       </button>
+        </>
+      )}
     </div>
   );
 }

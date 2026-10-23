@@ -29,6 +29,7 @@ func (netDocker) ConnectNetwork(context.Context, string, string) error { return 
 func (netDocker) ListContainers(context.Context, bool, map[string][]string) ([]dockerclient.Container, error) {
 	return nil, nil
 }
+func (netDocker) VolumesWithUsage(context.Context) ([]dockerclient.Volume, error) { return nil, nil }
 
 type adminTokens struct{}
 
@@ -59,7 +60,7 @@ func TestDeployTokenScope(t *testing.T) {
 	box, _ := secretbox.New(base64.StdEncoding.EncodeToString(key))
 	svc := platform.New(storetest.New(t), netDocker{}, box, platform.Config{}, nil)
 	mux := http.NewServeMux()
-	New(svc, adminTokens{}, nil, nil).Register(mux)
+	New(svc, adminTokens{}, nil, nil, nil).Register(mux)
 
 	for _, p := range []string{"loja", "blog"} {
 		if _, err := svc.CreateProject(ctx, platform.CreateProjectInput{Slug: p}, "t"); err != nil {

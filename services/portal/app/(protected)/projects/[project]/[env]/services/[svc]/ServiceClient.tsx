@@ -20,6 +20,7 @@ import ConfirmModal from "../../../../../admin/database/ConfirmModal";
 import DomainsCard from "./DomainsCard";
 import ServiceConfig from "./ServiceConfig";
 import TemplateCard from "./TemplateCard";
+import { useCan } from "@/lib/projectRole";
 
 const TABS = [
   { key: "overview", label: "Visão geral" },
@@ -29,6 +30,7 @@ const TABS = [
 ] as const;
 
 export default function ServiceClient({ project, env, svc }: { project: string; env: string; svc: string }) {
+  const canEdit = useCan("developer");
   const router = useRouter();
   const tab = useActiveTab(TABS);
   const [service, setService] = useState<Service | null>(null);
@@ -177,6 +179,8 @@ export default function ServiceClient({ project, env, svc }: { project: string; 
           </p>
         ))}
 
+{canEdit && (
+        <>
         <h2>Deploy</h2>
         <div className="row">
           <input
@@ -216,6 +220,8 @@ export default function ServiceClient({ project, env, svc }: { project: string; 
             Apagar serviço
           </button>
         </div>
+        </>
+        )}
 
       </div>
 
@@ -261,6 +267,8 @@ export default function ServiceClient({ project, env, svc }: { project: string; 
           </table>
         )}
 
+{canEdit && (
+        <>
         <h2>Correr comando</h2>
         <p className="muted">Corre uma vez com a imagem e o env da revisão atual (ex: php artisan cache:clear).</p>
         <div className="row">
@@ -269,6 +277,8 @@ export default function ServiceClient({ project, env, svc }: { project: string; 
             Correr
           </button>
         </div>
+        </>
+        )}
       </div>
       )}
 

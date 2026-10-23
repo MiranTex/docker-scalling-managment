@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api, servicePath, splitArgs, type Service } from "@/lib/platformClient";
+import { useCan } from "@/lib/projectRole";
 
 function toForm(s: Service, joinArgs: (a: string[]) => string) {
   return {
@@ -37,6 +38,7 @@ export default function ServiceConfig({
   onSaved: () => void;
   joinArgs: (a: string[]) => string;
 }) {
+  const canEdit = useCan("developer");
   const [form, setForm] = useState(() => toForm(service, joinArgs));
   const [dirty, setDirty] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -191,7 +193,7 @@ export default function ServiceConfig({
         )}
       </div>
       <div className="actions">
-        <button className="secondary" disabled={saving || !dirty} onClick={save}>
+        <button className="secondary" disabled={saving || !dirty || !canEdit} onClick={save} title={canEdit ? "" : "o teu papel neste projeto só permite ver"}>
           {saving ? "A gravar..." : "Gravar configuração"}
         </button>
         {dirty && (

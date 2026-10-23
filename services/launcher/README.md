@@ -25,6 +25,21 @@ Conta (só "default" por agora)
          └─ Jobs         migrations, backups, restores, comandos pontuais
 ```
 
+**Membros.** Os admins da plataforma (`infra-admin`, `super-admin`) veem e
+gerem todos os projetos. Qualquer outra conta só vê os projetos de que é
+**membro**, com um papel:
+
+| | viewer | developer | admin | admin da plataforma |
+|---|:-:|:-:|:-:|:-:|
+| ver tudo (os segredos continuam só de escrita) | ✓ | ✓ | ✓ | ✓ |
+| deploy, rollback, configuração, scaling, domínios, segredos, addons, comandos/jobs, modelos, tokens de deploy, registries | | ✓ | ✓ | ✓ |
+| membros, criar/apagar ambientes | | | ✓ | ✓ |
+| criar/apagar o projeto, quotas, Volumes | | | | ✓ |
+
+Um viewer não corre comandos: correm com os segredos do ambiente e o
+output pode mostrá-los. Para quem não é membro, um projeto responde 404,
+como se não existisse.
+
 **Isolamento.** Cada ambiente tem a sua rede. Os containers de um ambiente
 só estão nessa rede, e só três componentes da plataforma se ligam a todas,
 porque são os que abrem ligações para as apps: o Traefik (tráfego), o
@@ -112,17 +127,20 @@ aparece na UI.
 ## API
 
 Todas as rotas exigem `Authorization: Bearer <token>`, um de:
-- um access token do auth com role `infra-admin` ou `super-admin`;
+- um access token do auth (o acesso vem de ser admin da plataforma ou
+  membro do projeto -- ver "Membros");
 - uma **API key pessoal** (`ak_...`, página "API tokens" do portal) com o
-  scope `platform`, cujo dono tenha uma dessas roles. A role é lida no auth
-  a cada validação (com cache de 30s), por isso tirar a role ao dono corta
-  logo o acesso das keys dele. Para scripts;
+  scope `platform`: tem o acesso do dono (admin da plataforma, ou o papel
+  dele em cada projeto). A role é lida no auth a cada validação (com cache
+  de 30s), por isso mudar as permissões do dono reflete-se logo. Para
+  scripts;
 - um token de deploy (`bsd_...`), só nas rotas marcadas com ✱.
 
 | Método e caminho (`/v1/projects/...`) | |
 |---|---|
 | `GET`, `POST /` · `GET`, `PATCH`, `DELETE /{p}` | projetos (`?purge=true` apaga também os dados) |
 | `GET /{p}/usage` | recursos alocados no projeto |
+| `GET`, `POST /{p}/members` · `PATCH`, `DELETE /{p}/members/{conta}` | membros (adicionar por email de uma conta existente) |
 | `POST /{p}/environments` · `DELETE /{p}/environments/{e}` | ambientes |
 | `GET`, `PUT`, `DELETE /{p}/registries[/{host}]` | credenciais de registry |
 | `GET`, `POST`, `DELETE /{p}/deploy-tokens[/{id}]` | tokens de CI |
