@@ -111,6 +111,13 @@ services:
       # roteado.
       - --providers.docker.exposedByDefault=false
       - --providers.docker.network=auth-net
+      # Routing dos serviços de projeto: escrito pelo launcher (ver
+      # services/launcher/internal/platform/routing.go) neste diretório,
+      # partilhado por volume. Ao contrário das labels Docker (fixas na
+      # criação do container), o ficheiro deixa o launcher só pôr uma
+      # réplica no ar DEPOIS do health check e tirá-la ANTES de a parar.
+      - --providers.file.directory=/etc/traefik/dynamic
+      - --providers.file.watch=true
       - --entrypoints.web.address=:80
       # HTTPS -- sempre disponível neste entrypoint, mas só usado por uma
       # instância que o launcher tenha exposto com PUBLIC_TLS_CERT_RESOLVER
@@ -153,6 +160,7 @@ services:
       - "80:80"
       - "443:443"
     volumes:
+      - traefik-dynamic:/etc/traefik/dynamic:ro
       # Persiste os certificados emitidos (acme.json) entre reinícios --
       # sem isto, cada restart do Traefik pediria certificados novos a
       # todo host exposto, batendo cedo nos limites de taxa da CA.
@@ -354,6 +362,9 @@ services:
       # base64) -- dev only, gerada com `openssl rand -base64 32`. Perder
       # isto torna esses segredos irrecuperáveis. Separada da
       # SECRETS_MASTER_KEY do secretsadmin de propósito.
+      # Onde escrever o routing dos serviços de projeto (o mesmo volume que
+      # o Traefik lê, ver serviço "traefik").
+      LAUNCHER_TRAEFIK_DYNAMIC_DIR: /etc/traefik/dynamic
       LAUNCHER_SECRETS_KEY: "${LAUNCHER_SECRETS_KEY:-Gb6oAL1A3uEIJGpHTDeN4YkGTQzI3LDAlii+jX18x6o=}"
     labels:
       base-stack.managed: "true"
@@ -362,6 +373,7 @@ services:
       # containers -- o único serviço da plataforma com o socket direto.
       # Tudo o que cria passa por SpecPolicy (binds, rede).
       - /var/run/docker.sock:/var/run/docker.sock
+      - traefik-dynamic:/etc/traefik/dynamic
     depends_on:
       database:
         condition: service_healthy
@@ -488,6 +500,9 @@ volumes:
   demo-database-data-pg17:
   demo-database-backup-repo-pg17:
   traefik-acme:
+  # Configuração dinâmica do Traefik escrita pelo launcher (routing dos
+  # serviços de projeto).
+  traefik-dynamic:
   # Nome fixo, sem o prefixo do projeto: é o mesmo volume que as réplicas
   # do antigo group-authd montavam, por isso a chave de assinatura (e todo
   # token já emitido) sobrevive à mudança. Num volume que já existia, o

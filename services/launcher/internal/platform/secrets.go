@@ -104,6 +104,11 @@ func (s *Service) ResolveEnv(ctx context.Context, envID string, entries []string
 	if err != nil {
 		return nil, err
 	}
+	return resolveWith(values, entries)
+}
+
+// resolveWith é ResolveEnv com os valores já abertos.
+func resolveWith(values map[string]string, entries []string) ([]string, error) {
 	out := make([]string, len(entries))
 	var missing []string
 	for i, e := range entries {

@@ -191,14 +191,21 @@ func (s *Service) GetJob(ctx context.Context, projectSlug, envSlug, id string) (
 	return j, mapStoreErr(err)
 }
 
-// ensureImage garante a imagem no host: usa a local se existir, senão
-// faz pull. projectID serve para escolher credenciais de registry (fase
-// seguinte); por agora só registries públicos.
+// ensureImage garante a imagem no host: usa a local se existir, senão faz
+// pull com as credenciais de registry do projeto (se houver).
 func (s *Service) ensureImage(ctx context.Context, image, projectID string) error {
 	if _, err := s.docker.InspectImage(ctx, image); err == nil {
 		return nil
 	}
-	if err := s.docker.PullImage(ctx, image); err != nil {
+	return s.pullImage(ctx, image, projectID)
+}
+
+func (s *Service) pullImage(ctx context.Context, image, projectID string) error {
+	auth, err := s.registryAuthFor(ctx, projectID, image)
+	if err != nil {
+		return err
+	}
+	if err := s.docker.PullImageWithAuth(ctx, image, auth); err != nil {
 		return fmt.Errorf("obtendo imagem %s: %w", image, err)
 	}
 	return nil

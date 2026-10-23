@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"launcher/internal/dockerclient"
 )
@@ -28,6 +29,44 @@ type fakeDocker struct {
 	logs     string
 	// lastJobCmd é o cmd do último container de job criado.
 	lastJobCmd []string
+	// pulls regista cada pull (imagem e utilizador das credenciais).
+	pulls []string
+	// cpuPercent é o que ContainerStats reporta para todos.
+	cpuPercent float64
+	// failCreateImage: criar um container desta imagem falha.
+	failCreateImage string
+}
+
+func (f *fakeDocker) PullImageWithAuth(_ context.Context, ref string, auth *dockerclient.RegistryAuth) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	user := ""
+	if auth != nil {
+		user = auth.Username + "@" + auth.ServerAddress
+	}
+	f.pulls = append(f.pulls, ref+" "+user)
+	return nil
+}
+
+func (f *fakeDocker) ContainerStats(context.Context, string) (*dockerclient.Stats, error) {
+	var st dockerclient.Stats
+	st.CPUStats.CPUUsage.TotalUsage = uint64(f.cpuPercent * 100)
+	st.CPUStats.SystemCPUUsage = 10000
+	st.CPUStats.OnlineCPUs = 1
+	return &st, nil
+}
+
+// byRole conta os containers vivos com esta role.
+func (f *fakeDocker) byRole(role string) []dockerclient.Container {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []dockerclient.Container
+	for _, c := range f.containers {
+		if c.Labels[LabelRole] == role {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 func newFakeDocker() *fakeDocker {
@@ -45,6 +84,9 @@ func (f *fakeDocker) CreateContainer(_ context.Context, name string, req dockerc
 	defer f.mu.Unlock()
 	if _, ok := f.containers[name]; ok {
 		return "", fmt.Errorf("status 409: name %s in use", name)
+	}
+	if f.failCreateImage != "" && req.Image == f.failCreateImage {
+		return "", fmt.Errorf("status 500: falha simulada")
 	}
 	f.created[name] = req
 	f.containers[name] = dockerclient.Container{ID: name, Names: []string{"/" + name}, Image: req.Image, State: "created", Labels: req.Labels}
@@ -80,6 +122,7 @@ func (f *fakeDocker) InspectContainer(_ context.Context, id string) (*dockerclie
 	info.Config.Labels = c.Labels
 	info.State.Status = c.State
 	info.State.Running = c.State == "running"
+	info.State.StartedAt = time.Now().Add(-time.Minute)
 	return &info, nil
 }
 
@@ -162,11 +205,14 @@ func (f *fakeDocker) RemoveContainer(_ context.Context, id string, _ bool) error
 	return nil
 }
 
-func (f *fakeDocker) ListContainers(_ context.Context, _ bool, filters map[string][]string) ([]dockerclient.Container, error) {
+func (f *fakeDocker) ListContainers(_ context.Context, all bool, filters map[string][]string) ([]dockerclient.Container, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var out []dockerclient.Container
 	for _, c := range f.containers {
+		if !all && c.State != "running" {
+			continue
+		}
 		match := true
 		for _, l := range filters["label"] {
 			k, v, hasValue := strings.Cut(l, "=")

@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
+	"time"
 
 	"launcher/internal/dockerclient"
 	"launcher/internal/secretbox"
@@ -85,6 +86,8 @@ type Docker interface {
 	ListVolumesByLabel(ctx context.Context, label string) ([]dockerclient.Volume, error)
 	InspectImage(ctx context.Context, ref string) (*dockerclient.ImageInspect, error)
 	PullImage(ctx context.Context, ref string) error
+	PullImageWithAuth(ctx context.Context, ref string, auth *dockerclient.RegistryAuth) error
+	ContainerStats(ctx context.Context, id string) (*dockerclient.Stats, error)
 }
 
 type Config struct {
@@ -104,6 +107,20 @@ type Config struct {
 	// (CapacityConfig). Zero desliga o teto.
 	HostMemoryMB          int64
 	MemoryOvercommitRatio float64
+
+	// Routing: o launcher escreve a configuração dinâmica do Traefik
+	// (file provider) neste diretório. Vazio desliga o routing.
+	TraefikDynamicDir string
+	// PublicBaseDomain dá a cada serviço web o host
+	// <serviço>-<ambiente>-<projeto>.<domínio>.
+	PublicBaseDomain string
+	// TLSCertResolver (ex: "le") liga HTTPS com certificado automático.
+	TLSCertResolver string
+
+	// Só para testes: encurtam as esperas do deploy.
+	readyPoll        time.Duration
+	drainDelay       time.Duration
+	workerReadyAfter time.Duration
 }
 
 type Service struct {
@@ -112,13 +129,17 @@ type Service struct {
 	box    *secretbox.Box // nil = segredos desligados
 	cfg    Config
 	logger *slog.Logger
+	rt     *runtime
+	// probe faz o health check HTTP/TCP a uma réplica -- substituível nos
+	// testes.
+	probe func(ctx context.Context, host string, port int, path string) error
 }
 
 func New(db *store.DB, docker Docker, box *secretbox.Box, cfg Config, logger *slog.Logger) *Service {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Service{db: db, docker: docker, box: box, cfg: cfg, logger: logger}
+	return &Service{db: db, docker: docker, box: box, cfg: cfg, logger: logger, rt: newRuntime(), probe: defaultProbe}
 }
 
 // isNotFound reconhece o 404 do Docker (container/imagem/volume que não existe).
@@ -143,7 +164,9 @@ func mapStoreErr(err error) error {
 	case errors.Is(err, store.ErrConflict):
 		return fmt.Errorf("%w: %v", ErrConflict, err)
 	case errors.Is(err, store.ErrProjectNotFound), errors.Is(err, store.ErrEnvironmentNotFound), errors.Is(err, store.ErrSecretNotFound),
-		errors.Is(err, store.ErrAddonNotFound), errors.Is(err, store.ErrJobNotFound):
+		errors.Is(err, store.ErrAddonNotFound), errors.Is(err, store.ErrJobNotFound),
+		errors.Is(err, store.ErrServiceNotFound), errors.Is(err, store.ErrRevisionNotFound),
+		errors.Is(err, store.ErrDeploymentNotFound), errors.Is(err, store.ErrRegistryNotFound):
 		return fmt.Errorf("%w: %v", ErrNotFound, err)
 	}
 	return err

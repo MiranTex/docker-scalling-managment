@@ -21,3 +21,20 @@ func TestDemuxLogs(t *testing.T) {
 		t.Errorf("truncado = %q", got)
 	}
 }
+
+func TestRegistryHost(t *testing.T) {
+	cases := map[string]string{
+		"nginx:alpine":                 "docker.io",
+		"library/nginx":                "docker.io",
+		"eu/app:1":                     "docker.io",
+		"ghcr.io/eu/app:sha":           "ghcr.io",
+		"localhost:5000/app":           "localhost:5000",
+		"registry.example.com:443/a/b": "registry.example.com:443",
+		"localhost/app":                "localhost",
+	}
+	for ref, want := range cases {
+		if got := RegistryHost(ref); got != want {
+			t.Errorf("RegistryHost(%q) = %q, queria %q", ref, got, want)
+		}
+	}
+}

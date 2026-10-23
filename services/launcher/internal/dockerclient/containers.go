@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"time"
 )
 
 // Container é a representação resumida que a API devolve em /containers/json.
@@ -91,10 +92,11 @@ type ContainerInspect struct {
 	// State é o estado de execução -- Health só existe se o container
 	// tiver healthcheck.
 	State struct {
-		Status   string `json:"Status"` // "created", "running", "exited", ...
-		Running  bool   `json:"Running"`
-		ExitCode int    `json:"ExitCode"`
-		Health   *struct {
+		Status    string    `json:"Status"` // "created", "running", "exited", ...
+		Running   bool      `json:"Running"`
+		ExitCode  int       `json:"ExitCode"`
+		StartedAt time.Time `json:"StartedAt"`
+		Health    *struct {
 			Status string `json:"Status"` // "starting", "healthy", "unhealthy"
 		} `json:"Health"`
 	} `json:"State"`
@@ -356,4 +358,41 @@ func demuxLogs(raw []byte) string {
 		raw = raw[8+size:]
 	}
 	return string(out)
+}
+
+// Stats é o subconjunto de /containers/{id}/stats usado para autoscaling.
+type Stats struct {
+	CPUStats    cpuStats `json:"cpu_stats"`
+	PreCPUStats cpuStats `json:"precpu_stats"`
+}
+
+type cpuStats struct {
+	CPUUsage struct {
+		TotalUsage uint64 `json:"total_usage"`
+	} `json:"cpu_usage"`
+	SystemCPUUsage uint64 `json:"system_cpu_usage"`
+	OnlineCPUs     uint32 `json:"online_cpus"`
+}
+
+// ContainerStats lê uma amostra (o Docker espera ~1s para ter precpu).
+func (c *Client) ContainerStats(ctx context.Context, id string) (*Stats, error) {
+	var stats Stats
+	if err := c.do(ctx, "GET", "/containers/"+id+"/stats?stream=false", nil, &stats); err != nil {
+		return nil, err
+	}
+	return &stats, nil
+}
+
+// CPUPercent é a mesma fórmula do `docker stats`: 100% = um core inteiro.
+func (s *Stats) CPUPercent() float64 {
+	cpuDelta := float64(s.CPUStats.CPUUsage.TotalUsage) - float64(s.PreCPUStats.CPUUsage.TotalUsage)
+	systemDelta := float64(s.CPUStats.SystemCPUUsage) - float64(s.PreCPUStats.SystemCPUUsage)
+	if systemDelta <= 0 || cpuDelta <= 0 {
+		return 0
+	}
+	cpus := float64(s.CPUStats.OnlineCPUs)
+	if cpus == 0 {
+		cpus = 1
+	}
+	return cpuDelta / systemDelta * cpus * 100
 }
