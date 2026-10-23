@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -28,6 +29,38 @@ type fakeDocker struct {
 	calls      []string
 	created    []dockerclient.CreateContainerRequest
 	volumes    map[string]dockerclient.Volume
+	networks   map[string]map[string]string // nome -> labels
+}
+
+func (f *fakeDocker) ListNetworks(context.Context) ([]dockerclient.Network, error) {
+	var out []dockerclient.Network
+	for name, labels := range f.networks {
+		out = append(out, dockerclient.Network{Name: name, Labels: labels})
+	}
+	return out, nil
+}
+
+func (f *fakeDocker) InspectNetwork(_ context.Context, name string) (*dockerclient.NetworkDetail, error) {
+	labels, ok := f.networks[name]
+	if !ok {
+		return nil, fmt.Errorf("status 404: network %s not found", name)
+	}
+	return &dockerclient.NetworkDetail{Network: dockerclient.Network{Name: name, Labels: labels}}, nil
+}
+
+func (f *fakeDocker) ConnectNetwork(_ context.Context, network, container string) error {
+	f.record("connect " + network + " " + container)
+	return nil
+}
+
+func (f *fakeDocker) DisconnectNetwork(_ context.Context, network, container string) error {
+	f.record("disconnect " + network + " " + container)
+	return nil
+}
+
+func (f *fakeDocker) RemoveNetwork(_ context.Context, name string) error {
+	f.record("rmnet " + name)
+	return nil
 }
 
 func (f *fakeDocker) FindVolume(_ context.Context, name string) (*dockerclient.Volume, error) {

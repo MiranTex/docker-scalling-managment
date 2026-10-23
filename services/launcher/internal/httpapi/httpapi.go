@@ -367,6 +367,12 @@ func (h *Handler) handleCreateInstance(w http.ResponseWriter, r *http.Request, s
 		writeError(w, http.StatusUnprocessableEntity, "spec_rejected", err.Error())
 		return
 	}
+	for _, n := range req.ExtraNetworks {
+		if err := h.checkNotProjectNetwork(r.Context(), n); err != nil {
+			writeError(w, http.StatusUnprocessableEntity, "spec_rejected", err.Error())
+			return
+		}
+	}
 
 	instanceType, err := h.resolveInstanceType(r.Context(), req.InstanceType, tmpl.DefaultInstanceType, token)
 	if err != nil {
@@ -1177,7 +1183,7 @@ func (h *Handler) confirmManageable(w http.ResponseWriter, r *http.Request, cont
 			break
 		}
 	}
-	if found == nil || !hasPlatformLabel(found.Labels) {
+	if found == nil || !hasPlatformLabel(found.Labels) || isProjectResource(found.Labels) {
 		writeError(w, http.StatusNotFound, "not_found", "container desconhecido: "+containerID)
 		return false
 	}
@@ -1248,7 +1254,13 @@ func (h *Handler) handleListNetworks(w http.ResponseWriter, r *http.Request, _, 
 		writeError(w, http.StatusBadGateway, "docker_error", "erro listando redes: "+err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, networks)
+	out := make([]dockerclient.Network, 0, len(networks))
+	for _, n := range networks {
+		if !isProjectResource(n.Labels) {
+			out = append(out, n)
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 type createNetworkRequest struct {
@@ -1302,7 +1314,7 @@ func hasPlatformLabel(labels map[string]string) bool {
 func (h *Handler) connectExtraNetworks(ctx context.Context, containerID string, names []string) error {
 	for _, name := range names {
 		detail, err := h.docker.InspectNetwork(ctx, name)
-		if err != nil || !hasPlatformLabel(detail.Labels) {
+		if err != nil || !hasPlatformLabel(detail.Labels) || isProjectResource(detail.Labels) {
 			return fmt.Errorf("rede adicional desconhecida: %q", name)
 		}
 		if err := h.docker.ConnectNetwork(ctx, name, containerID); err != nil {
@@ -1322,7 +1334,7 @@ func (h *Handler) isPlatformContainer(ctx context.Context, containerID string) (
 	}
 	for _, c := range containers {
 		if c.ID == containerID {
-			return hasPlatformLabel(c.Labels), nil
+			return hasPlatformLabel(c.Labels) && !isProjectResource(c.Labels), nil
 		}
 	}
 	return false, nil
@@ -1336,7 +1348,7 @@ func (h *Handler) isPlatformContainer(ctx context.Context, containerID string) (
 func (h *Handler) handleGetNetwork(w http.ResponseWriter, r *http.Request, _, _ string) {
 	name := r.PathValue("name")
 	detail, err := h.docker.InspectNetwork(r.Context(), name)
-	if err != nil || !hasPlatformLabel(detail.Labels) {
+	if err != nil || !hasPlatformLabel(detail.Labels) || isProjectResource(detail.Labels) {
 		writeError(w, http.StatusNotFound, "not_found", "rede desconhecida: "+name)
 		return
 	}
@@ -1350,7 +1362,7 @@ func (h *Handler) handleGetNetwork(w http.ResponseWriter, r *http.Request, _, _ 
 func (h *Handler) handleDeleteNetwork(w http.ResponseWriter, r *http.Request, _, _ string) {
 	name := r.PathValue("name")
 	detail, err := h.docker.InspectNetwork(r.Context(), name)
-	if err != nil || !hasPlatformLabel(detail.Labels) {
+	if err != nil || !hasPlatformLabel(detail.Labels) || isProjectResource(detail.Labels) {
 		writeError(w, http.StatusNotFound, "not_found", "rede desconhecida: "+name)
 		return
 	}
@@ -1381,7 +1393,7 @@ func (h *Handler) handleConnectNetwork(w http.ResponseWriter, r *http.Request, _
 	}
 
 	detail, err := h.docker.InspectNetwork(r.Context(), name)
-	if err != nil || !hasPlatformLabel(detail.Labels) {
+	if err != nil || !hasPlatformLabel(detail.Labels) || isProjectResource(detail.Labels) {
 		writeError(w, http.StatusNotFound, "not_found", "rede desconhecida: "+name)
 		return
 	}
@@ -1414,7 +1426,7 @@ func (h *Handler) handleDisconnectNetwork(w http.ResponseWriter, r *http.Request
 	}
 
 	detail, err := h.docker.InspectNetwork(r.Context(), name)
-	if err != nil || !hasPlatformLabel(detail.Labels) {
+	if err != nil || !hasPlatformLabel(detail.Labels) || isProjectResource(detail.Labels) {
 		writeError(w, http.StatusNotFound, "not_found", "rede desconhecida: "+name)
 		return
 	}
@@ -1458,6 +1470,9 @@ func (h *Handler) handleListAllContainers(w http.ResponseWriter, r *http.Request
 
 	out := make([]ContainerSummary, 0, len(containers))
 	for _, c := range containers {
+		if isProjectResource(c.Labels) {
+			continue
+		}
 		out = append(out, ContainerSummary{
 			ContainerID: c.ID,
 			Name:        containerDisplayName(c),
