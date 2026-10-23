@@ -21,7 +21,7 @@ DO $$
 BEGIN
   IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'auth') THEN
     -- Senha de dev, igual à usada em services/auth/docker-compose.yml --
-    -- troque isto (e AUTH_DATABASE_URL em launch-template.auth.json)
+    -- troque isto (e AUTH_DATABASE_URL do serviço auth em demo/docker-compose.yml)
     -- antes de sair de uma máquina de dev.
     CREATE ROLE auth WITH LOGIN PASSWORD 'auth';
   END IF;

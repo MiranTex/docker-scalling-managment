@@ -20,7 +20,7 @@
 // em vez de resolver ele mesmo.
 //
 // Isto também elimina o deadlock que existia antes: um group cujas
-// réplicas dependessem dele mesmo para obter token (ex: group-authd, cujo
+// réplicas dependessem dele mesmo para obter token (ex: o antigo group-authd, cujo
 // AUTH_SERVICE_URL aponta pra ele próprio) só conseguia resolver segredos
 // se já tivesse pelo menos uma réplica de pé -- e criar essa réplica
 // dependia de resolver os segredos primeiro. Como o launcher é um

@@ -93,24 +93,12 @@ func (a *groupAdapter) AddReplica(ctx context.Context) (string, error) {
 	a.restartMu.Lock()
 	defer a.restartMu.Unlock()
 
-	filters := map[string][]string{
-		"label": {fmt.Sprintf("%s=%s", a.cfg.serviceLabel, a.cfg.targetService)},
-	}
-	containers, err := a.client.ListContainers(ctx, false, filters)
-	if err != nil {
-		return "", fmt.Errorf("listando réplicas atuais: %w", err)
-	}
-
-	id, usedFallback, err := applyScaleUp(ctx, a.client, a.logger, a.cfg, a.launcher, len(containers), a.cfg.launchTemplate)
+	id, err := applyScaleUp(ctx, a.launcher, a.cfg.launchTemplate)
 	if err != nil {
 		return "", err
 	}
-	action := "manual_scale_up"
-	if usedFallback {
-		action = "manual_cold_start_fallback"
-	}
-	a.metrics.scaleActions.WithLabelValues(a.cfg.targetService, action).Inc()
-	a.logger.Info("réplica adicionada manualmente via API admin", "container_id", id[:12], "cold_start_fallback", usedFallback)
+	a.metrics.scaleActions.WithLabelValues(a.cfg.targetService, "manual_scale_up").Inc()
+	a.logger.Info("réplica adicionada manualmente via API admin", "container_id", id[:12])
 	return id, nil
 }
 

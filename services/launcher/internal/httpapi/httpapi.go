@@ -69,8 +69,7 @@ type Docker interface {
 	// ListContainers só é usado por GET /v1/groups -- descoberta em tempo
 	// real, contra o Docker, de todo container de group vivo (ver
 	// labelGroupRole), independentemente de ter sido criado por este
-	// launcher ou declarado estaticamente num docker-compose.yml (ex:
-	// group-authd).
+	// launcher ou declarado estaticamente num docker-compose.yml.
 	ListContainers(ctx context.Context, all bool, filters map[string][]string) ([]dockerclient.Container, error)
 	// Métodos de rede -- ver internal/dockerclient/networks.go. Cobrem
 	// list/create/inspect/delete de uma rede, e connect/disconnect de UM
@@ -101,7 +100,7 @@ type Templates interface {
 
 // GroupConfig reúne os valores que todo autoscaler-group lançado por este
 // launcher precisa, além do seu próprio launch template -- os mesmos que
-// hoje são escritos à mão no bloco "group-authd" de demo/docker-compose.yml.
+// um group declarado à mão num docker-compose.yml teria de definir.
 type GroupConfig struct {
 	Image          string // ex: "autoscaler-group:latest"
 	AuthServiceURL string
@@ -122,9 +121,8 @@ const stopTimeoutSeconds = 10
 // Convenção de labels para identificar um container de autoscaler-group
 // (o processo cmd/group, nunca uma réplica da aplicação que ele gere) --
 // tanto os lançados por este launcher (ver launchGroup) como os
-// declarados estaticamente num docker-compose.yml (ex: group-authd, que
-// precisa das mesmas labels em demo/docker-compose.yml para aparecer em
-// GET /v1/groups). groupAdminPort é a porta do servidor admin/métricas de
+// declarados estaticamente num docker-compose.yml (que precisam das
+// mesmas labels para aparecer em GET /v1/groups). groupAdminPort é a porta do servidor admin/métricas de
 // TODO cmd/group -- convenção herdada de METRICS_ADDR, cujo default
 // (":9090") ninguém no demo sobrepõe.
 const (
@@ -622,8 +620,8 @@ func (h *Handler) launchGroup(ctx context.Context, id string, tmpl templatesclie
 	// modelo -- sem isso, um group criado por este launcher a partir de um
 	// modelo sem essa label (ex: qualquer um feito pelo templatesadmin,
 	// que não a define) teria réplicas invisíveis a GET /v1/replicas e ao
-	// picker de rede, exatamente o mesmo bug que o group-authd só evita
-	// por ter a label escrita à mão no seu launch template estático.
+	// picker de rede -- um group estático só o evita escrevendo a label à
+	// mão no seu launch template.
 	replicaLabels := map[string]string{}
 	for k, v := range tmpl.Labels {
 		replicaLabels[k] = v
@@ -913,8 +911,7 @@ func (h *Handler) handleCreateReplica(w http.ResponseWriter, r *http.Request, _,
 // GroupSummary é uma linha de GET /v1/groups: um container de
 // autoscaler-group vivo, descoberto contra o Docker (não contra a store
 // deste launcher, que só sabe do que ele próprio lançou) -- por isso
-// inclui igualmente groups estáticos de um docker-compose.yml (ex:
-// group-authd), desde que tenham a mesma label (ver labelGroupRole).
+// inclui igualmente groups estáticos de um docker-compose.yml, desde que tenham a mesma label (ver labelGroupRole).
 type GroupSummary struct {
 	ContainerID   string `json:"containerId"`
 	Name          string `json:"name"`
@@ -983,7 +980,7 @@ func containerDisplayName(c dockerclient.Container) string {
 // instância que corresponda a containerID -- usado depois de parar/remover
 // um container por fora da store (por containerId, não pelo id de
 // instância), já que nem todo container gerido por este launcher foi
-// necessariamente lançado por ele (ex: group-authd, estático num
+// necessariamente lançado por ele (ex: um group estático num
 // docker-compose.yml, ou qualquer réplica de um group, nunca gravadas na
 // store -- ver handleCreateReplica). Se nenhuma instância corresponder, ou
 // a própria listagem falhar, não há nada a fazer e isso não é um erro.
@@ -1003,8 +1000,8 @@ func (h *Handler) syncInstanceStatus(ctx context.Context, containerID, status, s
 // handleDeleteGroup para e remove o container de UM autoscaler-group,
 // identificado pelo containerId (não pelo id de instância deste
 // launcher) -- diferente de handleRemoveContainer porque um group nem
-// sempre foi lançado por este launcher (ex: group-authd, estático num
-// docker-compose.yml, nunca teve uma linha na store). É esta rota,
+// sempre foi lançado por este launcher (ex: um group estático num
+// docker-compose.yml nunca teve uma linha na store). É esta rota,
 // endereçável pelo mesmo containerId que GET /v1/groups já devolve, que
 // o ecrã /admin/autoscaler do portal usa para "Parar grupo" -- o
 // /admin/launcher deste portal deliberadamente não expõe este botão para

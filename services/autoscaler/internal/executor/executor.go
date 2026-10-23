@@ -86,14 +86,6 @@ func scaleUp(ctx context.Context, client *dockerclient.Client, members []dockerc
 // ${secret:NOME} antes de criar, com ou sem segredo nenhum no "env". O
 // group continua a GERIR réplicas (monitorizar, decidir escalar,
 // balancear, remover) -- só não sabe lançar uma sozinho.
-//
-// Excepção única, desligada por defeito (ver cmd/group's
-// ALLOW_COLD_START_FALLBACK): um group auto-referencial (ex: group-authd,
-// cujo AUTH_SERVICE_URL aponta pra ele mesmo) depende de conseguir renovar
-// o seu próprio token contra o serviço que ele mesmo gere, para pedir
-// qualquer réplica ao launcher -- se as réplicas caírem a zero, isso fica
-// impossível, e sem uma válvula de escape, nunca mais sai desse estado.
-// Ver cmd/group/main.go, applyScaleUp, e "Cuidado real" em demo/README.md.
 type LaunchTemplate struct {
 	Image   string            `json:"image"`
 	Cmd     []string          `json:"cmd,omitempty"`
@@ -111,51 +103,10 @@ type LaunchTemplate struct {
 	// InstanceType/VCPU/MemoryMB descrevem o tamanho de cada réplica,
 	// injetados pelo launcher ao lançar este group (ver
 	// services/launcher/internal/httpapi, launchGroup). Viajam de volta
-	// intactos em cada pedido de réplica -- o group nunca os interpreta,
-	// exceto no fallback de arranque a frio, em que precisa de os aplicar
-	// ele próprio.
+	// intactos em cada pedido de réplica -- o group nunca os interpreta.
 	InstanceType string  `json:"instanceType,omitempty"`
 	VCPU         float64 `json:"vcpu,omitempty"`
 	MemoryMB     int64   `json:"memoryMb,omitempty"`
-}
-
-// CreateFromTemplate cria+inicia um container diretamente a partir de
-// template, sem passar pelo launcher. Não é o caminho normal de criar uma
-// réplica (ver LaunchTemplate) -- só é seguro chamar como último recurso,
-// quando o group não tem NENHUMA réplica viva e o pedido ao launcher já
-// falhou (é cmd/group.applyScaleUp quem decide isso, nunca este pacote).
-func CreateFromTemplate(ctx context.Context, client *dockerclient.Client, template LaunchTemplate) (string, error) {
-	if template.Image == "" {
-		return "", errors.New("executor: launch template sem \"image\" definida")
-	}
-
-	id, err := client.CreateContainer(ctx, "", dockerclient.CreateContainerRequest{
-		Image:  template.Image,
-		Cmd:    template.Cmd,
-		Env:    template.Env,
-		Labels: template.Labels,
-		HostConfig: &dockerclient.CreateHostConfig{
-			Binds:       template.Binds,
-			NetworkMode: template.Network,
-			ExtraHosts:  template.ExtraHosts,
-			NanoCPUs:    int64(template.VCPU * 1_000_000_000),
-			Memory:      template.MemoryMB * 1024 * 1024,
-			// Igual a Memory desativa o swap -- mesma decisão do launcher:
-			// melhor um container morto depressa que um host a paginar.
-			MemorySwap: template.MemoryMB * 1024 * 1024,
-			// Mesma política que o launcher aplica a toda réplica (ver
-			// services/launcher/internal/httpapi, handleCreateReplica).
-			RestartPolicy: dockerclient.UnlessStopped(),
-		},
-	})
-	if err != nil {
-		return "", fmt.Errorf("executor: criando container a partir do launch template: %w", err)
-	}
-
-	if err := client.StartContainer(ctx, id); err != nil {
-		return "", fmt.Errorf("executor: iniciando container %s: %w", id[:12], err)
-	}
-	return id, nil
 }
 
 // scaleDown escolhe e remove imediatamente um container do grupo. Usado

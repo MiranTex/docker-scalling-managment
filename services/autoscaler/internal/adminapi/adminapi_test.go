@@ -383,7 +383,7 @@ func TestHandleStatusShapeAndFields(t *testing.T) {
 			{ContainerID: "abc123", Name: "authd-1", State: "running", Status: "Up 5 minutes", CPUPercent: 12.5},
 		},
 		Policy:         PolicyToDTO(fake.policy),
-		LaunchTemplate: LaunchTemplateInfo{Path: "/etc/autoscaler/launch-template.auth.json"},
+		LaunchTemplate: LaunchTemplateInfo{Path: "/etc/autoscaler/launch-template.json"},
 	}
 	h, _ := newTestHandler(fake)
 	mux := http.NewServeMux()

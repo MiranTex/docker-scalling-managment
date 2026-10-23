@@ -83,7 +83,7 @@ services:
     environment:
       ADMINER_DEFAULT_SERVER: postgres
     ports:
-      # 8082, não 8080/8081 -- 8081 já é do group-authd (ver demo/docker-compose.yml).
+      # 8082, não 8080/8081 -- 8081 já é do auth (ver demo/docker-compose.yml).
       - "8082:8080"
     depends_on:
       postgres:

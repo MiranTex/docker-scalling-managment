@@ -2,8 +2,7 @@
 # outros serviços vão ser criados a partir de, via templatesadmin+launcher
 # (ver "Lançar containers sem autoscaling (launcher)" em demo/README.md),
 # não mais um serviço de exemplo escrito à mão no próprio compose. Contém
-# auth + portal + database (com o auth service gerido pelo autoscaler,
-# group-authd, não um container estático, e o Postgres dele vindo do
+# auth + portal + database (o Postgres do auth vem do
 # services/database -- Postgres partilhado, com backups/PITR via
 # pgBackRest, em vez de um `postgres:16-alpine` ad-hoc só deste demo) mais
 # secretsadmin/templatesadmin/launcher (gestão de segredos e de modelos de
@@ -26,10 +25,10 @@
 networks:
   auth-net:
     # Nome fixo, não o default prefixado pelo nome do projeto Compose
-    # (ex: "demo_auth-net") -- o launch-template.auth.json referencia
-    # este nome literal no campo "network", e quem cria os containers a
-    # partir dele é o group-authd via API do Docker diretamente, sem
-    # passar pelo Compose (que resolveria o prefixo por você).
+    # (ex: "demo_auth-net") -- modelos do templatesadmin referenciam este
+    # nome literal no campo "network", e quem cria os containers a partir
+    # deles é o launcher via API do Docker diretamente, sem passar pelo
+    # Compose (que resolveria o prefixo por você).
     name: auth-net
     labels:
       # Mesma label que o launcher aplica a toda rede/container que ele
@@ -200,11 +199,11 @@ services:
       PGBACKREST_STANZA: demo
       # dbadmin (API de administração desta BD, ver
       # services/database/README.md) valida tokens do auth service via
-      # JWKS -- por isso ele fala com group-authd, não com o Postgres
+      # JWKS -- por isso ele fala com o auth, não com o Postgres
       # diretamente, para saber quem está autorizado a chamá-lo.
-      AUTH_SERVICE_URL: "http://group-authd:8090"
+      AUTH_SERVICE_URL: "http://auth:8080"
       # Têm de bater exatamente com o AUTH_ISSUER/AUTH_AUDIENCE deste demo
-      # (ver launch-template.auth.json) -- senão todo token é rejeitado
+      # (ver o serviço "auth" abaixo) -- senão todo token é rejeitado
       # por issuer inesperado, mesmo com assinatura e role corretas.
       AUTH_ISSUER: "auth.base-stack.local"
       AUTH_AUDIENCE: "base-stack"
@@ -234,8 +233,9 @@ services:
   # Guarda valores de segredos (ex: senhas de BD usadas em launch
   # templates do autoscaler) cifrados em repouso -- ver
   # services/secretsadmin. Só infra-admin (via portal) gere nomes/valores;
-  # só contas "service" (ex: group-authd, ver SECRETS_REFRESH_TOKEN
-  # abaixo) conseguem resolver um nome para o valor em claro.
+  # só contas "service" (na prática, o launcher, ver
+  # LAUNCHER_SECRETS_REFRESH_TOKEN abaixo) conseguem resolver um nome para
+  # o valor em claro.
   secretsadmin:
     # Volta a subir depois de um crash ou reboot do host; um "docker
     # compose stop" explícito continua a ser respeitado.
@@ -244,7 +244,7 @@ services:
     image: secretsadmin:latest
     environment:
       SECRETSADMIN_DATABASE_URL: "postgres://secretsadmin:secretsadmin@database:5432/app?sslmode=disable"
-      AUTH_SERVICE_URL: "http://group-authd:8090"
+      AUTH_SERVICE_URL: "http://auth:8080"
       AUTH_ISSUER: "auth.base-stack.local"
       AUTH_AUDIENCE: "base-stack"
       # Chave de cifra (AES-256, 32 bytes em base64) -- dev only, gerada
@@ -277,7 +277,7 @@ services:
     environment:
       TEMPLATESADMIN_DATABASE_URL: "postgres://templatesadmin:templatesadmin@database:5432/app?sslmode=disable"
       DOCKER_SOCKET: "tcp://docker-api-ro:2375"
-      AUTH_SERVICE_URL: "http://group-authd:8090"
+      AUTH_SERVICE_URL: "http://auth:8080"
       AUTH_ISSUER: "auth.base-stack.local"
       AUTH_AUDIENCE: "base-stack"
     labels:
@@ -297,10 +297,7 @@ services:
   # modelo -- instâncias "solo" (uma app qualquer, sem autoscaling nenhum)
   # ou "group" (um autoscaler-group inteiro, lançado sem passar pelo
   # docker-compose). É também o único que resolve ${secret:NOME} contra o
-  # secretsadmin: antes desta feature, essa lógica vivia dentro de cada
-  # group (ver group-authd abaixo, agora sem SECRETSADMIN_SERVICE_URL/
-  # SECRETS_REFRESH_TOKEN próprios) -- ver services/launcher/README.md e
-  # demo/README.md.
+  # secretsadmin -- ver demo/README.md.
   launcher:
     # Volta a subir depois de um crash ou reboot do host; um "docker
     # compose stop" explícito continua a ser respeitado.
@@ -309,14 +306,13 @@ services:
     image: launcher:latest
     environment:
       LAUNCHER_DATABASE_URL: "postgres://launcher:launcher@database:5432/app?sslmode=disable"
-      AUTH_SERVICE_URL: "http://group-authd:8090"
+      AUTH_SERVICE_URL: "http://auth:8080"
       AUTH_ISSUER: "auth.base-stack.local"
       AUTH_AUDIENCE: "base-stack"
       TEMPLATESADMIN_SERVICE_URL: "http://templatesadmin:8093"
       SECRETSADMIN_SERVICE_URL: "http://secretsadmin:8092"
       # Conta "service" própria do launcher (ver demo/README.md, "Bootstrap
-      # da conta de serviço do autoscaler") -- substitui o
-      # SECRETS_REFRESH_TOKEN que antes vivia em group-authd.
+      # da conta de serviço do autoscaler").
       LAUNCHER_SECRETS_REFRESH_TOKEN: "${LAUNCHER_SECRETS_REFRESH_TOKEN:-}"
       # Nome fixo, alcançável por qualquer group que este launcher venha a
       # criar dinamicamente (ver internal/httpapi.GroupConfig.SelfURL).
@@ -384,7 +380,7 @@ services:
     environment:
       ADMINER_DEFAULT_SERVER: database
     ports:
-      # 8096, não 8081/8082 -- já usados por group-authd e pelo
+      # 8096, não 8081/8082 -- já usados pelo auth e pelo
       # services/database standalone respetivamente.
       - "8096:8080"
     labels:
@@ -397,115 +393,43 @@ services:
     networks:
       - auth-net
 
-  # Réplicas do auth service não existem aqui como um serviço Compose --
-  # group-authd cria/remove os containers "authd" sozinho a partir de
-  # launch-template.auth.json (imagem, env, rede, o bind do signing-key),
-  # pedindo cada réplica nova ao launcher (ver serviço "launcher" acima).
-  # O que este serviço expõe é só o PROXY do group (roteia pras réplicas
-  # por IP na rede auth-net + BACKEND_PORT, nunca porta publicada) -- de
-  # fora, nada muda: localhost:8081 continua sendo "o auth service".
-  group-authd:
-    # Volta a subir depois de um crash ou reboot do host; um "docker
-    # compose stop" explícito continua a ser respeitado.
+  # Auth service: um container estático, como o resto do plano de
+  # controlo. Já foi um autoscaler-group (group-authd), mas o group
+  # dependia de renovar o seu token contra o auth que ele próprio geria --
+  # com zero réplicas, nunca conseguia pedir a primeira (deadlock a cada
+  # arranque a frio). O plano de controlo não pode depender de si próprio
+  # para arrancar.
+  #
+  # Um só container de propósito: com o volume auth-signing-key ainda
+  # vazio, duas instâncias a arrancar ao mesmo tempo gerariam cada uma a
+  # sua chave de assinatura (ver internal/keystore.LoadOrGenerate em
+  # services/auth).
+  auth:
     restart: unless-stopped
-    image: autoscaler-group:latest
+    image: auth-service:latest
     environment:
-      TARGET_SERVICE: auth
-      BACKEND_PORT: "8080" # porta do authd dentro do container (AUTH_LISTEN_ADDR default)
-      # Um replica só por padrão: evita a corrida em que duas réplicas
-      # tentassem gerar a chave de assinatura (signing-key) ao mesmo
-      # tempo num volume ainda vazio (ver internal/keystore.LoadOrGenerate
-      # em services/auth) -- depois da chave já existir no volume
-      # partilhado, escalar pra mais réplicas é seguro (todas leem a
-      # mesma chave).
-      MIN_REPLICAS: "1"
-      MAX_REPLICAS: "3"
-      CPU_SCALE_UP_PERCENT: "50"
-      CPU_SCALE_DOWN_PERCENT: "20"
-      RECONCILE_TICK_SECONDS: "3"
-      # /readyz confere que o Postgres está alcançável -- uma réplica
-      # criada antes do database ficar pronto simplesmente não entra
-      # no backend do proxy até responder <400 aqui; o group nunca mata
-      # uma réplica por falha de health check, só a exclui do roteamento
-      # (ver services/autoscaler/internal/discovery).
-      HEALTH_CHECK_PATH: "/readyz"
-      LOG_FORMAT: "json"
-      LOG_LEVEL: "info"
-      METRICS_ADDR: ":9090"
-      LAUNCH_TEMPLATE_FILE: "/etc/autoscaler/launch-template.auth.json"
-      # A API de administração deste group (GET/PUT /v1/policy, POST
-      # /v1/restart, ver services/autoscaler/internal/adminapi) valida
-      # tokens do auth service via JWKS -- exatamente como o dbadmin da BD
-      # já faz acima. Auto-referencial de propósito: este group aponta
-      # para o MESMO auth service que ele próprio gere/expõe, porque quem
-      # chama esta API admin usa um token emitido por esse auth service,
-      # não um outro.
-      AUTH_SERVICE_URL: "http://group-authd:8090"
+      AUTH_DATABASE_URL: "postgres://auth:auth@database:5432/app?sslmode=disable"
+      # Têm de bater com AUTH_ISSUER/AUTH_AUDIENCE de todo serviço que
+      # valida tokens (dbadmin, secretsadmin, templatesadmin, launcher).
       AUTH_ISSUER: "auth.base-stack.local"
       AUTH_AUDIENCE: "base-stack"
-      # Todo scale up agora passa pelo launcher (ver serviço "launcher"
-      # acima) -- é ele quem cria de facto o container e resolve qualquer
-      # referência ${secret:NOME} no "env" do launch template, não mais
-      # este group (ver services/autoscaler/internal/launcherclient).
-      # LAUNCHER_REFRESH_TOKEN é o refresh token de uma conta "service"
-      # (ver services/auth/internal/store/role.go), emitido manualmente
-      # uma vez -- ver demo/README.md, "Bootstrap da conta de serviço do
-      # autoscaler". Ao contrário do SECRETS_REFRESH_TOKEN de antes, este
-      # é sempre necessário: criar QUALQUER réplica agora depende do
-      # launcher, não só réplicas com segredos.
-      #
-      # Cuidado arquitetural real (mesmo espírito do aviso que existia
-      # antes em internal/secretsclient, só que agora incondicional): para
-      # RENOVAR este token, group-authd chama .../v1/token/refresh através
-      # do seu PRÓPRIO proxy -- que só responde se já houver pelo menos
-      # uma réplica de "auth" de pé. Se as réplicas de auth chegarem a
-      # zero (ex: reboot completo do ambiente), group-authd não consegue
-      # renovar o token para pedir ao launcher a primeira réplica nova:
-      # deadlock estrutural, todas as vezes que reiniciar do zero, não só
-      # uma vez -- ver ALLOW_COLD_START_FALLBACK abaixo, que é como isto
-      # se resolve sozinho agora.
-      LAUNCHER_SERVICE_URL: "http://launcher:8094"
-      LAUNCHER_REFRESH_TOKEN: "${GROUP_AUTHD_LAUNCHER_REFRESH_TOKEN:-}"
-      # Válvula de escape, desligada por defeito em qualquer outro group
-      # (ver services/autoscaler/cmd/group/main.go, applyScaleUp): só
-      # entra em jogo quando o pedido ao launcher falha E não há NENHUMA
-      # réplica de auth viva -- cria essa réplica localmente, uma vez,
-      # para deixar de haver zero réplicas e o próprio proxy voltar a
-      # responder. A partir da réplica seguinte, volta a pedir sempre ao
-      # launcher, como qualquer group. Só group-authd precisa disto: é o
-      # único cujo AUTH_SERVICE_URL aponta para o serviço que ele mesmo
-      # gere.
-      ALLOW_COLD_START_FALLBACK: "true"
+      LOG_FORMAT: "json"
+      LOG_LEVEL: "info"
+      # Promove esta conta a super-admin no arranque, se já existir -- só
+      # precisa de estar definido uma vez (ver demo/README.md, passo 4).
+      AUTH_BOOTSTRAP_SUPERADMIN_EMAIL: "${AUTH_BOOTSTRAP_SUPERADMIN_EMAIL:-}"
     labels:
-      # É por esta label que o launcher descobre este group em
-      # GET /v1/groups (ver services/launcher/internal/httpapi,
-      # labelGroupRole) -- mesma convenção que ele próprio aplica a um
-      # group lançado dinamicamente, para group-authd (estático, deste
-      # docker-compose.yml) aparecer na mesma lista dinâmica que a UI
-      # /admin/autoscaler do portal usa.
-      autoscaler.role: "group"
-      autoscaler.target_service: "auth"
       base-stack.managed: "true"
-      # Convenção da plataforma de observabilidade (ver
-      # services/monitoring/docker-compose.yml) -- mesmo padrão do
-      # "traefik" acima: o Prometheus descobre este container via
-      # docker_sd_configs por causa destas duas labels, já ligado à rede
-      # "observability-net" abaixo desde a criação. Porta = METRICS_ADDR.
-      prometheus.scrape: "true"
-      prometheus.port: "9090"
     volumes:
-      # Continua montado: group-authd ainda lista/inspeciona/para as suas
-      # próprias réplicas diretamente (leitura + scale down, ver
-      # internal/executor) -- só CRIAR uma réplica nova passou a ser
-      # pedido ao launcher, não mais feito localmente aqui.
-      - /var/run/docker.sock:/var/run/docker.sock
-      - ./launch-template.auth.json:/etc/autoscaler/launch-template.auth.json:ro
+      - auth-signing-key:/var/lib/auth
     ports:
-      # Proxy do group -- mesma porta externa (8081) que o authd estático
-      # publicava antes, só que agora quem responde é o load balancer do
-      # group, na frente de 1+ réplicas.
-      - "8081:8090"
-      - "9081:9090"
+      # Mesma porta no host de sempre (era o proxy do group-authd).
+      - "8081:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     depends_on:
       database:
         condition: service_healthy
@@ -513,12 +437,6 @@ services:
     cpus: 0.5
     networks:
       - auth-net
-      - observability-net
-    # Default do Docker (10s) mal chega para o próprio shutdownTimeout de
-    # cmd/group (ver services/autoscaler/cmd/group/config.go). As réplicas
-    # de auth NÃO são removidas quando este group desliga -- ver "Derrubar"
-    # em demo/README.md.
-    stop_grace_period: 30s
 
   portal:
     # Volta a subir depois de um crash ou reboot do host; um "docker
@@ -526,9 +444,7 @@ services:
     restart: unless-stopped
     image: portal:latest
     environment:
-      # Aponta pro PROXY do group-authd, não direto pra uma réplica --
-      # é o group quem passa a ser o endpoint estável do auth service.
-      AUTH_SERVICE_URL: "http://group-authd:8090"
+      AUTH_SERVICE_URL: "http://auth:8080"
       # dbadmin corre dentro do próprio container "database" (ver
       # services/database/README.md, "API de administração") -- não tem
       # porta publicada no host de propósito, só acessível dentro da
@@ -550,7 +466,7 @@ services:
       # já usa 3000 (ver services/monitoring).
       - "3100:3000"
     depends_on:
-      - group-authd
+      - auth
       - database
       - secretsadmin
       - templatesadmin
@@ -564,9 +480,9 @@ volumes:
   demo-database-data:
   demo-database-backup-repo:
   traefik-acme:
-  # auth-signing-key NÃO é montado por nenhum serviço Compose -- é
-  # referenciado só dentro de launch-template.auth.json ("binds"), que o
-  # group-authd usa para criar as réplicas via API do Docker diretamente.
-  # O Docker cria este volume nomeado sozinho, vazio, na primeira vez que
-  # uma réplica o monta -- não precisa (nem faz sentido) declará-lo aqui
-  # como volume de um serviço Compose que não existe mais.
+  # Nome fixo, sem o prefixo do projeto: é o mesmo volume que as réplicas
+  # do antigo group-authd montavam, por isso a chave de assinatura (e todo
+  # token já emitido) sobrevive à mudança. Num volume que já existia, o
+  # compose avisa que não foi ele que o criou -- é inofensivo.
+  auth-signing-key:
+    name: auth-signing-key
