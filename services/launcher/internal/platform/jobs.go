@@ -14,6 +14,15 @@ import (
 // suficiente para ver o erro de uma migration, sem encher a base.
 const maxJobOutput = 64 * 1024
 
+// manualJobTimeout: um comando pontual não deve ficar 30 minutos preso (ex:
+// um servidor arrancado por engano em vez de um comando que termina).
+const manualJobTimeout = 10 * time.Minute
+
+// jobCancelled é a causa do cancelamento, com quem o pediu.
+type jobCancelled struct{ by string }
+
+func (c jobCancelled) Error() string { return "cancelado por " + c.by }
+
 // containerSpec descreve um container que corre até ao fim, num ambiente.
 type containerSpec struct {
 	project store.Project
@@ -152,12 +161,25 @@ func (s *Service) createJobRow(ctx context.Context, req *jobRequest) (store.Job,
 }
 
 func (s *Service) executeJob(ctx context.Context, job *store.Job, req jobRequest) {
+	ctx, cancel := context.WithCancelCause(ctx)
+	s.rt.registerJob(job.ID, cancel)
+	defer func() {
+		s.rt.unregisterJob(job.ID)
+		cancel(nil)
+	}()
+
 	code, output, err := s.runToCompletion(ctx, req.containerSpec)
 	job.Status = store.JobSucceeded
-	if err != nil {
+	var cancelled jobCancelled
+	switch {
+	case errors.As(context.Cause(ctx), &cancelled):
+		job.Status = store.JobCancelled
+		output += "\n[plataforma] " + cancelled.Error()
+		err = cancelled
+	case err != nil:
 		job.Status = store.JobFailed
 		output += "\n[plataforma] " + err.Error()
-	} else if code != 0 {
+	case code != 0:
 		job.Status = store.JobFailed
 	}
 	job.Output = output
@@ -166,8 +188,8 @@ func (s *Service) executeJob(ctx context.Context, job *store.Job, req jobRequest
 		exit = &code
 	}
 	job.ExitCode = exit
-	saveCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	saveCtx, cancelSave := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelSave()
 	if dbErr := s.db.FinishJob(saveCtx, job.ID, job.Status, exit, output); dbErr != nil {
 		s.logger.Error("erro gravando resultado do job", "job_id", job.ID, "err", dbErr)
 	}
@@ -180,6 +202,34 @@ func (s *Service) ListJobs(ctx context.Context, projectSlug, envSlug string) ([]
 		return nil, err
 	}
 	return s.db.ListJobs(ctx, e.ID, 50)
+}
+
+// CancelJob pára um job a correr. O resultado (estado "cancelled") aparece
+// em GetJob assim que o container for removido. Um job "running" que este
+// processo não conhece é de um launcher anterior: fica como falhado e o
+// container, se ainda existir, é removido.
+func (s *Service) CancelJob(ctx context.Context, projectSlug, envSlug, id, by string) error {
+	_, e, err := s.Scope(ctx, projectSlug, envSlug)
+	if err != nil {
+		return err
+	}
+	job, err := s.db.GetJob(ctx, e.ID, id)
+	if err != nil {
+		return mapStoreErr(err)
+	}
+	if job.Status != store.JobRunning {
+		return invalid("o job já terminou (%s)", job.Status)
+	}
+	if s.rt.cancelJob(id, jobCancelled{by: by}) {
+		return nil
+	}
+	containers, err := s.docker.ListContainers(ctx, true, map[string][]string{"label": {LabelJob + "=" + id}})
+	if err == nil {
+		for _, c := range containers {
+			_ = s.docker.RemoveContainer(ctx, c.ID, true)
+		}
+	}
+	return s.db.FinishJob(ctx, id, store.JobFailed, nil, job.Output+"\n[plataforma] cancelado por "+by+" (o launcher já não estava a acompanhar este job)")
 }
 
 func (s *Service) GetJob(ctx context.Context, projectSlug, envSlug, id string) (store.Job, error) {

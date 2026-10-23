@@ -159,6 +159,10 @@ func (s *Service) runDeployment(ctx context.Context, p store.Project, e store.En
 			fail(fmt.Errorf("release: %w", err))
 			return
 		}
+		if job.Status == store.JobCancelled {
+			fail(fmt.Errorf("o release foi cancelado -- ver o job %s; nada foi trocado", job.ID))
+			return
+		}
 		if job.Status != store.JobSucceeded {
 			exit := "?"
 			if job.ExitCode != nil {

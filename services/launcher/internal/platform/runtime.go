@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"context"
 	"sync"
 	"time"
 )
@@ -22,7 +23,9 @@ type runtime struct {
 	// problem é o último motivo por que o reconciliador não conseguiu pôr
 	// o serviço como devia (ex: quota esgotada) -- mostrado na UI.
 	problem map[string]string
-	kick    chan struct{}
+	// jobs: cancelamento de cada job a correr neste processo.
+	jobs map[string]context.CancelCauseFunc
+	kick chan struct{}
 }
 
 func newRuntime() *runtime {
@@ -35,6 +38,7 @@ func newRuntime() *runtime {
 		lastScale: map[string]time.Time{},
 		lastEval:  map[string]time.Time{},
 		problem:   map[string]string{},
+		jobs:      map[string]context.CancelCauseFunc{},
 		kick:      make(chan struct{}, 1),
 	}
 }
@@ -128,4 +132,27 @@ func (r *runtime) getProblem(svc string) string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.problem[svc]
+}
+
+func (r *runtime) registerJob(id string, cancel context.CancelCauseFunc) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.jobs[id] = cancel
+}
+
+func (r *runtime) unregisterJob(id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.jobs, id)
+}
+
+// cancelJob devolve false se o job não está a correr neste processo.
+func (r *runtime) cancelJob(id string, cause error) bool {
+	r.mu.Lock()
+	cancel, ok := r.jobs[id]
+	r.mu.Unlock()
+	if ok {
+		cancel(cause)
+	}
+	return ok
 }

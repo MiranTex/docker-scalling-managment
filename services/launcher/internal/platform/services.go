@@ -341,7 +341,7 @@ func (s *Service) RunCommand(ctx context.Context, projectSlug, envSlug, svcSlug 
 		return store.Job{}, err
 	}
 	return s.startJob(jobRequest{
-		containerSpec: containerSpec{project: p, env: e, image: rev.Image, cmd: cmd, envVars: envVars},
+		containerSpec: containerSpec{project: p, env: e, image: rev.Image, cmd: cmd, envVars: envVars, timeout: manualJobTimeout},
 		kind:          "manual", serviceID: &svc.ID, revisionID: &rev.ID, by: by,
 	})
 }
