@@ -14,6 +14,7 @@ export default function ConfirmModal({
   confirmLabel,
   onConfirm,
   onCancel,
+  children,
 }: {
   title: string;
   message: string;
@@ -21,6 +22,8 @@ export default function ConfirmModal({
   confirmLabel: string;
   onConfirm: () => void;
   onCancel: () => void;
+  // Opções extra mostradas antes da confirmação (ex: "apagar também os dados").
+  children?: React.ReactNode;
 }) {
   const [typed, setTyped] = useState("");
 
@@ -39,6 +42,7 @@ export default function ConfirmModal({
       <div className="card wide" style={{ maxWidth: 480 }}>
         <h1>{title}</h1>
         <p className="error">{message}</p>
+        {children}
         <p className="muted">
           Escreve <strong>{expectedText}</strong> para confirmar.
         </p>

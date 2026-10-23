@@ -18,6 +18,13 @@ import (
 const (
 	PlatformLabel      = "base-stack.managed"
 	PlatformLabelValue = "true"
+
+	// Labels de recursos: o tamanho de cada container, somado por
+	// internal/httpapi/capacity.go para a capacidade do host e por
+	// internal/platform para as quotas de projeto.
+	LabelInstanceType = "base-stack.resources.instance_type"
+	LabelVCPU         = "base-stack.resources.vcpu"
+	LabelMemoryMB     = "base-stack.resources.memory_mb"
 )
 
 // Network é o subconjunto de /networks que nos interessa: só o suficiente

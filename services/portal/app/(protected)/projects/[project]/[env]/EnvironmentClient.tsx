@@ -5,10 +5,16 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { api, envPath } from "@/lib/platformClient";
 import ConfirmModal from "../../../admin/database/ConfirmModal";
+import AddonsTab from "./AddonsTab";
+import JobsTab from "./JobsTab";
 import SecretsTab from "./SecretsTab";
 
 // Cada separador é um componente próprio que recebe projeto+ambiente.
-const TABS = [{ key: "secrets", label: "Segredos", Component: SecretsTab }] as const;
+const TABS = [
+  { key: "addons", label: "Addons", Component: AddonsTab },
+  { key: "jobs", label: "Jobs", Component: JobsTab },
+  { key: "secrets", label: "Segredos", Component: SecretsTab },
+] as const;
 
 type TabKey = (typeof TABS)[number]["key"];
 

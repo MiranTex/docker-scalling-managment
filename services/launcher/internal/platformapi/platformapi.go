@@ -54,6 +54,20 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/projects/{project}/environments/{env}/secrets", admin(a.listSecrets))
 	mux.HandleFunc("PUT /v1/projects/{project}/environments/{env}/secrets/{name}", admin(a.putSecret))
 	mux.HandleFunc("DELETE /v1/projects/{project}/environments/{env}/secrets/{name}", admin(a.deleteSecret))
+
+	mux.HandleFunc("GET /v1/projects/{project}/usage", admin(a.projectUsage))
+
+	const addons = "/v1/projects/{project}/environments/{env}/addons"
+	mux.HandleFunc("GET "+addons, admin(a.listAddons))
+	mux.HandleFunc("POST "+addons, admin(a.createAddon))
+	mux.HandleFunc("PATCH "+addons+"/{addon}", admin(a.updateAddon))
+	mux.HandleFunc("DELETE "+addons+"/{addon}", admin(a.deleteAddon))
+	mux.HandleFunc("GET "+addons+"/{addon}/backups", admin(a.listBackups))
+	mux.HandleFunc("POST "+addons+"/{addon}/backups", admin(a.createBackup))
+	mux.HandleFunc("POST "+addons+"/{addon}/restore", admin(a.restoreBackup))
+
+	mux.HandleFunc("GET /v1/projects/{project}/environments/{env}/jobs", admin(a.listJobs))
+	mux.HandleFunc("GET /v1/projects/{project}/environments/{env}/jobs/{job}", admin(a.getJob))
 }
 
 // principal é quem fez o pedido.
@@ -114,6 +128,8 @@ func (a *API) fail(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "not_found", err.Error())
 	case errors.Is(err, platform.ErrConflict):
 		writeError(w, http.StatusConflict, "conflict", err.Error())
+	case errors.Is(err, platform.ErrQuotaExceeded):
+		writeError(w, http.StatusConflict, "quota_exceeded", err.Error())
 	case errors.Is(err, platform.ErrSecretsDisabled):
 		writeError(w, http.StatusServiceUnavailable, "secrets_disabled", err.Error())
 	default:

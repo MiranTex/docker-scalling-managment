@@ -13,11 +13,13 @@ networks:
   database-net:
 
 volumes:
-  database-data:
+  # -pg17: dados de um Postgres 16 não arrancam num 17 -- volume novo, o
+  # antigo fica intacto até o apagares à mão.
+  database-data-pg17:
   # Repo local do pgBackRest (usado só quando PGBACKREST_REPO_TYPE=posix,
   # o default). Se trocares pra s3, este volume simplesmente fica vazio
   # -- não custa nada mantê-lo declarado.
-  database-backup-repo:
+  database-backup-repo-pg17:
 
 services:
   postgres:
@@ -39,7 +41,7 @@ services:
 
       # --- pgBackRest -----------------------------------------------
       PGBACKREST_STANZA: shared
-      # posix (default, backups no volume `database-backup-repo`) ou s3
+      # posix (default, backups no volume `database-backup-repo-pg17`) ou s3
       # (MinIO incluído -- é só um endpoint S3-compatible). Ver README
       # "Trocar o storage de backup" antes de mudar isto.
       PGBACKREST_REPO_TYPE: posix
@@ -58,8 +60,8 @@ services:
       BACKUP_SCHEDULE_FULL: "0 2 * * 0"
       BACKUP_SCHEDULE_INCR: "0 2 * * 1-6"
     volumes:
-      - database-data:/var/lib/postgresql/data
-      - database-backup-repo:/var/lib/pgbackrest
+      - database-data-pg17:/var/lib/postgresql/data
+      - database-backup-repo-pg17:/var/lib/pgbackrest
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U app"]
       interval: 5s

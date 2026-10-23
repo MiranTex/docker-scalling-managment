@@ -95,3 +95,25 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	}
 	return nil
 }
+
+// doRaw é do() para respostas que não são JSON (ex: logs) -- devolve o
+// corpo inteiro.
+func (c *Client) doRaw(ctx context.Context, method, path string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("dockerclient: building request: %w", err)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("dockerclient: request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("dockerclient: reading body: %w", err)
+	}
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("dockerclient: %s %s: status %d: %s", method, path, resp.StatusCode, string(body))
+	}
+	return body, nil
+}

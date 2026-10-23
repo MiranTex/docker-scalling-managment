@@ -398,7 +398,7 @@ passa por uma política (`services/launcher/internal/httpapi/specpolicy.go`):
   (vazio por defeito, ou seja, só volumes nomeados). `/`, `/etc`, `/proc`,
   `/sys`, `/dev`, `/run`, `/var/run`, `/var/lib/docker`, `/root`, `/boot` e
   qualquer `docker.sock` ficam sempre proibidos.
-- Volumes nomeados criados por uma stack compose (ex: `demo-database-data`)
+- Volumes nomeados criados por uma stack compose (ex: `demo-database-data-pg17`)
   não podem ser montados por uma app.
 - `network: host` e `network: container:<id>` são recusados.
 - Todo container de app corre com `no-new-privileges`.
@@ -428,7 +428,7 @@ que tenha sobrado (e as redes com a mesma label). Para apagar só uma
 aplicação, usa "Parar grupo" em `/admin/autoscaler` (ou
 `DELETE /v1/groups/{id}`), que remove o group e as réplicas dele. Dados do auth
 (contas, chaves) ficam em volumes nomeados e sobrevivem a este comando:
-- `demo-database-data` / `demo-database-backup-repo` — declarados no
+- `demo-database-data-pg17` / `demo-database-backup-repo-pg17` — declarados no
   Compose, `down -v` remove os dois (isto apaga também os backups locais
   do pgBackRest -- se quiseres preservar backups ao derrubar o ambiente
   de demo, não uses `-v`, ou troca `PGBACKREST_REPO_TYPE` pra `s3` antes).

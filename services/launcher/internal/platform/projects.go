@@ -219,8 +219,17 @@ func (s *Service) teardownEnvironment(ctx context.Context, e store.Environment, 
 	return s.db.DeleteEnvironment(ctx, e.ID)
 }
 
-// purgeEnvironmentVolumes é preenchido na fase dos addons (volumes de
-// dados); por agora um ambiente não tem volumes próprios.
+// purgeEnvironmentVolumes apaga os volumes de dados do ambiente (addons e
+// backups), encontrados pela label do ambiente.
 func (s *Service) purgeEnvironmentVolumes(ctx context.Context, e store.Environment) error {
+	vols, err := s.docker.ListVolumesByLabel(ctx, LabelEnvironmentID+"="+e.ID)
+	if err != nil {
+		return fmt.Errorf("listando volumes do ambiente: %w", err)
+	}
+	for _, v := range vols {
+		if err := s.docker.RemoveVolume(ctx, v.Name); err != nil {
+			return fmt.Errorf("apagando volume %s: %w", v.Name, err)
+		}
+	}
 	return nil
 }

@@ -213,8 +213,8 @@ services:
     labels:
       base-stack.managed: "true"
     volumes:
-      - demo-database-data:/var/lib/postgresql/data
-      - demo-database-backup-repo:/var/lib/pgbackrest
+      - demo-database-data-pg17:/var/lib/postgresql/data
+      - demo-database-backup-repo-pg17:/var/lib/pgbackrest
       # Provisiona a role "auth" na primeira inicialização (ver
       # demo/db-init/01-auth-role.sql) -- é assim que um serviço novo
       # ganha acesso ao Postgres partilhado sem o services/database
@@ -482,8 +482,11 @@ services:
       - auth-net
 
 volumes:
-  demo-database-data:
-  demo-database-backup-repo:
+  # -pg17: a imagem do database passou a Postgres 17, que não arranca sobre
+  # dados de um 16. Os volumes antigos (demo-database-data/-backup-repo)
+  # ficam intactos -- "make db-upgrade-pg17" copia os dados de lá para aqui.
+  demo-database-data-pg17:
+  demo-database-backup-repo-pg17:
   traefik-acme:
   # Nome fixo, sem o prefixo do projeto: é o mesmo volume que as réplicas
   # do antigo group-authd montavam, por isso a chave de assinatura (e todo

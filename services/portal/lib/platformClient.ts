@@ -55,3 +55,53 @@ export function projectPath(project: string, ...rest: string[]): string {
 export function envPath(project: string, env: string, ...rest: string[]): string {
   return projectPath(project, "environments", env, ...rest);
 }
+
+export type Addon = {
+  id: string;
+  slug: string;
+  kind: "postgres" | "redis";
+  image: string;
+  envVar: string;
+  vcpu: number;
+  memoryMb: number;
+  backupEnabled: boolean;
+  lastBackupAt?: string;
+  createdAt: string;
+  createdBy: string;
+  status: "running" | "starting" | "unhealthy" | "stopped" | "missing";
+  host: string;
+};
+
+export type Backup = { file: string; size: number };
+
+export type Job = {
+  id: string;
+  kind: string;
+  image: string;
+  cmd: string[];
+  status: "running" | "succeeded" | "failed";
+  exitCode?: number;
+  output: string;
+  addonId?: string;
+  serviceId?: string;
+  revisionId?: string;
+  createdAt: string;
+  finishedAt?: string;
+  createdBy: string;
+};
+
+export type Usage = { vcpu: number; memoryMb: number; containers: number };
+
+// statusBadge escolhe a classe CSS de um estado (running/succeeded = verde,
+// a meio = amarelo, o resto = vermelho).
+export function statusBadge(status: string): string {
+  if (["running", "succeeded", "healthy", "active", "ready"].includes(status)) return "badge active";
+  if (["starting", "pending", "pulling", "releasing", "deploying", "switching"].includes(status)) return "badge pending";
+  return "badge failed";
+}
+
+export function formatBytes(n: number): string {
+  if (n >= 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  if (n >= 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${n} B`;
+}

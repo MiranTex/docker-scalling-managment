@@ -80,6 +80,9 @@ type config struct {
 	// hostname, que o Docker define como o id curto do container.
 	selfContainer    string
 	traefikContainer string
+
+	postgresImage string
+	redisImage    string
 }
 
 func loadConfig() config {
@@ -116,6 +119,9 @@ func loadConfig() config {
 		secretsKey:       os.Getenv("LAUNCHER_SECRETS_KEY"),
 		selfContainer:    os.Getenv("LAUNCHER_SELF_CONTAINER"),
 		traefikContainer: envString("TRAEFIK_CONTAINER", "traefik"),
+
+		postgresImage: envString("LAUNCHER_ADDON_POSTGRES_IMAGE", "postgres:17-alpine"),
+		redisImage:    envString("LAUNCHER_ADDON_REDIS_IMAGE", "redis:7-alpine"),
 	}
 	if cfg.selfContainer == "" {
 		cfg.selfContainer, _ = os.Hostname()
@@ -145,7 +151,14 @@ func (c config) groupConfig() httpapi.GroupConfig {
 }
 
 func (c config) platformConfig() platform.Config {
-	return platform.Config{TraefikContainer: c.traefikContainer, SelfContainer: c.selfContainer}
+	return platform.Config{
+		TraefikContainer:      c.traefikContainer,
+		SelfContainer:         c.selfContainer,
+		PostgresImage:         c.postgresImage,
+		RedisImage:            c.redisImage,
+		HostMemoryMB:          c.hostMemoryMB,
+		MemoryOvercommitRatio: c.memoryOvercommitRatio,
+	}
 }
 
 func (c config) specPolicy() httpapi.SpecPolicy {

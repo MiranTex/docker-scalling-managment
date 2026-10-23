@@ -19,6 +19,15 @@ type fakeDocker struct {
 	connected  map[string][]string          // rede -> containers
 	containers map[string]dockerclient.Container
 	removed    []string
+
+	// created guarda o pedido de criação de cada container, por nome.
+	created map[string]dockerclient.CreateContainerRequest
+	volumes map[string]map[string]string
+	// exitCode/logs: o que WaitContainer/ContainerLogs devolvem a jobs.
+	exitCode int
+	logs     string
+	// lastJobCmd é o cmd do último container de job criado.
+	lastJobCmd []string
 }
 
 func newFakeDocker() *fakeDocker {
@@ -26,8 +35,90 @@ func newFakeDocker() *fakeDocker {
 		networks:   map[string]map[string]string{},
 		connected:  map[string][]string{},
 		containers: map[string]dockerclient.Container{},
+		created:    map[string]dockerclient.CreateContainerRequest{},
+		volumes:    map[string]map[string]string{},
 	}
 }
+
+func (f *fakeDocker) CreateContainer(_ context.Context, name string, req dockerclient.CreateContainerRequest) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.containers[name]; ok {
+		return "", fmt.Errorf("status 409: name %s in use", name)
+	}
+	f.created[name] = req
+	f.containers[name] = dockerclient.Container{ID: name, Names: []string{"/" + name}, Image: req.Image, State: "created", Labels: req.Labels}
+	if req.Labels[LabelRole] == RoleJob {
+		f.lastJobCmd = req.Cmd
+	}
+	return name, nil
+}
+
+func (f *fakeDocker) StartContainer(_ context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	c, ok := f.containers[id]
+	if !ok {
+		return fmt.Errorf("status 404: no such container %s", id)
+	}
+	c.State = "running"
+	f.containers[id] = c
+	return nil
+}
+
+func (f *fakeDocker) InspectContainer(_ context.Context, id string) (*dockerclient.ContainerInspect, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	c, ok := f.containers[id]
+	if !ok {
+		return nil, fmt.Errorf("status 404: no such container %s", id)
+	}
+	var info dockerclient.ContainerInspect
+	info.ID = c.ID
+	info.Name = "/" + id
+	info.Config.Image = c.Image
+	info.Config.Labels = c.Labels
+	info.State.Status = c.State
+	info.State.Running = c.State == "running"
+	return &info, nil
+}
+
+func (f *fakeDocker) WaitContainer(context.Context, string) (int, error) { return f.exitCode, nil }
+
+func (f *fakeDocker) ContainerLogs(context.Context, string, int) (string, error) { return f.logs, nil }
+
+func (f *fakeDocker) CreateVolume(_ context.Context, name string, labels map[string]string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.volumes[name] = labels
+	return nil
+}
+
+func (f *fakeDocker) RemoveVolume(_ context.Context, name string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.volumes, name)
+	return nil
+}
+
+func (f *fakeDocker) ListVolumesByLabel(_ context.Context, label string) ([]dockerclient.Volume, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	k, v, _ := strings.Cut(label, "=")
+	var out []dockerclient.Volume
+	for name, labels := range f.volumes {
+		if labels[k] == v {
+			out = append(out, dockerclient.Volume{Name: name, Labels: labels})
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeDocker) InspectImage(context.Context, string) (*dockerclient.ImageInspect, error) {
+	return &dockerclient.ImageInspect{ID: "sha256:x"}, nil
+}
+
+func (f *fakeDocker) PullImage(context.Context, string) error { return nil }
 
 func (f *fakeDocker) CreateLabeledNetwork(_ context.Context, name string, labels map[string]string) (string, error) {
 	f.mu.Lock()
@@ -63,6 +154,9 @@ func (f *fakeDocker) StopContainer(context.Context, string, int) error { return 
 func (f *fakeDocker) RemoveContainer(_ context.Context, id string, _ bool) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if _, ok := f.containers[id]; !ok {
+		return fmt.Errorf("status 404: no such container %s", id)
+	}
 	delete(f.containers, id)
 	f.removed = append(f.removed, id)
 	return nil

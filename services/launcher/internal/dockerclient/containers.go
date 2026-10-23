@@ -88,7 +88,18 @@ type ContainerInspect struct {
 		Env    []string          `json:"Env"`
 		Labels map[string]string `json:"Labels"`
 	} `json:"Config"`
-	HostConfig struct {
+	// State é o estado de execução -- Health só existe se o container
+	// tiver healthcheck.
+	State struct {
+		Status   string `json:"Status"` // "created", "running", "exited", ...
+		Running  bool   `json:"Running"`
+		ExitCode int    `json:"ExitCode"`
+		Health   *struct {
+			Status string `json:"Status"` // "starting", "healthy", "unhealthy"
+		} `json:"Health"`
+	} `json:"State"`
+	RestartCount int `json:"RestartCount"`
+	HostConfig   struct {
 		// Binds preserva os volumes montados (ex: código-fonte da app no
 		// Laravel Sail) no formato "origem:destino[:modo]" que a própria API
 		// aceita de volta em /containers/create.
@@ -154,6 +165,35 @@ type CreateContainerRequest struct {
 	Env        []string          `json:"Env,omitempty"`
 	Labels     map[string]string `json:"Labels,omitempty"`
 	HostConfig *CreateHostConfig `json:"HostConfig,omitempty"`
+	// Healthcheck substitui o HEALTHCHECK da imagem -- usado pelos addons
+	// (pg_isready, redis-cli ping), cujo estado se lê depois em
+	// ContainerInspect.State.Health.
+	Healthcheck *Healthcheck `json:"Healthcheck,omitempty"`
+	// NetworkingConfig dá aliases DNS ao container na sua rede (ex: "db"
+	// para um addon), além do nome do container.
+	NetworkingConfig *NetworkingConfig `json:"NetworkingConfig,omitempty"`
+}
+
+// Healthcheck segue Config.Healthcheck da API: durações em nanossegundos.
+type Healthcheck struct {
+	Test        []string `json:"Test"`
+	Interval    int64    `json:"Interval,omitempty"`
+	Timeout     int64    `json:"Timeout,omitempty"`
+	Retries     int      `json:"Retries,omitempty"`
+	StartPeriod int64    `json:"StartPeriod,omitempty"`
+}
+
+type NetworkingConfig struct {
+	EndpointsConfig map[string]EndpointConfig `json:"EndpointsConfig"`
+}
+
+type EndpointConfig struct {
+	Aliases []string `json:"Aliases,omitempty"`
+}
+
+// WithAliases devolve o NetworkingConfig que dá estes aliases na rede.
+func WithAliases(network string, aliases ...string) *NetworkingConfig {
+	return &NetworkingConfig{EndpointsConfig: map[string]EndpointConfig{network: {Aliases: aliases}}}
 }
 
 // CreateHostConfig é o subconjunto de HostConfig que importa na criação: os
@@ -265,4 +305,55 @@ func (c *Client) RemoveContainer(ctx context.Context, id string, force bool) err
 		path += "?force=true"
 	}
 	return c.do(ctx, "DELETE", path, nil, nil)
+}
+
+// WaitContainer bloqueia até o container terminar e devolve o exit code.
+func (c *Client) WaitContainer(ctx context.Context, id string) (int, error) {
+	var resp struct {
+		StatusCode int `json:"StatusCode"`
+		Error      *struct {
+			Message string `json:"Message"`
+		} `json:"Error"`
+	}
+	if err := c.do(ctx, "POST", "/containers/"+id+"/wait", nil, &resp); err != nil {
+		return -1, err
+	}
+	if resp.Error != nil && resp.Error.Message != "" {
+		return resp.StatusCode, fmt.Errorf("dockerclient: wait %s: %s", id, resp.Error.Message)
+	}
+	return resp.StatusCode, nil
+}
+
+// ContainerLogs devolve stdout+stderr do container (as últimas tail
+// linhas; tail <= 0 = tudo), já sem os cabeçalhos de multiplexação.
+func (c *Client) ContainerLogs(ctx context.Context, id string, tail int) (string, error) {
+	q := url.Values{"stdout": {"1"}, "stderr": {"1"}}
+	if tail > 0 {
+		q.Set("tail", fmt.Sprint(tail))
+	}
+	raw, err := c.doRaw(ctx, "GET", "/containers/"+id+"/logs?"+q.Encode())
+	if err != nil {
+		return "", err
+	}
+	return demuxLogs(raw), nil
+}
+
+// demuxLogs tira os cabeçalhos de 8 bytes que o Docker põe em cada frame
+// de stdout/stderr quando o container não tem TTY. Se o formato não bater
+// (container com TTY, stream já cru), devolve o texto tal como veio.
+func demuxLogs(raw []byte) string {
+	var out []byte
+	for len(raw) >= 8 {
+		stream := raw[0]
+		if (stream != 0 && stream != 1 && stream != 2) || raw[1] != 0 || raw[2] != 0 || raw[3] != 0 {
+			return string(raw)
+		}
+		size := int(raw[4])<<24 | int(raw[5])<<16 | int(raw[6])<<8 | int(raw[7])
+		if 8+size > len(raw) {
+			return string(append(out, raw[8:]...))
+		}
+		out = append(out, raw[8:8+size]...)
+		raw = raw[8+size:]
+	}
+	return string(out)
 }

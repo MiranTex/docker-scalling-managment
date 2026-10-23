@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"strings"
 )
 
 // Volume é o subconjunto de /volumes que interessa: o nome e as labels --
@@ -36,4 +37,38 @@ func (c *Client) FindVolume(ctx context.Context, name string) (*Volume, error) {
 		}
 	}
 	return nil, nil
+}
+
+// CreateVolume cria um volume nomeado com labels (PlatformLabel incluída).
+// Criar um que já existe não é erro para o Docker -- devolve o existente.
+func (c *Client) CreateVolume(ctx context.Context, name string, labels map[string]string) error {
+	all := map[string]string{PlatformLabel: PlatformLabelValue}
+	for k, v := range labels {
+		all[k] = v
+	}
+	return c.do(ctx, "POST", "/volumes/create", map[string]any{"Name": name, "Labels": all}, nil)
+}
+
+// RemoveVolume apaga um volume. Não existir não é erro (idempotente).
+func (c *Client) RemoveVolume(ctx context.Context, name string) error {
+	err := c.do(ctx, "DELETE", "/volumes/"+url.PathEscape(name), nil, nil)
+	if err != nil && strings.Contains(err.Error(), "status 404") {
+		return nil
+	}
+	return err
+}
+
+// ListVolumesByLabel devolve os volumes com esta label ("chave=valor").
+func (c *Client) ListVolumesByLabel(ctx context.Context, label string) ([]Volume, error) {
+	filters, err := json.Marshal(map[string][]string{"label": {label}})
+	if err != nil {
+		return nil, fmt.Errorf("dockerclient: encoding filters: %w", err)
+	}
+	var resp struct {
+		Volumes []Volume `json:"Volumes"`
+	}
+	if err := c.do(ctx, "GET", "/volumes?filters="+url.QueryEscape(string(filters)), nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Volumes, nil
 }
