@@ -29,6 +29,7 @@ type fakeGrafana struct {
 	datasources map[int64]map[string]datasource
 	dashboards  map[int64]int             // org -> envios
 	dashUIDs    map[int64]map[string]bool // org -> uids existentes
+	dashBodies  map[int64]map[string]any  // org -> último dashboard enviado
 }
 
 func newFakeGrafana() *fakeGrafana {
@@ -101,6 +102,10 @@ func (f *fakeGrafana) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if d, ok := body["dashboard"].(map[string]any); ok {
 			f.dashUIDs[orgHdr][d["uid"].(string)] = true
+			if f.dashBodies == nil {
+				f.dashBodies = map[int64]map[string]any{}
+			}
+			f.dashBodies[orgHdr] = d
 		}
 	case strings.HasPrefix(path, "/api/dashboards/uid/"):
 		if !f.dashUIDs[orgHdr][strings.TrimPrefix(path, "/api/dashboards/uid/")] {
@@ -294,5 +299,39 @@ func TestDashboardsResentAfterGrafanaLosesThem(t *testing.T) {
 	}
 	if !grafana.dashUIDs[org]["base-stack-projects"] {
 		t.Error("o dashboard devia ter sido reenviado depois de o Grafana o perder")
+	}
+}
+
+// Na organização de um projeto, "project" é uma constante com o slug --
+// não uma lista tirada dos logs, que fica vazia se o projeto não tiver
+// logs no intervalo.
+func TestProjectVariablePinnedInProjectOrg(t *testing.T) {
+	ctx := context.Background()
+	db := storetest.New(t)
+	grafana := newFakeGrafana()
+	srv := httptest.NewServer(grafana)
+	defer srv.Close()
+	dir := t.TempDir()
+	_ = os.WriteFile(filepath.Join(dir, "projects.json"), []byte(`{"uid":"base-stack-projects","templating":{"list":[
+		{"name":"project","label":"Projeto","type":"query","query":"label_values(project)"},
+		{"name":"env","type":"query","query":"label_values({project=~\"$project\"}, env)"}]}}`), 0o644)
+	s := New(Config{URL: srv.URL + "/grafana", AdminUser: "admin", AdminPassword: "pw", DashboardsDir: dir}, db, nil)
+	if err := db.CreateProject(ctx, store.Project{ID: "p1", AccountID: store.DefaultAccountID, Slug: "loja", Name: "Loja", CreatedBy: "t"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SyncAll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	vars := grafana.dashBodies[grafana.orgID("Projeto: loja")]["templating"].(map[string]any)["list"].([]any)
+	project := vars[0].(map[string]any)
+	if project["type"] != "constant" || project["query"] != "loja" || project["hide"] != float64(2) {
+		t.Errorf("variável project na org do projeto = %v", project)
+	}
+	if env := vars[1].(map[string]any); env["type"] != "query" {
+		t.Errorf("as outras variáveis ficam como estão: %v", env)
+	}
+	platform := grafana.dashBodies[grafana.orgID("Plataforma")]["templating"].(map[string]any)["list"].([]any)[0].(map[string]any)
+	if platform["type"] != "query" {
+		t.Errorf("na Plataforma o projeto continua escolhível: %v", platform)
 	}
 }

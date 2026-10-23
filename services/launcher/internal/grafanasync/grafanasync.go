@@ -236,7 +236,12 @@ func withHeader(name, value string) (map[string]any, map[string]string) {
 // encher o histórico de versões a cada minuto. "Já enviado" confirma-se
 // no Grafana: um Grafana recriado volta vazio, com as organizações
 // recriadas com os mesmos ids, e a memória deste processo não sabe disso.
-func (s *Syncer) ensureDashboards(ctx context.Context, orgID int64, files []string) error {
+//
+// constants troca variáveis do dashboard por constantes escondidas -- numa
+// organização de projeto, "project" é sempre esse projeto, e não pode
+// depender de haver logs no intervalo escolhido (sem logs a lista vinha
+// vazia e as consultas ao Loki falhavam).
+func (s *Syncer) ensureDashboards(ctx context.Context, orgID int64, files []string, constants map[string]string) error {
 	for _, f := range files {
 		raw, err := os.ReadFile(filepath.Join(s.cfg.DashboardsDir, f))
 		if err != nil {
@@ -246,7 +251,9 @@ func (s *Syncer) ensureDashboards(ctx context.Context, orgID int64, files []stri
 		if err := json.Unmarshal(raw, &dash); err != nil {
 			return fmt.Errorf("dashboard %s inválido: %w", f, err)
 		}
-		sum := sha256.Sum256(raw)
+		pinVariables(dash, constants)
+		final, _ := json.Marshal(dash)
+		sum := sha256.Sum256(final)
 		key := fmt.Sprintf("%d/%s", orgID, f)
 		if s.dashHash[key] == hex.EncodeToString(sum[:]) {
 			uid, _ := dash["uid"].(string)
@@ -265,6 +272,24 @@ func (s *Syncer) ensureDashboards(ctx context.Context, orgID int64, files []stri
 		s.dashHash[key] = hex.EncodeToString(sum[:])
 	}
 	return nil
+}
+
+// pinVariables substitui as variáveis indicadas por constantes escondidas.
+func pinVariables(dash map[string]any, constants map[string]string) {
+	templating, _ := dash["templating"].(map[string]any)
+	list, _ := templating["list"].([]any)
+	for i, item := range list {
+		v, _ := item.(map[string]any)
+		name, _ := v["name"].(string)
+		value, ok := constants[name]
+		if !ok {
+			continue
+		}
+		list[i] = map[string]any{
+			"name": name, "label": v["label"], "type": "constant", "query": value, "hide": 2,
+			"current": map[string]any{"text": value, "value": value},
+		}
+	}
 }
 
 func (s *Syncer) dashboardFiles() ([]string, error) {
@@ -369,7 +394,7 @@ func (s *Syncer) SyncAll(ctx context.Context) error {
 	if err := s.ensureDatasource(ctx, platformID, datasource{UID: "loki", Name: "Loki", Type: "loki", URL: s.cfg.LokiURL, Access: "proxy", JSONData: lokiJSON, SecureJSONData: lokiSecure}); err != nil {
 		return err
 	}
-	if err := s.ensureDashboards(ctx, platformID, files); err != nil {
+	if err := s.ensureDashboards(ctx, platformID, files, nil); err != nil {
 		return err
 	}
 
@@ -389,7 +414,7 @@ func (s *Syncer) SyncAll(ctx context.Context) error {
 		if err := s.ensureDatasource(ctx, id, datasource{UID: "loki", Name: "Loki", Type: "loki", URL: s.cfg.LokiURL, Access: "proxy", JSONData: lokiJSON, SecureJSONData: lokiSecure}); err != nil {
 			return err
 		}
-		if err := s.ensureDashboards(ctx, id, []string{projectsDashboard}); err != nil {
+		if err := s.ensureDashboards(ctx, id, []string{projectsDashboard}, map[string]string{"project": p.Slug}); err != nil {
 			return err
 		}
 	}
