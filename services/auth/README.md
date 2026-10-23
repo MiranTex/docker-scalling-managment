@@ -184,10 +184,8 @@ docker compose -f services/auth/docker-compose.yml up -d
 Sobe um Postgres básico dedicado a este serviço (schema `auth`) --
 suficiente pra usar o auth isolado, sem depender de mais nada.
 
-Alternativa: `demo/docker-compose.yml` sobe este serviço gerido pelo
-[services/autoscaler](../autoscaler/README.md) (`group-authd`) em vez de
-um container estático -- útil pra testar o auth já escalando/balanceando
-de verdade -- e usa o Postgres partilhado
+Alternativa: `demo/docker-compose.yml` sobe este serviço junto com o resto
+da plataforma e usa o Postgres partilhado
 [services/database](../database/README.md) (backups em rotina + PITR)
 em vez deste Postgres dedicado. Ver `demo/README.md`, seção "Auth +
 portal + database".

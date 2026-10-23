@@ -5,9 +5,8 @@ Demo end-to-end dos serviços BASE do base-stack:
 [services/database](../services/database) +
 [services/secretsadmin](../services/secretsadmin) +
 [services/templatesadmin](../services/templatesadmin) +
-[services/launcher](../services/launcher), com o próprio `auth` gerido pelo
-autoscaler (`group-authd`), não como um container estático, e o Postgres do
-auth vindo do `database` (Postgres partilhado com backups/PITR), não de um
+[services/launcher](../services/launcher), com o Postgres do auth vindo do
+`database` (Postgres partilhado com backups/PITR), não de um
 `postgres:16-alpine` ad-hoc só deste demo.
 
 Isto é a PLATAFORMA -- depois de subir, novos serviços não se escrevem à
@@ -21,17 +20,15 @@ ligado à rede dela (`observability-net`, externa), por isso **tem de estar
 de pé primeiro** -- ver "Subir a plataforma base" abaixo e
 "Observabilidade" mais à frente.
 
-## Subir a plataforma base (auth gerido pelo autoscaler, Postgres partilhado)
+## Subir a plataforma base (Postgres partilhado)
 
 Fica numa rede própria (`auth-net`, nome fixo) dentro do mesmo
-`docker-compose.yml`. Duas diferenças em relação a uma instalação "normal"
-do `auth` (ver
+`docker-compose.yml`. O `auth` é um container estático, como o resto do
+plano de controlo (já foi um autoscaler-group, mas isso criava um deadlock
+no arranque a frio -- ver o comentário do serviço `auth` no compose). A
+diferença em relação a uma instalação "normal" do `auth` (ver
 [services/auth/docker-compose.yml](../services/auth/docker-compose.yml)):
 
-- Não existe um serviço Compose `authd` — quem cria/escala/remove os
-  containers do auth é o **`group-authd`**, uma instância do autoscaler, a
-  partir de [launch-template.auth.json](launch-template.auth.json) (pedindo
-  cada réplica nova ao **`launcher`**, ver "Segredos" abaixo).
 - O Postgres não é um `postgres:16-alpine` dedicado ao auth — é o
   **`database`** ([services/database](../services/database)), o Postgres
   partilhado do base-stack (um schema por serviço, backups em rotina +
@@ -61,30 +58,19 @@ do `auth` (ver
    `observability-net` (externa) -- se tentares subir o demo primeiro,
    `docker compose` recusa com algo como
    `network observability-net declared as external, but could not be found`.
-   O `group-authd` cria a primeira réplica do `authd` sozinho (pedindo-a
-   ao `launcher`) — confira com
-   `docker ps --filter label=autoscaler.service=auth`.
 
    Opcional: `docker compose -f demo/docker-compose.yml up -d adminer`
    sobe também um browser de tabelas/SQL ad-hoc contra o `database` (ver
    "Onde olhar" abaixo) — só para inspecionar dados em dev.
 3. Abra `http://localhost:3100/register`, cria uma conta.
-4. Promove essa conta a super-admin (só necessário a primeira vez).
-   Como as réplicas do auth agora nascem do `launch-template.auth.json`
-   (um ficheiro estático, sem substituição de variáveis do Compose), o
-   fluxo é: editar o `env` do template, e reiniciar o `group-authd` —
-   ele remove as réplicas que geriu como parte do seu próprio shutdown
-   (não precisa matar a réplica à mão) e recria a partir do template já
-   atualizado:
+4. Promove essa conta a super-admin (só necessário a primeira vez):
    ```sh
-   # edita demo/launch-template.auth.json, adiciona ao array "env":
-   #   "AUTH_BOOTSTRAP_SUPERADMIN_EMAIL=teu-email@example.test"
-   docker restart demo-group-authd-1
+   AUTH_BOOTSTRAP_SUPERADMIN_EMAIL=teu-email@example.test \
+     docker compose -f demo/docker-compose.yml up -d auth
    ```
-   Depois de confirmar que a conta foi promovida (log
-   `"conta promovida a super-admin (bootstrap)"` no `docker logs` da
-   réplica nova), reverte o `env` do template — a variável só precisa
-   estar presente no momento da promoção, não depois.
+   Confirma o log `"conta promovida a super-admin (bootstrap)"` em
+   `docker compose -f demo/docker-compose.yml logs auth`. A variável só
+   precisa de estar presente nesse arranque; os seguintes podem ir sem ela.
 5. Entra de novo em `http://localhost:3100/login` — agora aparece
    "Utilizadores" no menu, e `/admin/users` deixa criar/listar/promover
    outras contas.
@@ -92,10 +78,9 @@ do `auth` (ver
 ### Onde olhar
 
 - **Portal**: `http://localhost:3100`
-- **Proxy do group-authd** (o que era "o auth service" diretamente,
-  agora na frente de 1+ réplicas): `http://localhost:8081` (ex:
-  `curl http://localhost:8081/.well-known/jwks.json`)
-- **Health/métricas do group-authd**: `http://localhost:9081/healthz`
+- **Auth service**: `http://localhost:8081` (ex:
+  `curl http://localhost:8081/.well-known/jwks.json`,
+  `curl http://localhost:8081/readyz`)
 - **Adminer** (se subiu o serviço opcional): `http://localhost:8096` —
   servidor `database`, utilizador/senha/BD conforme
   `services/database/docker-compose.yml` (aqui: `app`/`app`/`app`).
@@ -103,18 +88,6 @@ do `auth` (ver
   [services/database/README.md](../services/database/README.md), só
   trocando `-f services/database/docker-compose.yml` por
   `-f demo/docker-compose.yml` nos comandos.
-
-### Uma réplica só por padrão, e por quê
-
-`group-authd` sobe com `MIN_REPLICAS=1`. Não é arbitrário: se duas
-réplicas nascessem ao mesmo tempo contra um volume `auth-signing-key`
-ainda vazio, cada uma tentaria gerar a sua própria chave de assinatura
-RSA (ver `internal/keystore.LoadOrGenerate` em `services/auth`) — uma
-corrida que faria réplicas emitirem/validarem tokens com chaves
-diferentes. Depois da chave já existir no volume (ou seja, depois da
-primeira réplica ter subido pelo menos uma vez), subir `MAX_REPLICAS`
-(hoje `3`) e deixar o autoscaler escalar por CPU é seguro — todas as
-réplicas novas só leem a chave já existente.
 
 ## Segredos (secretsadmin) e a conta de serviço do autoscaler
 
@@ -143,8 +116,8 @@ cada instância "solo" pedida via `POST /v1/instances`.
   **Gerar tokens** na respetiva linha. Guarda o `refresh_token` mostrado
   uma única vez; ao criar um autoscaler em `/admin/autoscaler/new`, cola-o
   no campo de token da conta de serviço. O launcher precisa da sua própria
-  conta `service` para falar com o secretsadmin, e cada group precisa de
-  OUTRA conta `service` para falar com o launcher. Emitir um novo par não
+  conta `service` para falar com o secretsadmin, e cada group que lances
+  precisa de OUTRA conta `service` para falar com o launcher. Emitir um novo par não
   revoga automaticamente pares anteriores.
 
   O mesmo fluxo também pode ser feito diretamente contra o auth service:
@@ -169,13 +142,6 @@ cada instância "solo" pedida via `POST /v1/instances`.
    export LAUNCHER_SECRETS_REFRESH_TOKEN="<refresh_token>"
    docker compose -f demo/docker-compose.yml up -d launcher
    ```
-   Repita os 3 passos com outra conta (ex: `svc-group-authd@service.test`)
-   para obter o `GROUP_AUTHD_LAUNCHER_REFRESH_TOKEN` de `group-authd` (ver
-   serviço `group-authd` em `demo/docker-compose.yml`):
-   ```sh
-   export GROUP_AUTHD_LAUNCHER_REFRESH_TOKEN="<refresh_token>"
-   docker compose -f demo/docker-compose.yml up -d group-authd
-   ```
 3. Cria um segredo via portal (`/admin/secrets`, role `infra-admin`), cria
    um modelo no templatesadmin (`/admin/templates`) referenciando-o em
    `${secret:NOME}` dentro do `env`, e lança-o como instância "solo" via
@@ -185,38 +151,6 @@ cada instância "solo" pedida via `POST /v1/instances`.
    docker inspect <container_id_devolvido_pelo_launcher> \
      --format '{{range .Config.Env}}{{println .}}{{end}}' | grep NOME_DA_VARIAVEL
    ```
-
-### Cuidado real: `group-authd` continua auto-referencial, só que agora sempre
-
-Antes desta feature, o cuidado abaixo só se aplicava se
-`launch-template.auth.json` referenciasse `${secret:...}` (não referencia,
-por isso `group-authd` nunca sofria o problema na prática). Com o
-launcher, o cuidado passa a valer INCONDICIONALMENTE, porque toda réplica
-nova -- com ou sem segredo -- agora depende de `group-authd` conseguir
-chamar o launcher, autenticado com o seu próprio `LAUNCHER_REFRESH_TOKEN`.
-
-`group-authd` renova esse token chamando `.../v1/token/refresh` através do
-seu PRÓPRIO proxy (é ele quem serve o auth service que gere). Se as
-réplicas do `auth` caírem a zero (ex: depois de um `POST /v1/restart`, que
-termina TODAS as réplicas antes de recriar, ou um reboot completo do
-ambiente), renovar o token falha -- e sem token, `group-authd` não
-consegue pedir ao launcher a primeira réplica nova. Deadlock: a réplica
-nunca sobe, porque conseguir criá-la depende de uma réplica já estar de
-pé. Isto NÃO é um problema para outros groups (cujo `AUTH_SERVICE_URL`
-aponta a um auth service independente, já de pé) -- só para `group-authd`
-especificamente, por gerir o próprio auth service de que ele mesmo
-depende, e acontece de novo a cada vez que reinicia do zero, não só uma
-vez.
-
-Resolvido via `ALLOW_COLD_START_FALLBACK=true` (só em `group-authd`, ver
-`docker-compose.yml`): quando o pedido ao launcher falha E não há nenhuma
-réplica viva, `group-authd` cria essa réplica localmente, uma única vez
--- o suficiente para o seu próprio proxy voltar a ter um backend, o token
-voltar a renovar, e a partir da réplica seguinte voltar a pedir sempre ao
-launcher, como qualquer outro group (ver `applyScaleUp` em
-`services/autoscaler/cmd/group/main.go`). Esta válvula de escape fica
-desligada por defeito em qualquer group novo -- só é ligada aqui porque
-`group-authd` é o único auto-referencial.
 
 ## Criar um novo serviço autoscalado (templatesadmin)
 
@@ -235,9 +169,8 @@ por si só -- quem faz isso é o launcher.
    ```
 2. No portal (`/admin/templates`, role `infra-admin`): escolha uma
    imagem já buildada/pulled no Docker do host (populado via
-   `GET /v1/images`, que fala com o Engine API local -- por isso este
-   serviço também monta `/var/run/docker.sock`, mesma superfície de
-   risco que `group-authd` já tem) e preencha as variáveis de ambiente
+   `GET /v1/images`, que lê o Docker pelo proxy só de leitura -- ver
+   "Acesso ao Docker" abaixo) e preencha as variáveis de ambiente
    (estáticas ou `${secret:NOME}`, escolhendo um nome já criado em
    `/admin/secrets`).
 3. Salve o modelo com um `name` (ex: `laravel-app`) -- não precisa copiar
@@ -274,10 +207,10 @@ tipos de coisa a partir de um modelo já guardado no templatesadmin:
 
 - `"kind": "solo"` -- um único container da aplicação, sem nenhum
   autoscaler à volta, com o `env` já resolvido. UI: `/admin/launcher`.
-- `"kind": "group"` -- um `autoscaler-group` inteiro (a mesma imagem de
-  `group-authd`), que a partir daí passa a gerir as suas PRÓPRIAS
-  réplicas chamando o launcher (ver "Cuidado real" acima para a conta de
-  serviço que esse group novo precisa). UI: `/admin/autoscaler`, secção
+- `"kind": "group"` -- um `autoscaler-group` inteiro (imagem
+  `autoscaler-group:latest`), que a partir daí passa a gerir as suas
+  PRÓPRIAS réplicas chamando o launcher (ver "Segredos" acima para a conta
+  de serviço que esse group novo precisa). UI: `/admin/autoscaler`, secção
   "Criar grupo" -- é aqui, não no modelo, que se preenche o nome do
   serviço, réplicas mín./máx. e thresholds de CPU.
 
@@ -474,8 +407,7 @@ Um modelo que monte código-fonte do host (ex:
 `services/autoscaler/launch-template.laravel-web.example.json`) precisa
 desse caminho em `LAUNCHER_ALLOWED_BIND_PATHS`.
 
-**Ainda por resolver:** cada autoscaler-group (`group-authd` e os lançados
-pelo launcher) continua com o socket direto, para listar, inspecionar e
+**Ainda por resolver:** cada autoscaler-group lançado pelo launcher continua com o socket direto, para listar, inspecionar e
 parar as suas réplicas. Isto desaparece quando o scaling passar para o
 reconciliador central do plano de controlo, em vez de um container por
 group.
@@ -486,8 +418,8 @@ group.
 make demo-down
 ```
 
-Só `docker compose down` **não chega**: desligar a plataforma (launcher,
-`group-authd`) já não derruba as aplicações. Os groups e instâncias lançados
+Só `docker compose down` **não chega**: desligar a plataforma (launcher)
+já não derruba as aplicações. Os groups e instâncias lançados
 pelo launcher, e as réplicas de todos os groups, ficam a correr. É de
 propósito: um reboot do host ou um restart do launcher não deve apagar
 nada, e tudo tem `RestartPolicy: unless-stopped`. `make demo-down` faz o
@@ -500,11 +432,8 @@ aplicação, usa "Parar grupo" em `/admin/autoscaler` (ou
   Compose, `down -v` remove os dois (isto apaga também os backups locais
   do pgBackRest -- se quiseres preservar backups ao derrubar o ambiente
   de demo, não uses `-v`, ou troca `PGBACKREST_REPO_TYPE` pra `s3` antes).
-- `auth-signing-key` — **não** é gerido pelo Compose (nenhum serviço
-  Compose o referencia; é criado pelo Docker na hora em que a primeira
-  réplica do `group-authd` o monta, via `binds` do launch template) —
-  `down -v` não o toca. Para limpar de verdade: `docker volume rm
-  auth-signing-key`.
+- `auth-signing-key` — a chave de assinatura dos tokens; `down -v` também
+  o remove, e todo token já emitido deixa de validar.
 
 A plataforma de observabilidade (`services/monitoring`) não é afetada;
 derrube-a separadamente se quiser:

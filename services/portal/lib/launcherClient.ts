@@ -154,7 +154,7 @@ export function removeContainer(accessToken: string, containerId: string) {
 // autoscaler-group vivo, descoberto pelo launcher contra o Docker (por
 // label, ver services/launcher/internal/httpapi.labelGroupRole), não a
 // partir da store dele. Inclui tanto groups lançados por este launcher
-// como estáticos num docker-compose.yml (ex: group-authd), desde que
+// como estáticos num docker-compose.yml, desde que
 // tenham a mesma label.
 export type DiscoveredGroup = {
   containerId: string;
@@ -178,7 +178,7 @@ export function listGroups(accessToken: string) {
 
 // deleteGroup para e remove o container de UM autoscaler-group,
 // identificado pelo containerId (não pelo id de instância do launcher --
-// nem todo group foi lançado por ele, ex: group-authd). É esta função,
+// nem todo group foi lançado por ele, ex: um group estático num compose). É esta função,
 // não deleteInstance, que o ecrã /admin/autoscaler usa para "Parar
 // grupo" -- deliberadamente não exposta em /admin/launcher (ver
 // LauncherAdminClient.tsx).

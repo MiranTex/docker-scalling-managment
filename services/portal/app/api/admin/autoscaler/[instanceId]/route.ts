@@ -40,7 +40,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ ins
 // (que falam com a API admin do PRÓPRIO group), isto fala com o launcher
 // (DELETE /v1/groups/{containerId}), porque é ele quem sabe parar+remover
 // o container do group -- inclusive um group que o launcher nunca chegou
-// a "lançar" (ex: group-authd, estático no docker-compose.yml). instanceId
+// a "lançar" (ex: um group estático num docker-compose.yml). instanceId
 // aqui É o containerId (mesmo valor devolvido por GET /v1/groups).
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ instanceId: string }> }) {
   const { instanceId } = await params;
