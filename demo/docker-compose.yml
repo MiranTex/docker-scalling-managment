@@ -368,6 +368,24 @@ services:
       LAUNCHER_SECRETS_KEY: "${LAUNCHER_SECRETS_KEY:-Gb6oAL1A3uEIJGpHTDeN4YkGTQzI3LDAlii+jX18x6o=}"
     labels:
       base-stack.managed: "true"
+      # API de plataforma acessível de fora (CI) em api.<PUBLIC_BASE_DOMAIN>
+      # -- SÓ /v1/projects: o resto da API do launcher (instâncias, redes,
+      # réplicas de groups) continua só na rede interna. Toda a rota
+      # exposta exige um access token de infra-admin ou um token de deploy
+      # (bsd_...) do próprio projeto. O router HTTPS usa o mesmo
+      # PUBLIC_TLS_CERT_RESOLVER das instâncias; vazio = certificado por
+      # defeito do Traefik (só para dev).
+      traefik.enable: "true"
+      traefik.docker.network: auth-net
+      traefik.http.routers.platform-api.rule: "Host(`api.${PUBLIC_BASE_DOMAIN:-127.0.0.1.nip.io}`) && PathPrefix(`/v1/projects`)"
+      traefik.http.routers.platform-api.entrypoints: web
+      traefik.http.routers.platform-api.service: platform-api
+      traefik.http.routers.platform-api-tls.rule: "Host(`api.${PUBLIC_BASE_DOMAIN:-127.0.0.1.nip.io}`) && PathPrefix(`/v1/projects`)"
+      traefik.http.routers.platform-api-tls.entrypoints: websecure
+      traefik.http.routers.platform-api-tls.service: platform-api
+      traefik.http.routers.platform-api-tls.tls: "true"
+      traefik.http.routers.platform-api-tls.tls.certresolver: "${PUBLIC_TLS_CERT_RESOLVER:-}"
+      traefik.http.services.platform-api.loadbalancer.server.port: "8094"
     volumes:
       # Este é quem, de facto, fala com o Docker para criar/iniciar/parar
       # containers -- o único serviço da plataforma com o socket direto.

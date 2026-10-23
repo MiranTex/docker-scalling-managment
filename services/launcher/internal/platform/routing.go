@@ -50,6 +50,15 @@ type traefikServer struct {
 	URL string `json:"url"`
 }
 
+// APIURL é o endereço público da API de plataforma (para CI), servido pelo
+// Traefik em api.<domínio base> -- vazio sem domínio base.
+func (s *Service) APIURL() string {
+	if s.cfg.PublicBaseDomain == "" {
+		return ""
+	}
+	return s.scheme() + "://api." + s.cfg.PublicBaseDomain
+}
+
 func (s *Service) scheme() string {
 	if s.cfg.TLSCertResolver != "" {
 		return "https"

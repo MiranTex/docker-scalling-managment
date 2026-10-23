@@ -22,7 +22,7 @@ export type Environment = {
   createdBy: string;
 };
 
-export type ProjectDetail = Project & { environments: Environment[] };
+export type ProjectDetail = Project & { environments: Environment[]; apiUrl?: string };
 
 export type EnvSecret = {
   name: string;
@@ -207,3 +207,14 @@ export function splitArgs(line: string): string[] {
 export function joinArgs(args: string[]): string {
   return args.map((a) => (/[\s"']/.test(a) || a === "" ? JSON.stringify(a) : a)).join(" ");
 }
+
+export type DeployToken = {
+  id: string;
+  name: string;
+  prefix: string;
+  environmentId?: string;
+  createdAt: string;
+  createdBy: string;
+  lastUsedAt?: string;
+  revokedAt?: string;
+};

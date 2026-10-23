@@ -34,6 +34,8 @@ func (a *API) createProject(w http.ResponseWriter, r *http.Request, who principa
 type projectDetail struct {
 	store.Project
 	Environments []store.Environment `json:"environments"`
+	// APIURL é onde o CI chama a API (ver platform.APIURL).
+	APIURL string `json:"apiUrl,omitempty"`
 }
 
 func (a *API) getProject(w http.ResponseWriter, r *http.Request, _ principal) {
@@ -48,7 +50,7 @@ func (a *API) getProject(w http.ResponseWriter, r *http.Request, _ principal) {
 		a.fail(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, projectDetail{Project: p, Environments: envs})
+	writeJSON(w, http.StatusOK, projectDetail{Project: p, Environments: envs, APIURL: a.svc.APIURL()})
 }
 
 func (a *API) updateProject(w http.ResponseWriter, r *http.Request, _ principal) {
