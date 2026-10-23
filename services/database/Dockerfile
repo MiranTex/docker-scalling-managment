@@ -20,7 +20,9 @@ RUN CGO_ENABLED=0 go build -o /out/dbadmin ./cmd/dbadmin
 # publica pacotes .deb -- é o caminho testado e documentado pelo próprio
 # projeto pgBackRest, ao contrário do pacote da Alpine (mantido pela
 # comunidade, versão mais desatualizada).
-FROM postgres:16-bookworm
+# 17: os volumes de dados de um 16 não arrancam aqui (formato on-disk
+# diferente) -- ver "make db-upgrade-pg17" na raiz do repositório.
+FROM postgres:17-bookworm
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \

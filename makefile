@@ -1,4 +1,4 @@
-.PHONY: build-images migrations-status migrations-check start-demo demo-down start-monitoring
+.PHONY: build-images migrations-status migrations-check start-demo demo-down start-monitoring db-upgrade-pg17
 
 DEMO_COMPOSE ?= demo/docker-compose.yml
 PGUSER ?= app
@@ -66,3 +66,19 @@ demo-down:
 
 start-monitoring:
 	docker compose -f services/monitoring/docker-compose.yml up -d
+# Copia os dados do Postgres 16 antigo (volume demo_demo-database-data,
+# que fica intacto) para o novo cluster 17 do demo. Corre-se UMA vez, com
+# o demo em baixo: sobe um Postgres 16 temporário sobre o volume antigo
+# (sem archive_mode, porque o pgBackRest não existe nessa imagem), sobe
+# só o "database" novo, e passa tudo com pg_dumpall. Os "role ... already
+# exists" no fim são esperados: o db-init do cluster novo já criou as roles.
+OLD_DB_VOLUME ?= demo_demo-database-data
+db-upgrade-pg17:
+	@docker volume inspect $(OLD_DB_VOLUME) >/dev/null 2>&1 || { echo "volume $(OLD_DB_VOLUME) não existe -- nada para migrar"; exit 1; }
+	docker run -d --rm --name bs-pg16-upgrade -v $(OLD_DB_VOLUME):/var/lib/postgresql/data postgres:16-bookworm postgres -c archive_mode=off
+	@until docker exec bs-pg16-upgrade pg_isready -U $(PGUSER) >/dev/null 2>&1; do sleep 1; done
+	docker compose -f $(DEMO_COMPOSE) up -d --wait database
+	docker exec bs-pg16-upgrade pg_dumpall -U $(PGUSER) --clean --if-exists \
+		| docker compose -f $(DEMO_COMPOSE) exec -T database psql -q -U $(PGUSER) -d postgres >/dev/null
+	docker stop bs-pg16-upgrade
+	@echo "OK: dados copiados para o Postgres 17. Sobe o resto com make start-demo."

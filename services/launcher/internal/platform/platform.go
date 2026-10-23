@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"strings"
 
 	"launcher/internal/dockerclient"
 	"launcher/internal/secretbox"
@@ -30,7 +31,13 @@ const (
 	LabelProjectID     = "base-stack.project-id"
 	LabelEnvironmentID = "base-stack.environment-id"
 	// LabelRole distingue o que corre num ambiente: app, addon ou job.
-	LabelRole = "base-stack.role"
+	LabelRole  = "base-stack.role"
+	LabelAddon = "base-stack.addon"
+	LabelJob   = "base-stack.job"
+
+	RoleApp   = "app"
+	RoleAddon = "addon"
+	RoleJob   = "job"
 )
 
 var (
@@ -68,6 +75,16 @@ type Docker interface {
 	ListContainers(ctx context.Context, all bool, filters map[string][]string) ([]dockerclient.Container, error)
 	StopContainer(ctx context.Context, id string, timeoutSeconds int) error
 	RemoveContainer(ctx context.Context, id string, force bool) error
+	CreateContainer(ctx context.Context, name string, req dockerclient.CreateContainerRequest) (string, error)
+	StartContainer(ctx context.Context, id string) error
+	InspectContainer(ctx context.Context, id string) (*dockerclient.ContainerInspect, error)
+	WaitContainer(ctx context.Context, id string) (int, error)
+	ContainerLogs(ctx context.Context, id string, tail int) (string, error)
+	CreateVolume(ctx context.Context, name string, labels map[string]string) error
+	RemoveVolume(ctx context.Context, name string) error
+	ListVolumesByLabel(ctx context.Context, label string) ([]dockerclient.Volume, error)
+	InspectImage(ctx context.Context, ref string) (*dockerclient.ImageInspect, error)
+	PullImage(ctx context.Context, ref string) error
 }
 
 type Config struct {
@@ -77,6 +94,16 @@ type Config struct {
 	// SelfContainer é o container deste launcher -- também ligado a toda
 	// rede de ambiente, para fazer health checks às réplicas.
 	SelfContainer string
+
+	// Imagens dos addons -- Postgres 17 e Redis por defeito, trocáveis por
+	// env (ex: para fixar uma minor version).
+	PostgresImage string
+	RedisImage    string
+
+	// Capacidade declarada do host -- a mesma de internal/httpapi
+	// (CapacityConfig). Zero desliga o teto.
+	HostMemoryMB          int64
+	MemoryOvercommitRatio float64
 }
 
 type Service struct {
@@ -92,6 +119,11 @@ func New(db *store.DB, docker Docker, box *secretbox.Box, cfg Config, logger *sl
 		logger = slog.Default()
 	}
 	return &Service{db: db, docker: docker, box: box, cfg: cfg, logger: logger}
+}
+
+// isNotFound reconhece o 404 do Docker (container/imagem/volume que não existe).
+func isNotFound(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "status 404")
 }
 
 func newID() string {
@@ -110,7 +142,8 @@ func mapStoreErr(err error) error {
 		return nil
 	case errors.Is(err, store.ErrConflict):
 		return fmt.Errorf("%w: %v", ErrConflict, err)
-	case errors.Is(err, store.ErrProjectNotFound), errors.Is(err, store.ErrEnvironmentNotFound), errors.Is(err, store.ErrSecretNotFound):
+	case errors.Is(err, store.ErrProjectNotFound), errors.Is(err, store.ErrEnvironmentNotFound), errors.Is(err, store.ErrSecretNotFound),
+		errors.Is(err, store.ErrAddonNotFound), errors.Is(err, store.ErrJobNotFound):
 		return fmt.Errorf("%w: %v", ErrNotFound, err)
 	}
 	return err

@@ -30,9 +30,9 @@ const (
 	// base de dados deixaria de fora exatamente os containers que mais
 	// aparecem e desaparecem. Ler as labels de um único ListContainers
 	// cobre instâncias e réplicas com uma só chamada ao Docker.
-	labelInstanceType = "base-stack.resources.instance_type"
-	labelVCPU         = "base-stack.resources.vcpu"
-	labelMemoryMB     = "base-stack.resources.memory_mb"
+	labelInstanceType = dockerclient.LabelInstanceType
+	labelVCPU         = dockerclient.LabelVCPU
+	labelMemoryMB     = dockerclient.LabelMemoryMB
 
 	// bytesPerMB é MiB, não MB decimal -- é a unidade que o Docker usa e
 	// que `docker inspect` devolve.

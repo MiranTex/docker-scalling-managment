@@ -360,3 +360,35 @@ label.checkbox input {
   background: #fef2f2;
   color: #991b1b;
 }
+
+.actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin: 0.3rem 0;
+}
+
+.actions button {
+  padding: 0.35rem 0.7rem;
+  font-size: 0.8rem;
+}
+
+ul.plain {
+  list-style: none;
+  padding: 0;
+  margin: 0.4rem 0 0;
+  font-size: 0.8rem;
+}
+
+ul.plain li {
+  margin-bottom: 0.3rem;
+}
+
+code.truncate {
+  display: inline-block;
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}

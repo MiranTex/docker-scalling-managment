@@ -59,7 +59,7 @@ func main() {
 		}
 	}
 	platformSvc := platform.New(db, docker, box, cfg.platformConfig(), logger)
-	go platformSvc.AttachPlatformToAll(ctx)
+	go platformSvc.Run(ctx)
 
 	mux := handler.Routes()
 	platformapi.New(platformSvc, tokens, logger).Register(mux)
