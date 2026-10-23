@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Modal from "@/components/Modal";
 import { api, envPath, statusBadge, type Job } from "@/lib/platformClient";
 
 export default function JobsTab({ project, env }: { project: string; env: string }) {
@@ -78,15 +79,16 @@ export default function JobsTab({ project, env }: { project: string; env: string
         </table>
       )}
       {open && (
-        <>
-          <h2>
-            Job {open.kind} · <span className={statusBadge(open.status)}>{open.status}</span>
-          </h2>
+        <Modal
+          title={`Job ${open.kind} · ${open.status}`}
+          onClose={() => setOpen(null)}
+          width={900}
+        >
           <pre className="generated">{open.output || "(sem output ainda)"}</pre>
           <button className="secondary" onClick={() => setOpen(null)}>
             Fechar
           </button>
-        </>
+        </Modal>
       )}
     </>
   );

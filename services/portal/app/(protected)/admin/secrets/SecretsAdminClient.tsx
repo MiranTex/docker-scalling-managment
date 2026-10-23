@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Modal from "@/components/Modal";
 import type { SecretInfo } from "@/lib/secretsAdminClient";
 import ConfirmModal from "../database/ConfirmModal";
 
@@ -12,6 +13,7 @@ export default function SecretsAdminClient() {
   const [value, setValue] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [formOpen, setFormOpen] = useState(false);
 
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -58,6 +60,7 @@ export default function SecretsAdminClient() {
       }
       setName("");
       setValue("");
+      setFormOpen(false);
       await loadSecrets();
     } catch {
       setFormError("erro ao gravar segredo");
@@ -87,7 +90,18 @@ export default function SecretsAdminClient() {
   return (
     <>
       <div className="card wide">
-        <h1>Segredos</h1>
+        <div className="page-header">
+          <h2 style={{ margin: 0 }}>Segredos</h2>
+          <button
+            className="primary"
+            onClick={() => {
+              setFormError(null);
+              setFormOpen(true);
+            }}
+          >
+            Criar / substituir
+          </button>
+        </div>
         <p className="muted">
           Valores referenciados nos launch templates do autoscaler como{" "}
           <code>{"${secret:NOME}"}</code> (ver services/autoscaler/internal/secretsclient). Cifrados
@@ -131,8 +145,8 @@ export default function SecretsAdminClient() {
         )}
       </div>
 
-      <div className="card wide">
-        <h1>Criar / substituir</h1>
+      {formOpen && (
+      <Modal title="Criar / substituir segredo" onClose={() => setFormOpen(false)}>
         <p className="muted">
           Substituir o valor de um nome já usado num launch template aplica-se à PRÓXIMA réplica
           criada por esse group (não às já existentes) -- ver services/autoscaler/cmd/group/main.go,
@@ -157,11 +171,15 @@ export default function SecretsAdminClient() {
           autoComplete="off"
         />
         <div className="row">
-          <button className="secondary" disabled={saving} onClick={handleSave}>
+          <button className="primary" disabled={saving} onClick={handleSave}>
             {saving ? "A gravar..." : "Gravar"}
           </button>
+          <button className="secondary" onClick={() => setFormOpen(false)}>
+            Cancelar
+          </button>
         </div>
-      </div>
+      </Modal>
+      )}
 
       {deleteTarget && (
         <ConfirmModal

@@ -1,8 +1,10 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import Breadcrumbs from "@/components/Breadcrumbs";
+import PageHeader from "@/components/PageHeader";
+import TabBar, { useActiveTab } from "@/components/TabBar";
 import { api, envPath } from "@/lib/platformClient";
 import ConfirmModal from "../../../admin/database/ConfirmModal";
 import AddonsTab from "./AddonsTab";
@@ -10,24 +12,20 @@ import JobsTab from "./JobsTab";
 import SecretsTab from "./SecretsTab";
 import ServicesTab from "./ServicesTab";
 
-// Cada separador é um componente próprio que recebe projeto+ambiente.
 const TABS = [
-  { key: "services", label: "Serviços", Component: ServicesTab },
-  { key: "addons", label: "Addons", Component: AddonsTab },
-  { key: "jobs", label: "Jobs", Component: JobsTab },
-  { key: "secrets", label: "Segredos", Component: SecretsTab },
+  { key: "services", label: "Serviços" },
+  { key: "addons", label: "Addons" },
+  { key: "jobs", label: "Jobs" },
+  { key: "secrets", label: "Segredos" },
+  { key: "settings", label: "Definições" },
 ] as const;
-
-type TabKey = (typeof TABS)[number]["key"];
 
 export default function EnvironmentClient({ project, env }: { project: string; env: string }) {
   const router = useRouter();
-  const [tab, setTab] = useState<TabKey>(TABS[0].key);
+  const tab = useActiveTab(TABS);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [purge, setPurge] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const Active = TABS.find((t) => t.key === tab)!.Component;
 
   async function deleteEnv() {
     setConfirmDelete(false);
@@ -41,33 +39,31 @@ export default function EnvironmentClient({ project, env }: { project: string; e
 
   return (
     <>
-      <div className="card full">
-        <p className="muted">
-          <Link href="/projects">Projetos</Link> / <Link href={`/projects/${project}`}>{project}</Link> / {env}
-        </p>
-        <h1>
-          {project} · {env}
-        </h1>
-        {error && <div className="error">{error}</div>}
-        <div className="tabs">
-          {TABS.map((t) => (
-            <button key={t.key} className={t.key === tab ? "tab active" : "tab"} onClick={() => setTab(t.key)}>
-              {t.label}
-            </button>
-          ))}
-        </div>
-        <Active project={project} env={env} />
-      </div>
+      <Breadcrumbs
+        items={[{ label: "Projetos", href: "/projects" }, { label: project, href: `/projects/${project}` }, { label: env }]}
+      />
+      <PageHeader title={`${project} · ${env}`} />
+      {error && <div className="error">{error}</div>}
+      <TabBar tabs={TABS} active={tab} />
 
       <div className="card full">
-        <h2>Apagar ambiente</h2>
-        <p className="muted">Para e remove todos os containers deste ambiente e a sua rede.</p>
-        <label className="checkbox">
-          <input type="checkbox" checked={purge} onChange={(e) => setPurge(e.target.checked)} /> Apagar também os dados
-        </label>
-        <button className="danger" onClick={() => setConfirmDelete(true)}>
-          Apagar ambiente
-        </button>
+        {tab === "services" && <ServicesTab project={project} env={env} />}
+        {tab === "addons" && <AddonsTab project={project} env={env} />}
+        {tab === "jobs" && <JobsTab project={project} env={env} />}
+        {tab === "secrets" && <SecretsTab project={project} env={env} />}
+        {tab === "settings" && (
+          <>
+            <h2>Apagar ambiente</h2>
+            <p className="muted">Para e remove todos os containers deste ambiente e a sua rede.</p>
+            <label className="checkbox">
+              <input type="checkbox" checked={purge} onChange={(e) => setPurge(e.target.checked)} /> Apagar também os
+              dados
+            </label>
+            <button className="danger" onClick={() => setConfirmDelete(true)}>
+              Apagar ambiente
+            </button>
+          </>
+        )}
       </div>
 
       {confirmDelete && (

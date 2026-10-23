@@ -1,5 +1,6 @@
 "use client";
 
+import PageHeader from "@/components/PageHeader";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -109,13 +110,16 @@ export default function CreateGroupClient() {
   }
 
   return (
-    <div className="card wide">
-      <div className="row">
-        <h1>Criar grupo</h1>
-        <Link href="/admin/autoscaler" className="muted">
-          ← Voltar à lista
+    <>
+    <PageHeader
+      title="Criar grupo"
+      actions={
+        <Link href="/admin/autoscaler" className="secondary">
+          Voltar
         </Link>
-      </div>
+      }
+    />
+    <div className="card wide">
       <p className="muted">
         Lança um autoscaler-group inteiro a partir de um modelo do templatesadmin (imagem, env,
         binds, rede) -- o group recém-criado passa a gerir as suas próprias réplicas, pedindo cada
@@ -307,7 +311,7 @@ export default function CreateGroupClient() {
       </p>
 
       <div className="row">
-        <button className="secondary" disabled={creatingGroup} onClick={handleCreateGroup}>
+        <button className="primary" disabled={creatingGroup} onClick={handleCreateGroup}>
           {creatingGroup ? "A criar..." : "Criar grupo"}
         </button>
         <button className="secondary" onClick={() => router.push("/admin/autoscaler")}>
@@ -315,5 +319,6 @@ export default function CreateGroupClient() {
         </button>
       </div>
     </div>
+    </>
   );
 }

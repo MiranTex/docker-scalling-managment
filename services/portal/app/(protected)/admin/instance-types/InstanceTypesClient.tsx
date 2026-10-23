@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Modal from "@/components/Modal";
 import type { InstanceType } from "@/lib/templatesAdminClient";
 import { formatMemory } from "@/lib/instanceTypes";
 import ConfirmModal from "../database/ConfirmModal";
@@ -33,6 +34,7 @@ export default function InstanceTypesClient() {
   const [editingName, setEditingName] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [formOpen, setFormOpen] = useState(false);
 
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -59,12 +61,21 @@ export default function InstanceTypesClient() {
     setForm(EMPTY_FORM);
     setEditingName(null);
     setFormError(null);
+    setFormOpen(false);
+  }
+
+  function startCreate() {
+    setForm(EMPTY_FORM);
+    setEditingName(null);
+    setFormError(null);
+    setFormOpen(true);
   }
 
   function startEdit(it: InstanceType) {
     setForm(typeToForm(it));
     setEditingName(it.name);
     setFormError(null);
+    setFormOpen(true);
   }
 
   const nameForSave = editingName ?? form.name.trim();
@@ -106,8 +117,7 @@ export default function InstanceTypesClient() {
         return;
       }
       await loadTypes();
-      setEditingName(nameForSave);
-      setForm((f) => ({ ...f, name: nameForSave }));
+      resetForm();
     } catch {
       setFormError("erro ao gravar tipo de instância");
     } finally {
@@ -137,7 +147,12 @@ export default function InstanceTypesClient() {
   return (
     <>
       <div className="card wide">
-        <h1>Tipos de instância</h1>
+        <div className="page-header">
+          <h2 style={{ margin: 0 }}>Tipos de instância</h2>
+          <button className="primary" onClick={startCreate}>
+            Criar tipo
+          </button>
+        </div>
         <p className="muted">
           Catálogo de tamanhos aplicados como limites reais do Docker (CPU e memória) a cada
           container lançado -- no espírito dos instance types da AWS. Escolhe-se o tipo ao lançar
@@ -187,8 +202,8 @@ export default function InstanceTypesClient() {
         )}
       </div>
 
-      <div className="card wide">
-        <h1>{editingName ? `Editar "${editingName}"` : "Criar tipo"}</h1>
+      {formOpen && (
+      <Modal title={editingName ? `Editar "${editingName}"` : "Criar tipo"} onClose={resetForm}>
         {formError && <div className="error">{formError}</div>}
 
         <label htmlFor="it-name">Nome</label>
@@ -255,12 +270,11 @@ export default function InstanceTypesClient() {
         <button onClick={handleSave} disabled={saving}>
           {saving ? "A gravar..." : editingName ? "Guardar" : "Criar"}
         </button>{" "}
-        {editingName && (
-          <button className="secondary" onClick={resetForm}>
-            Cancelar
-          </button>
-        )}
-      </div>
+        <button className="secondary" onClick={resetForm}>
+          Cancelar
+        </button>
+      </Modal>
+      )}
 
       {deleteTarget && (
         <ConfirmModal

@@ -1,5 +1,6 @@
 "use client";
 
+import Breadcrumbs from "@/components/Breadcrumbs";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -14,12 +15,21 @@ import {
   type Revision,
   type Service,
 } from "@/lib/platformClient";
+import TabBar, { useActiveTab } from "@/components/TabBar";
 import ConfirmModal from "../../../../../admin/database/ConfirmModal";
 import DomainsCard from "./DomainsCard";
 import ServiceConfig from "./ServiceConfig";
 
+const TABS = [
+  { key: "overview", label: "Visão geral" },
+  { key: "deploys", label: "Deploys e revisões" },
+  { key: "domains", label: "Domínios" },
+  { key: "config", label: "Configuração" },
+] as const;
+
 export default function ServiceClient({ project, env, svc }: { project: string; env: string; svc: string }) {
   const router = useRouter();
+  const tab = useActiveTab(TABS);
   const [service, setService] = useState<Service | null>(null);
   const [deployments, setDeployments] = useState<Deployment[]>([]);
   const [revisions, setRevisions] = useState<Revision[]>([]);
@@ -125,10 +135,14 @@ export default function ServiceClient({ project, env, svc }: { project: string; 
   return (
     <>
       <div className="card full">
-        <p className="muted">
-          <Link href="/projects">Projetos</Link> / <Link href={`/projects/${project}`}>{project}</Link> /{" "}
-          <Link href={`/projects/${project}/${env}`}>{env}</Link> / {svc}
-        </p>
+        <Breadcrumbs
+          items={[
+            { label: "Projetos", href: "/projects" },
+            { label: project, href: `/projects/${project}` },
+            { label: env, href: `/projects/${project}/${env}` },
+            { label: svc },
+          ]}
+        />
         <h1>
           {svc}{" "}
           {service.deploying ? (
@@ -196,6 +210,12 @@ export default function ServiceClient({ project, env, svc }: { project: string; 
           </button>
         </div>
 
+      </div>
+
+      <TabBar tabs={TABS} active={tab} />
+
+      {tab === "overview" && (
+      <div className="card full">
         <h2>Réplicas</h2>
         {replicas.length === 0 ? (
           <p className="muted">Nenhuma réplica a correr.</p>
@@ -232,6 +252,19 @@ export default function ServiceClient({ project, env, svc }: { project: string; 
           </table>
         )}
 
+        <h2>Correr comando</h2>
+        <p className="muted">Corre uma vez com a imagem e o env da revisão atual (ex: php artisan cache:clear).</p>
+        <div className="row">
+          <input value={command} onChange={(e) => setCommand(e.target.value)} placeholder="php artisan cache:clear" />
+          <button className="secondary" disabled={!command.trim() || !current} onClick={runCommand}>
+            Correr
+          </button>
+        </div>
+      </div>
+      )}
+
+      {tab === "deploys" && (
+      <div className="card full">
         <h2>Deploys</h2>
         {deployments.length === 0 ? (
           <p className="muted">Nenhum deploy ainda.</p>
@@ -320,19 +353,19 @@ export default function ServiceClient({ project, env, svc }: { project: string; 
           </tbody>
         </table>
 
-        <h2>Correr comando</h2>
-        <p className="muted">Corre uma vez com a imagem e o env da revisão atual (ex: php artisan cache:clear).</p>
-        <div className="row">
-          <input value={command} onChange={(e) => setCommand(e.target.value)} placeholder="php artisan cache:clear" />
-          <button className="secondary" disabled={!command.trim() || !current} onClick={runCommand}>
-            Correr
-          </button>
-        </div>
       </div>
+      )}
 
-      {service.kind === "web" && <DomainsCard project={project} env={env} svc={svc} />}
+      {tab === "domains" &&
+        (service.kind === "web" ? (
+          <DomainsCard project={project} env={env} svc={svc} />
+        ) : (
+          <div className="card full">
+            <p className="muted">Só serviços web têm domínios.</p>
+          </div>
+        ))}
 
-      <ServiceConfig project={project} env={env} service={service} onSaved={load} joinArgs={joinArgs} />
+      {tab === "config" && <ServiceConfig project={project} env={env} service={service} onSaved={load} joinArgs={joinArgs} />}
 
       {confirmDelete && (
         <ConfirmModal
