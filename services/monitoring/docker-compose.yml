@@ -32,6 +32,10 @@ networks:
   docker-api-ro:
     internal: true
 
+volumes:
+  prometheus-data:
+  loki-data:
+
 services:
   # Proxy só de leitura à frente do socket do Docker -- mesma razão do
   # docker-api-ro de demo/docker-compose.yml: ":ro" no socket não impede
@@ -59,8 +63,14 @@ services:
       - --storage.tsdb.retention.time=6h
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # Séries temporais fora do container: recriá-lo (ex: uma config nova)
+      # já não apaga o histórico. A retenção continua a ser a de cima.
+      - prometheus-data:/prometheus
     ports:
-      - "9091:9090"
+      # Só a partir desta máquina: o Prometheus não tem autenticação, e
+      # as métricas de todos os projetos passam por aqui. Num servidor,
+      # acede-se por túnel SSH (ssh -L 9091:127.0.0.1:9091 ...).
+      - "127.0.0.1:9091:9090"
     depends_on:
       - docker-api-ro
     networks:
@@ -80,12 +90,17 @@ services:
     command: -config.file=/etc/loki/loki-config.yml
     volumes:
       - ./loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      # path_prefix do loki-config.yml: chunks, índice e WAL. Sem isto,
+      # recriar o container apagava os logs de todos os projetos.
+      - loki-data:/loki
     ports:
       # 3101 no host, não 3100 -- colide com o portal do demo
       # (demo/docker-compose.yml, "3100:3000"). Só afeta acesso direto à
       # API do Loki a partir do host; Grafana/Promtail continuam a falar
       # com ele pelo nome do container ("loki:3100"), nunca por aqui.
-      - "3101:3100"
+      # Só em 127.0.0.1: o Loki não tem autenticação e guarda os logs de
+      # todos os projetos.
+      - "127.0.0.1:3101:3100"
     networks:
       - observability-net
     mem_limit: 256m
@@ -117,14 +132,20 @@ services:
     restart: unless-stopped
     image: grafana/grafana:latest
     environment:
-      GF_AUTH_ANONYMOUS_ENABLED: "true"
-      GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
-      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      # Login obrigatório. A password vem de GRAFANA_ADMIN_PASSWORD; o
+      # default "admin" é só para dev (o Grafana pede para a trocar no
+      # primeiro login). Sem volume de dados, o Grafana arranca sempre do
+      # zero a partir do provisioning, por isso a variável vale sempre.
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER:-admin}"
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:-admin}"
+      GF_USERS_ALLOW_SIGN_UP: "false"
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
     ports:
-      - "3000:3000"
+      # Só a partir desta máquina, como o Prometheus e o Loki.
+      - "127.0.0.1:3000:3000"
     networks:
       - observability-net
     depends_on:

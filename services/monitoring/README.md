@@ -25,9 +25,16 @@ docker compose -f services/monitoring/docker-compose.yml up -d
 Cria a rede externa `observability-net`, que qualquer outro compose pode se
 conectar (`networks: { observability-net: { external: true } }`).
 
-Portas no host: Prometheus `9091`, Loki `3101` (não `3100` -- colide com o
-`portal` do `demo/docker-compose.yml`), Grafana `3000` (login anônimo
-habilitado, sem senha).
+Portas no host, **só em `127.0.0.1`** (nenhuma destas tem autenticação
+própria, ou guarda dados de todos os projetos): Prometheus `9091`, Loki
+`3101` (não `3100` -- colide com o `portal` do `demo/docker-compose.yml`),
+Grafana `3000`. Num servidor, acede-se por túnel SSH
+(`ssh -L 3000:127.0.0.1:3000 servidor`).
+
+O Grafana pede login: utilizador `GRAFANA_ADMIN_USER` (por defeito
+`admin`) e password `GRAFANA_ADMIN_PASSWORD` (por defeito `admin`, só para
+dev -- define uma a sério fora disso). Por agora quem entra vê os dados de
+todos os projetos; o acesso por projeto vem com os membros de projeto.
 
 ## Como um projeto novo aparece aqui
 
