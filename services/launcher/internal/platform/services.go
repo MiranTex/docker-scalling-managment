@@ -158,7 +158,7 @@ func (s *Service) serviceView(ctx context.Context, p store.Project, e store.Envi
 			v.CurrentRevision = &rev
 			if replicas, err := s.replicasOf(ctx, svc.ID); err == nil {
 				for _, r := range replicas {
-					if r.Labels[LabelRevision] == rev.ID && s.rt.isReady(r.ID) {
+					if r.Labels[LabelRevision] == rev.ID && s.rt.isReady(containerName(r)) {
 						v.ReadyReplicas++
 					}
 				}

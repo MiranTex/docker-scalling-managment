@@ -17,13 +17,16 @@ import (
 // provider do Traefik. JSON é YAML válido, e é o Traefik que o lê.
 const routingFile = "base-stack-projects.yml"
 
+// traefikConfig: tudo omitempty porque o Traefik rejeita secções vazias
+// ("routers cannot be a standalone element") -- sem rotas o ficheiro fica
+// só "{}", que ele aceita.
 type traefikConfig struct {
-	HTTP traefikHTTP `json:"http"`
+	HTTP *traefikHTTP `json:"http,omitempty"`
 }
 
 type traefikHTTP struct {
-	Routers     map[string]traefikRouter     `json:"routers"`
-	Services    map[string]traefikService    `json:"services"`
+	Routers     map[string]traefikRouter     `json:"routers,omitempty"`
+	Services    map[string]traefikService    `json:"services,omitempty"`
 	Middlewares map[string]traefikMiddleware `json:"middlewares,omitempty"`
 }
 
@@ -130,7 +133,7 @@ func hostRule(hosts []string) string {
 // buildRouting monta a configuração a partir do estado atual: só réplicas
 // da revisão atual, prontas e fora de drenagem, de serviços web ligados.
 func (s *Service) buildRouting(ctx context.Context) (traefikConfig, error) {
-	cfg := traefikConfig{HTTP: traefikHTTP{Routers: map[string]traefikRouter{}, Services: map[string]traefikService{}}}
+	cfg := traefikConfig{HTTP: &traefikHTTP{Routers: map[string]traefikRouter{}, Services: map[string]traefikService{}}}
 	services, err := s.db.ListAllServices(ctx)
 	if err != nil {
 		return cfg, err
@@ -193,6 +196,9 @@ func (s *Service) buildRouting(ctx context.Context) (traefikConfig, error) {
 		}{Scheme: "https", Permanent: true}
 		cfg.HTTP.Middlewares = map[string]traefikMiddleware{redirectMiddleware: mw}
 	}
+	if len(cfg.HTTP.Routers) == 0 {
+		cfg.HTTP = nil
+	}
 	return cfg, nil
 }
 
@@ -226,5 +232,9 @@ func (s *Service) syncRouting(ctx context.Context) {
 		s.logger.Error("routing: trocando ficheiro", "path", path, "err", err)
 		return
 	}
-	s.logger.Info("routing atualizado", "routers", len(cfg.HTTP.Routers))
+	routers := 0
+	if cfg.HTTP != nil {
+		routers = len(cfg.HTTP.Routers)
+	}
+	s.logger.Info("routing atualizado", "routers", routers)
 }

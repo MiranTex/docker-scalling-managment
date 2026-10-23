@@ -75,7 +75,10 @@ func randomPassword() string {
 
 func addonURL(a store.Addon, password string) string {
 	if a.Kind == store.AddonRedis {
-		return fmt.Sprintf("redis://:%s@%s:6379/0", password, a.Slug)
+		// "default" explícito: com o utilizador vazio ("redis://:pw@..."),
+		// redis-cli e vários clientes mandam AUTH "" <pw>, que o Redis 6+
+		// recusa (WRONGPASS).
+		return fmt.Sprintf("redis://default:%s@%s:6379/0", password, a.Slug)
 	}
 	return fmt.Sprintf("postgres://%s:%s@%s:5432/%s?sslmode=disable", addonPGUser, password, a.Slug, addonPGDatabase)
 }

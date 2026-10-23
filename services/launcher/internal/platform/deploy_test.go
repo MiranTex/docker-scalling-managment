@@ -24,7 +24,7 @@ type probeSwitch struct {
 func (p *probeSwitch) probe(_ context.Context, host string, _ int, _ string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if c, ok := p.docker.containers[host]; ok && p.failOn[c.Image] {
+	if c, ok := p.docker.byName(host); ok && p.failOn[c.Image] {
 		return errors.New("connection refused")
 	}
 	return nil
@@ -71,11 +71,13 @@ func waitDeploy(t *testing.T, svc *Service, svcSlug, id string) store.Deployment
 	return store.Deployment{}
 }
 
+// appContainers devolve os NOMES das réplicas (é por nome que a
+// plataforma as trata: routing, health check, estado em memória).
 func appContainers(d *fakeDocker, image string) []string {
 	var out []string
 	for _, c := range d.byRole(RoleApp) {
 		if image == "" || c.Image == image {
-			out = append(out, c.ID)
+			out = append(out, containerName(c))
 		}
 	}
 	return out
@@ -151,6 +153,9 @@ func TestDeployHealthGatedRollout(t *testing.T) {
 		t.Errorf("as réplicas v1 deviam continuar: %v", got)
 	}
 	view, _ := svc.GetService(ctx, "loja", "prod", "web")
+	if view.ReadyReplicas != 2 {
+		t.Errorf("readyReplicas = %d, queria 2", view.ReadyReplicas)
+	}
 	if view.CurrentRevision == nil || view.CurrentRevision.Number != 1 {
 		t.Errorf("revisão atual = %+v, queria 1", view.CurrentRevision)
 	}
@@ -163,7 +168,7 @@ func TestDeployHealthGatedRollout(t *testing.T) {
 	if d := waitDeploy(t, svc, "web", dep.ID); d.Status != store.DeploySucceeded {
 		t.Fatalf("deploy 3 = %s: %s", d.Status, d.Error)
 	}
-	if got := appContainers(docker, ""); len(got) != 2 || docker.containers[got[0]].Image != "app:3" {
+	if got := appContainers(docker, "app:3"); len(got) != 2 || len(appContainers(docker, "")) != 2 {
 		t.Errorf("depois do deploy 3 = %v", got)
 	}
 
@@ -262,13 +267,9 @@ func TestReconcilerScalesAndReplacesReplicas(t *testing.T) {
 
 	// Uma réplica parada por fora é substituída.
 	victim := appContainers(docker, "")[0]
-	docker.mu.Lock()
-	c := docker.containers[victim]
-	c.State = "exited"
-	docker.containers[victim] = c
-	docker.mu.Unlock()
+	docker.setState(victim, "exited")
 	svc.reconcileOnce(ctx)
-	if _, ok := docker.containers[victim]; ok {
+	if _, ok := docker.byName(victim); ok {
 		t.Error("a réplica parada devia ter sido removida")
 	}
 	if got := appContainers(docker, ""); len(got) != 3 {

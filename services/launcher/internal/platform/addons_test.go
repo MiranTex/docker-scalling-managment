@@ -94,6 +94,11 @@ func TestRedisAddonAndQuota(t *testing.T) {
 	if req.Cmd[0] != "redis-server" || !contains(req.Cmd, "noeviction") {
 		t.Errorf("cmd = %v", req.Cmd)
 	}
+	_, env, _ := svc.Scope(ctx, "loja", "prod")
+	url, _ := svc.ResolveEnv(ctx, env.ID, []string{"${secret:REDIS_URL}"})
+	if !strings.HasPrefix(url[0], "redis://default:") || !strings.HasSuffix(url[0], "@cache:6379/0") {
+		t.Errorf("REDIS_URL = %q", url[0])
+	}
 	// Marca o container como a correr para contar na quota (256 MB).
 	if err := docker.StartContainer(ctx, "bs-loja-prod-cache"); err != nil {
 		t.Fatal(err)
@@ -113,10 +118,12 @@ func TestReconcilerRecreatesMissingAddon(t *testing.T) {
 	}
 	firstEnv := docker.created["bs-loja-prod-db"].Env
 
-	delete(docker.containers, "bs-loja-prod-db")
+	if err := docker.RemoveContainer(ctx, "bs-loja-prod-db", true); err != nil {
+		t.Fatal(err)
+	}
 	svc.reconcileOnce(ctx)
 
-	if _, ok := docker.containers["bs-loja-prod-db"]; !ok {
+	if _, ok := docker.byName("bs-loja-prod-db"); !ok {
 		t.Fatal("o reconciliador devia ter recriado o addon")
 	}
 	if got := docker.created["bs-loja-prod-db"].Env; strings.Join(got, ",") != strings.Join(firstEnv, ",") {
@@ -166,9 +173,9 @@ func TestBackupJob(t *testing.T) {
 		t.Errorf("cmd = %v", docker.lastJobCmd)
 	}
 	// O container do job não pode ficar para trás.
-	for name := range docker.containers {
-		if strings.Contains(name, "-job-") {
-			t.Errorf("container de job ficou: %s", name)
+	for _, c := range docker.containers {
+		if strings.Contains(c.Names[0], "-job-") {
+			t.Errorf("container de job ficou: %s", c.Names[0])
 		}
 	}
 

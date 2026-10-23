@@ -120,3 +120,17 @@ func TestRoutingWithTLSRedirects(t *testing.T) {
 		t.Errorf("URLs = %v", view.URLs)
 	}
 }
+
+// O Traefik recusa "routers": {} -- sem rotas o ficheiro tem de ser "{}".
+func TestEmptyRoutingIsValidForTraefik(t *testing.T) {
+	ctx := context.Background()
+	svc, _, _, dir := newDeployService(t)
+	svc.syncRouting(ctx)
+	b, err := os.ReadFile(filepath.Join(dir, routingFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(b)); got != "{}" {
+		t.Errorf("routing vazio = %s", got)
+	}
+}
