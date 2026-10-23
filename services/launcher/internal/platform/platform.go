@@ -17,6 +17,7 @@ import (
 	"net"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"launcher/internal/dockerclient"
@@ -139,6 +140,10 @@ type Service struct {
 	probe func(ctx context.Context, host string, port int, path string) error
 	// lookupHost resolve DNS -- substituível nos testes.
 	lookupHost func(ctx context.Context, host string) ([]string, error)
+	// reconcileMu: uma passagem do reconciliador e a remoção de um
+	// ambiente ou addon nunca correm ao mesmo tempo -- senão o
+	// reconciliador recria, a meio da limpeza, o que está a ser apagado.
+	reconcileMu sync.Mutex
 }
 
 func New(db *store.DB, docker Docker, box *secretbox.Box, cfg Config, logger *slog.Logger) *Service {

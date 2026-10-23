@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"launcher/internal/dockerclient"
 	"launcher/internal/store"
 )
 
@@ -229,4 +230,16 @@ func contains(list []string, s string) bool {
 		}
 	}
 	return false
+}
+
+func TestReconcilerRemovesOrphanAddonContainers(t *testing.T) {
+	ctx := context.Background()
+	svc, docker := newTestService(t)
+	setupEnv(t, svc)
+	docker.containers["cid-orfao"] = dockerclient.Container{ID: "cid-orfao", Names: []string{"/orfao"}, State: "running",
+		Labels: map[string]string{LabelRole: RoleAddon, LabelAddon: "ja-nao-existe"}}
+	svc.reconcileOnce(ctx)
+	if _, ok := docker.byName("orfao"); ok {
+		t.Error("container de addon sem linha na base devia ter sido removido")
+	}
 }

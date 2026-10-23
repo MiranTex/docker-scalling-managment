@@ -314,6 +314,8 @@ func (s *Service) DeleteAddon(ctx context.Context, projectSlug, envSlug, addonSl
 	if err != nil {
 		return err
 	}
+	s.reconcileMu.Lock()
+	defer s.reconcileMu.Unlock()
 	name := addonContainerName(p, e, a)
 	_ = s.docker.StopContainer(ctx, name, 30)
 	if err := s.docker.RemoveContainer(ctx, name, true); err != nil && !isNotFound(err) {
