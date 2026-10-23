@@ -37,6 +37,9 @@ type fakeDocker struct {
 	failCreateImage string
 	// blockWait: WaitContainer só volta quando o contexto acabar.
 	blockWait bool
+	// failStartState: estado em que fica um container depois de arrancar
+	// (ex: "exited", para simular um processo que termina logo).
+	failStartState string
 }
 
 func (f *fakeDocker) PullImageWithAuth(_ context.Context, ref string, auth *dockerclient.RegistryAuth) error {
@@ -140,6 +143,9 @@ func (f *fakeDocker) StartContainer(_ context.Context, idOrName string) error {
 	}
 	c := f.containers[id]
 	c.State = "running"
+	if f.failStartState != "" && c.Labels[LabelRole] == RoleApp {
+		c.State = f.failStartState
+	}
 	f.containers[id] = c
 	return nil
 }

@@ -13,7 +13,8 @@ import (
 // DeployInput: Image faz um deploy novo dessa imagem com a configuração
 // atual do serviço; Revision > 0 volta a pôr essa revisão (rollback); os
 // dois vazios = redeploy da imagem atual com a configuração atual (ex:
-// para aplicar uma mudança de env).
+// para aplicar uma mudança de env) -- ou, se nenhum deploy chegou a
+// correr, da imagem da tentativa mais recente.
 type DeployInput struct {
 	Image    string `json:"image"`
 	Revision int    `json:"revision"`
@@ -21,6 +22,10 @@ type DeployInput struct {
 
 // releaseTimeout é o máximo que uma migration pode demorar.
 const releaseTimeout = 15 * time.Minute
+
+// replicaLogLines: quanto do log de uma réplica que falhou entra no log do
+// deploy.
+const replicaLogLines = 30
 
 func (s *Service) ListDeployments(ctx context.Context, projectSlug, envSlug, svcSlug string) ([]store.Deployment, error) {
 	_, _, svc, err := s.serviceScope(ctx, projectSlug, envSlug, svcSlug)
@@ -57,14 +62,9 @@ func (s *Service) Deploy(ctx context.Context, projectSlug, envSlug, svcSlug stri
 	default:
 		image := strings.TrimSpace(in.Image)
 		if image == "" {
-			if svc.CurrentRevisionID == nil {
-				return store.Deployment{}, invalid("o primeiro deploy precisa de uma imagem")
-			}
-			cur, err := s.db.GetRevision(ctx, *svc.CurrentRevisionID)
-			if err != nil {
+			if image, err = s.redeployImage(ctx, svc); err != nil {
 				return store.Deployment{}, err
 			}
-			image = cur.Image
 		}
 		if strings.ContainsAny(image, " \t\n") {
 			return store.Deployment{}, invalid("imagem %q inválida", image)
@@ -128,10 +128,21 @@ func (s *Service) runDeployment(ctx context.Context, p store.Project, e store.En
 	}
 	var created []string
 	fail := func(err error) {
+		logLine := "falhou: " + err.Error()
+		// O log da réplica que falhou explica quase sempre o porquê -- e
+		// tem de ser lido antes de a remover.
+		var failed interface{ replica() string }
+		if errors.As(err, &failed) {
+			logsCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			if logs, logErr := s.docker.ContainerLogs(logsCtx, failed.replica(), replicaLogLines); logErr == nil && strings.TrimSpace(logs) != "" {
+				logLine += fmt.Sprintf("\n--- últimas linhas do log de %s ---\n%s", failed.replica(), strings.TrimRight(logs, "\n"))
+			}
+			cancel()
+		}
 		for _, name := range created {
 			s.stopAndRemove(ctx, name)
 		}
-		if dbErr := s.db.FinishDeployment(ctx, depID, store.DeployFailed, err.Error(), "falhou: "+err.Error()); dbErr != nil {
+		if dbErr := s.db.FinishDeployment(ctx, depID, store.DeployFailed, err.Error(), logLine); dbErr != nil {
 			s.logger.Error("deploy: gravando falha", "deployment", depID, "err", dbErr)
 		}
 		s.logger.Warn("deploy falhou", "project", p.Slug, "env", e.Slug, "service", svc.Slug, "revision", rev.Number, "err", err)
@@ -271,7 +282,7 @@ func (s *Service) waitReady(ctx context.Context, names []string, rev store.Revis
 		}
 		if time.Now().After(deadline) {
 			for name, err := range pending {
-				return fmt.Errorf("a réplica %s não passou no health check em %ds: %v", name, rev.HealthTimeoutSeconds, err)
+				return errReplicaUnhealthy{name, fmt.Sprintf("a réplica %s não passou no health check em %ds: %v", name, rev.HealthTimeoutSeconds, err)}
 			}
 		}
 		select {
@@ -287,4 +298,25 @@ func (s *Service) readyPollInterval() time.Duration {
 		return s.cfg.readyPoll
 	}
 	return 2 * time.Second
+}
+
+// redeployImage é a imagem de um redeploy sem imagem: a que está a correr,
+// ou -- se todos os deploys falharam -- a da revisão mais recente, para se
+// poder tentar outra vez depois de corrigir a configuração.
+func (s *Service) redeployImage(ctx context.Context, svc store.Service) (string, error) {
+	if svc.CurrentRevisionID != nil {
+		cur, err := s.db.GetRevision(ctx, *svc.CurrentRevisionID)
+		if err != nil {
+			return "", err
+		}
+		return cur.Image, nil
+	}
+	revs, err := s.db.ListRevisions(ctx, svc.ID, 1)
+	if err != nil {
+		return "", err
+	}
+	if len(revs) == 0 {
+		return "", invalid("o primeiro deploy precisa de uma imagem")
+	}
+	return revs[0].Image, nil
 }

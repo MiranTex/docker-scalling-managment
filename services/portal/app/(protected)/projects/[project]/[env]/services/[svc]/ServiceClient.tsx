@@ -191,11 +191,17 @@ export default function ServiceClient({ project, env, svc }: { project: string; 
           </button>
           <button
             className="secondary"
-            disabled={!current || service.deploying}
-            onClick={() => deploy({}, "Redeploy")}
-            title="Mesma imagem, com a configuração atual (env, recursos, comandos)"
+            disabled={(!current && revisions.length === 0) || service.deploying}
+            onClick={() => deploy({}, current ? "Redeploy" : "Nova tentativa")}
+            title={
+              current
+                ? `Mesma imagem (${current.image}), com a configuração atual (env, recursos, comandos)`
+                : revisions.length > 0
+                  ? `Nenhum deploy chegou a correr: tenta outra vez ${revisions[0].image} com a configuração atual`
+                  : "Ainda não houve nenhum deploy -- indica uma imagem"
+            }
           >
-            Redeploy com a configuração atual
+            {current || revisions.length === 0 ? "Redeploy com a configuração atual" : `Tentar de novo (${revisions[0].image})`}
           </button>
           {service.desiredState === "running" ? (
             <button className="secondary" onClick={() => setState("stop")}>
