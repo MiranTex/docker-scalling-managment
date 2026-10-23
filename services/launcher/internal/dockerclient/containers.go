@@ -173,8 +173,18 @@ type CreateHostConfig struct {
 	// o próprio daemon reinicia (ex: reboot do host). Ponteiro porque
 	// omitir = "no", o default do Docker.
 	RestartPolicy *RestartPolicy `json:"RestartPolicy,omitempty"`
+	// SecurityOpt, ex: "no-new-privileges" -- ver AppSecurityOpt.
+	SecurityOpt []string `json:"SecurityOpt,omitempty"`
 
 	Resources
+}
+
+// AppSecurityOpt é o que todo container de APLICAÇÃO recebe: um processo
+// lá dentro nunca ganha mais privilégios do que arrancou com (setuid,
+// sudo, file capabilities). Baixar privilégios (ex: gosu de root para um
+// utilizador) continua a funcionar.
+func AppSecurityOpt() []string {
+	return []string{"no-new-privileges:true"}
 }
 
 // RestartPolicy segue o formato de HostConfig.RestartPolicy da API do Docker.

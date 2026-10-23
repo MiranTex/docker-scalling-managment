@@ -13,9 +13,10 @@ type config struct {
 	databaseURL string
 	listenAddr  string
 
-	// dockerSocket é o caminho do unix socket do Docker montado neste
-	// container -- só usado para listar imagens (GET /v1/images), nunca
-	// para criar/remover containers (ver internal/dockerclient).
+	// dockerSocket é o endereço da API do Docker: "tcp://..." (o
+	// docker-socket-proxy só de leitura do demo) ou o caminho de um unix
+	// socket -- só usado para listar imagens (GET /v1/images), nunca para
+	// criar/remover containers (ver internal/dockerclient).
 	dockerSocket string
 
 	authServiceURL string

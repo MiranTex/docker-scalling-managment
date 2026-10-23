@@ -447,6 +447,39 @@ convenção (`prometheus.scrape`/`prometheus.port` no seu `env`/labels, se
 quiser aparecer aqui também) -- ver `services/monitoring/README.md`,
 "Como um projeto novo aparece aqui".
 
+## Acesso ao Docker
+
+Só o **launcher** fala com o socket do Docker em modo escrita. Montar o
+socket com `:ro` não protege nada (a API continua toda acessível), por isso
+quem só precisa de ler (Traefik, templatesadmin, e Prometheus/Promtail em
+`services/monitoring`) passa por um `docker-socket-proxy` que só deixa
+passar GETs de containers, redes e imagens, numa rede `internal` própria
+(`docker-api-ro`). Essa rede não tem a label `base-stack.managed`, por isso
+não aparece em `/admin/networks`: o proxy deixa ler o `Env` de todos os
+containers, e nenhuma app deve chegar lá.
+
+Tudo o que o launcher cria a partir de um modelo ou de um pedido de réplica
+passa por uma política (`services/launcher/internal/httpapi/specpolicy.go`):
+
+- `binds` com caminhos do host só dentro de `LAUNCHER_ALLOWED_BIND_PATHS`
+  (vazio por defeito, ou seja, só volumes nomeados). `/`, `/etc`, `/proc`,
+  `/sys`, `/dev`, `/run`, `/var/run`, `/var/lib/docker`, `/root`, `/boot` e
+  qualquer `docker.sock` ficam sempre proibidos.
+- Volumes nomeados criados por uma stack compose (ex: `demo-database-data`)
+  não podem ser montados por uma app.
+- `network: host` e `network: container:<id>` são recusados.
+- Todo container de app corre com `no-new-privileges`.
+
+Um modelo que monte código-fonte do host (ex:
+`services/autoscaler/launch-template.laravel-web.example.json`) precisa
+desse caminho em `LAUNCHER_ALLOWED_BIND_PATHS`.
+
+**Ainda por resolver:** cada autoscaler-group (`group-authd` e os lançados
+pelo launcher) continua com o socket direto, para listar, inspecionar e
+parar as suas réplicas. Isto desaparece quando o scaling passar para o
+reconciliador central do plano de controlo, em vez de um container por
+group.
+
 ## Derrubar
 
 ```sh

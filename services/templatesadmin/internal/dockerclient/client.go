@@ -1,5 +1,5 @@
 // Package dockerclient fala diretamente com a API HTTP do Docker Engine
-// via unix socket, sem depender do SDK oficial (github.com/docker/docker).
+// via unix socket ou TCP, sem depender do SDK oficial (github.com/docker/docker).
 // Cópia deliberadamente enxuta de services/autoscaler/internal/dockerclient
 // -- este serviço só precisa listar imagens (ver images.go), não criar,
 // inspecionar nem remover containers.
@@ -13,6 +13,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 )
 
 // Client encapsula a conexão com o daemon do Docker.
@@ -21,9 +22,14 @@ type Client struct {
 	baseURL string
 }
 
-// New cria um Client que conversa com o Docker via unix socket.
-// socketPath normalmente é "/var/run/docker.sock".
-func New(socketPath string) *Client {
+// New cria um Client para addr: "tcp://host:porta" (ex: um
+// docker-socket-proxy só de leitura, o caso normal em produção) ou o
+// caminho de um unix socket, com ou sem "unix://" à frente.
+func New(addr string) *Client {
+	if rest, ok := strings.CutPrefix(addr, "tcp://"); ok {
+		return &Client{http: &http.Client{}, baseURL: "http://" + rest}
+	}
+	socketPath := strings.TrimPrefix(addr, "unix://")
 	return &Client{
 		http: &http.Client{
 			Transport: &http.Transport{
