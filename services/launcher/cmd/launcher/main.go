@@ -25,6 +25,9 @@ import (
 	"launcher/internal/dockerclient"
 	"launcher/internal/httpapi"
 	"launcher/internal/jwtverify"
+	"launcher/internal/platform"
+	"launcher/internal/platformapi"
+	"launcher/internal/secretbox"
 	"launcher/internal/secretsclient"
 	"launcher/internal/store"
 	"launcher/internal/templatesclient"
@@ -47,9 +50,23 @@ func main() {
 	templates := templatesclient.New(cfg.templatesAdminServiceURL)
 	handler := httpapi.NewHandler(tokens, db, docker, secrets, templates, cfg.groupConfig(), cfg.publicBaseDomain, cfg.tlsCertResolver, cfg.capacityConfig(), cfg.specPolicy(), logger)
 
+	var box *secretbox.Box
+	if cfg.secretsKey != "" {
+		var err error
+		if box, err = secretbox.New(cfg.secretsKey); err != nil {
+			logger.Error("configuração inválida", "err", err)
+			os.Exit(1)
+		}
+	}
+	platformSvc := platform.New(db, docker, box, cfg.platformConfig(), logger)
+	go platformSvc.AttachPlatformToAll(ctx)
+
+	mux := handler.Routes()
+	platformapi.New(platformSvc, tokens, logger).Register(mux)
+
 	srv := &http.Server{
 		Addr:    cfg.listenAddr,
-		Handler: handler.Routes(),
+		Handler: mux,
 	}
 
 	go func() {

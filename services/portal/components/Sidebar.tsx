@@ -18,6 +18,11 @@ export default function Sidebar({ role }: { role?: string }) {
         <Link href="/tokens" className={linkClass("/tokens")}>
           API tokens
         </Link>
+        {hasInfraAdminAccess(role) && (
+          <Link href="/projects" className={pathname.startsWith("/projects") ? "active" : ""}>
+            Projetos
+          </Link>
+        )}
         {role === "super-admin" && (
           <Link href="/admin/users" className={linkClass("/admin/users")}>
             Utilizadores

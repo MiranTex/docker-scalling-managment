@@ -82,6 +82,22 @@ func (c *Client) CreateNetwork(ctx context.Context, name string) (string, error)
 	return resp.ID, nil
 }
 
+// CreateLabeledNetwork é CreateNetwork com labels extra (ex: o projeto e o
+// ambiente a que a rede pertence). A PlatformLabel é sempre acrescentada.
+func (c *Client) CreateLabeledNetwork(ctx context.Context, name string, labels map[string]string) (string, error) {
+	all := map[string]string{PlatformLabel: PlatformLabelValue}
+	for k, v := range labels {
+		all[k] = v
+	}
+	var resp struct {
+		ID string `json:"Id"`
+	}
+	if err := c.do(ctx, "POST", "/networks/create", map[string]any{"Name": name, "Labels": all}, &resp); err != nil {
+		return "", err
+	}
+	return resp.ID, nil
+}
+
 // NetworkContainer é um container ligado a uma rede, tal como devolvido
 // dentro de "Containers" por GET /networks/{id} -- só o suficiente para
 // mostrar/desligar, nunca o IP ou MAC.

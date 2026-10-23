@@ -350,6 +350,11 @@ services:
       # /var/lib/docker, o socket, etc. ficam proibidos mesmo dentro de um
       # prefixo daqui -- ver services/launcher/internal/httpapi/specpolicy.go.
       LAUNCHER_ALLOWED_BIND_PATHS: "${LAUNCHER_ALLOWED_BIND_PATHS:-}"
+      # Cifra os segredos de ambiente dos projetos (AES-256, 32 bytes em
+      # base64) -- dev only, gerada com `openssl rand -base64 32`. Perder
+      # isto torna esses segredos irrecuperáveis. Separada da
+      # SECRETS_MASTER_KEY do secretsadmin de propósito.
+      LAUNCHER_SECRETS_KEY: "${LAUNCHER_SECRETS_KEY:-Gb6oAL1A3uEIJGpHTDeN4YkGTQzI3LDAlii+jX18x6o=}"
     labels:
       base-stack.managed: "true"
     volumes:
