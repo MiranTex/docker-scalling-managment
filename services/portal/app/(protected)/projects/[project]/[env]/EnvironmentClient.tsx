@@ -8,9 +8,11 @@ import ConfirmModal from "../../../admin/database/ConfirmModal";
 import AddonsTab from "./AddonsTab";
 import JobsTab from "./JobsTab";
 import SecretsTab from "./SecretsTab";
+import ServicesTab from "./ServicesTab";
 
 // Cada separador é um componente próprio que recebe projeto+ambiente.
 const TABS = [
+  { key: "services", label: "Serviços", Component: ServicesTab },
   { key: "addons", label: "Addons", Component: AddonsTab },
   { key: "jobs", label: "Jobs", Component: JobsTab },
   { key: "secrets", label: "Segredos", Component: SecretsTab },

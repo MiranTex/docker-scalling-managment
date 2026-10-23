@@ -1,0 +1,174 @@
+"use client";
+
+import Link from "next/link";
+import { useEffect, useState } from "react";
+import { api, envPath, statusBadge, type Service } from "@/lib/platformClient";
+
+const EMPTY = { slug: "", kind: "web", port: "8080", healthPath: "/", image: "" };
+
+export default function ServicesTab({ project, env }: { project: string; env: string }) {
+  const [services, setServices] = useState<Service[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [form, setForm] = useState(EMPTY);
+  const [saving, setSaving] = useState(false);
+
+  async function load() {
+    try {
+      setServices(await api<Service[]>(envPath(project, env, "services")));
+      setError(null);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  useEffect(() => {
+    load();
+    const t = setInterval(load, 4000);
+    return () => clearInterval(t);
+  }, [project, env]);
+
+  async function create() {
+    setError(null);
+    setSaving(true);
+    try {
+      const web = form.kind === "web";
+      await api(envPath(project, env, "services"), {
+        method: "POST",
+        body: JSON.stringify({
+          slug: form.slug.trim(),
+          kind: form.kind,
+          ...(web ? { port: Number(form.port), healthPath: form.healthPath.trim() } : {}),
+        }),
+      });
+      if (form.image.trim()) {
+        await api(envPath(project, env, "services", form.slug.trim(), "deployments"), {
+          method: "POST",
+          body: JSON.stringify({ image: form.image.trim() }),
+        });
+      }
+      setForm(EMPTY);
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function state(s: Service): { label: string; cls: string } {
+    if (s.deploying) return { label: "a fazer deploy", cls: statusBadge("deploying") };
+    if (s.desiredState === "stopped") return { label: "parado", cls: "badge" };
+    if (!s.currentRevision) return { label: "sem deploy", cls: "badge" };
+    const target = s.scalingMode === "fixed" ? s.replicas : s.minReplicas;
+    return s.readyReplicas >= Math.min(target, 1)
+      ? { label: "a correr", cls: statusBadge("running") }
+      : { label: "sem réplicas prontas", cls: statusBadge("failed") };
+  }
+
+  return (
+    <>
+      {error && <div className="error">{error}</div>}
+      {!services ? (
+        <p className="muted">A carregar...</p>
+      ) : services.length === 0 ? (
+        <p className="muted">Sem serviços. Cria um abaixo (ex: web na porta da tua app, ou um worker de filas).</p>
+      ) : (
+        <table>
+          <thead>
+            <tr>
+              <th>Serviço</th>
+              <th>Estado</th>
+              <th>Revisão</th>
+              <th>Réplicas</th>
+              <th>Endereço</th>
+            </tr>
+          </thead>
+          <tbody>
+            {services.map((s) => {
+              const st = state(s);
+              return (
+                <tr key={s.id}>
+                  <td>
+                    <Link href={`/projects/${project}/${env}/services/${s.slug}`}>
+                      <strong>{s.slug}</strong>
+                    </Link>
+                    <div className="muted">{s.kind === "web" ? `web :${s.port}` : "worker"}</div>
+                  </td>
+                  <td>
+                    <span className={st.cls}>{st.label}</span>
+                  </td>
+                  <td>
+                    {s.currentRevision ? (
+                      <>
+                        #{s.currentRevision.number} <code className="truncate">{s.currentRevision.image}</code>
+                      </>
+                    ) : (
+                      "—"
+                    )}
+                  </td>
+                  <td>
+                    {s.readyReplicas} pronta(s) ·{" "}
+                    {s.scalingMode === "fixed" ? `${s.replicas} fixas` : `auto ${s.minReplicas}-${s.maxReplicas}`}
+                  </td>
+                  <td>
+                    {s.urls.map((u) => (
+                      <div key={u}>
+                        <a href={u} target="_blank" rel="noreferrer">
+                          {u.replace(/^https?:\/\//, "")}
+                        </a>
+                      </div>
+                    ))}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+
+      <h2>Novo serviço</h2>
+      <div className="form-grid">
+        <div>
+          <label htmlFor="svc-slug">Slug</label>
+          <input id="svc-slug" value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value })} placeholder="web" />
+        </div>
+        <div>
+          <label htmlFor="svc-kind">Tipo</label>
+          <select id="svc-kind" value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })}>
+            <option value="web">web (recebe tráfego HTTP)</option>
+            <option value="worker">worker (filas, cron, sem tráfego)</option>
+          </select>
+        </div>
+        {form.kind === "web" && (
+          <>
+            <div>
+              <label htmlFor="svc-port">Porta da aplicação</label>
+              <input id="svc-port" value={form.port} onChange={(e) => setForm({ ...form, port: e.target.value })} />
+            </div>
+            <div>
+              <label htmlFor="svc-health">Health check (vazio = só TCP)</label>
+              <input
+                id="svc-health"
+                value={form.healthPath}
+                onChange={(e) => setForm({ ...form, healthPath: e.target.value })}
+                placeholder="/healthz"
+              />
+            </div>
+          </>
+        )}
+        <div>
+          <label htmlFor="svc-image">Imagem para o primeiro deploy (opcional)</label>
+          <input
+            id="svc-image"
+            value={form.image}
+            onChange={(e) => setForm({ ...form, image: e.target.value })}
+            placeholder="ghcr.io/eu/app:1.0.0"
+          />
+        </div>
+      </div>
+      <button className="secondary" disabled={saving || !form.slug.trim()} onClick={create}>
+        {saving ? "A criar..." : "Criar serviço"}
+      </button>
+    </>
+  );
+}

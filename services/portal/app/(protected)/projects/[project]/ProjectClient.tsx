@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { api, projectPath, type ProjectDetail } from "@/lib/platformClient";
 import ConfirmModal from "../../admin/database/ConfirmModal";
+import RegistriesCard from "./RegistriesCard";
 
 export default function ProjectClient({ project }: { project: string }) {
   const router = useRouter();
@@ -105,6 +106,8 @@ export default function ProjectClient({ project }: { project: string }) {
           {creating ? "A criar..." : "Criar ambiente"}
         </button>
       </div>
+
+      <RegistriesCard project={project} />
 
       <div className="card wide">
         <h2>Apagar projeto</h2>

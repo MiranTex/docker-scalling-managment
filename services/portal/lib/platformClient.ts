@@ -105,3 +105,105 @@ export function formatBytes(n: number): string {
   if (n >= 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${n} B`;
 }
+
+export type Revision = {
+  id: string;
+  number: number;
+  image: string;
+  cmd: string[];
+  env: string[];
+  releaseCmd: string[];
+  port: number;
+  healthPath: string;
+  healthTimeoutSeconds: number;
+  vcpu: number;
+  memoryMb: number;
+  createdAt: string;
+  createdBy: string;
+};
+
+export type Service = {
+  id: string;
+  slug: string;
+  kind: "web" | "worker";
+  port: number;
+  healthPath: string;
+  healthTimeoutSeconds: number;
+  cmd: string[];
+  env: string[];
+  releaseCmd: string[];
+  vcpu: number;
+  memoryMb: number;
+  scalingMode: "fixed" | "auto";
+  replicas: number;
+  minReplicas: number;
+  maxReplicas: number;
+  cpuScaleUpPercent: number;
+  cpuScaleDownPercent: number;
+  desiredState: "running" | "stopped";
+  currentRevision?: Revision;
+  readyReplicas: number;
+  deploying: boolean;
+  urls: string[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type Deployment = {
+  id: string;
+  revisionId: string;
+  revisionNumber: number;
+  image: string;
+  status: string;
+  error?: string;
+  log: string;
+  triggeredBy: string;
+  createdAt: string;
+  finishedAt?: string;
+};
+
+export type Replica = {
+  name: string;
+  state: string;
+  status: string;
+  revisionNumber: number;
+  ready: boolean;
+  draining: boolean;
+};
+
+export type RegistryCredential = { registry: string; username: string; updatedAt: string; updatedBy: string };
+
+export function servicePath(project: string, env: string, svc: string, ...rest: string[]): string {
+  return envPath(project, env, "services", svc, ...rest);
+}
+
+// splitArgs parte uma linha de comando em argumentos, respeitando aspas
+// simples e duplas -- "php artisan migrate --force" -> ["php", ...].
+export function splitArgs(line: string): string[] {
+  const out: string[] = [];
+  let cur = "";
+  let quote: string | null = null;
+  let has = false;
+  for (const ch of line.trim()) {
+    if (quote) {
+      if (ch === quote) quote = null;
+      else cur += ch;
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+      has = true;
+    } else if (/\s/.test(ch)) {
+      if (has || cur) out.push(cur);
+      cur = "";
+      has = false;
+    } else {
+      cur += ch;
+      has = true;
+    }
+  }
+  if (has || cur) out.push(cur);
+  return out;
+}
+
+export function joinArgs(args: string[]): string {
+  return args.map((a) => (/[\s"']/.test(a) || a === "" ? JSON.stringify(a) : a)).join(" ");
+}

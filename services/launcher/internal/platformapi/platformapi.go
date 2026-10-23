@@ -66,6 +66,26 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+addons+"/{addon}/backups", admin(a.createBackup))
 	mux.HandleFunc("POST "+addons+"/{addon}/restore", admin(a.restoreBackup))
 
+	const services = "/v1/projects/{project}/environments/{env}/services"
+	const svc = services + "/{svc}"
+	mux.HandleFunc("GET "+services, admin(a.listServices))
+	mux.HandleFunc("POST "+services, admin(a.createService))
+	mux.HandleFunc("GET "+svc, admin(a.getService))
+	mux.HandleFunc("PATCH "+svc, admin(a.updateService))
+	mux.HandleFunc("DELETE "+svc, admin(a.deleteService))
+	mux.HandleFunc("POST "+svc+"/stop", admin(a.setServiceState("stopped")))
+	mux.HandleFunc("POST "+svc+"/start", admin(a.setServiceState("running")))
+	mux.HandleFunc("GET "+svc+"/revisions", admin(a.listRevisions))
+	mux.HandleFunc("GET "+svc+"/replicas", admin(a.listReplicas))
+	mux.HandleFunc("POST "+svc+"/run", admin(a.runCommand))
+	mux.HandleFunc("GET "+svc+"/deployments", admin(a.listDeployments))
+	mux.HandleFunc("POST "+svc+"/deployments", admin(a.createDeployment))
+	mux.HandleFunc("GET "+svc+"/deployments/{deployment}", admin(a.getDeployment))
+
+	mux.HandleFunc("GET /v1/projects/{project}/registries", admin(a.listRegistries))
+	mux.HandleFunc("PUT /v1/projects/{project}/registries/{registry}", admin(a.putRegistry))
+	mux.HandleFunc("DELETE /v1/projects/{project}/registries/{registry}", admin(a.deleteRegistry))
+
 	mux.HandleFunc("GET /v1/projects/{project}/environments/{env}/jobs", admin(a.listJobs))
 	mux.HandleFunc("GET /v1/projects/{project}/environments/{env}/jobs/{job}", admin(a.getJob))
 }

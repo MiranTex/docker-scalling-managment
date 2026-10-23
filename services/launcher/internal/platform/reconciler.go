@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"launcher/internal/dockerclient"
 	"launcher/internal/store"
 )
 
@@ -34,6 +35,8 @@ func (s *Service) Run(ctx context.Context) {
 			return
 		case <-tick.C:
 			s.reconcileOnce(ctx)
+		case <-s.rt.kick:
+			s.reconcileOnce(ctx)
 		case <-backups.C:
 			s.runDueBackups(ctx)
 		}
@@ -46,6 +49,9 @@ func (s *Service) startupCleanup(ctx context.Context) {
 	if err := s.db.FailRunningJobs(ctx); err != nil {
 		s.logger.Error("marcando jobs interrompidos", "err", err)
 	}
+	if err := s.db.FailUnfinishedDeployments(ctx); err != nil {
+		s.logger.Error("marcando deploys interrompidos", "err", err)
+	}
 	jobs, err := s.docker.ListContainers(ctx, true, map[string][]string{"label": {LabelRole + "=" + RoleJob}})
 	if err != nil {
 		s.logger.Error("listando containers de jobs órfãos", "err", err)
@@ -56,8 +62,60 @@ func (s *Service) startupCleanup(ctx context.Context) {
 	}
 }
 
+// Kick pede uma reconciliação já, em vez de esperar pelo próximo tick
+// (ex: depois de mudar o scaling de um serviço).
+func (s *Service) Kick() {
+	select {
+	case s.rt.kick <- struct{}{}:
+	default:
+	}
+}
+
 func (s *Service) reconcileOnce(ctx context.Context) {
 	s.reconcileAddons(ctx)
+	s.reconcileServices(ctx)
+	s.syncRouting(ctx)
+}
+
+func (s *Service) reconcileServices(ctx context.Context) {
+	services, err := s.db.ListAllServices(ctx)
+	if err != nil {
+		s.logger.Error("reconciliador: listando serviços", "err", err)
+		return
+	}
+	containers, err := s.docker.ListContainers(ctx, true, map[string][]string{"label": {LabelRole + "=" + RoleApp}})
+	if err != nil {
+		s.logger.Error("reconciliador: listando réplicas", "err", err)
+		return
+	}
+	byService := map[string][]dockerclient.Container{}
+	for _, c := range containers {
+		byService[c.Labels[LabelService]] = append(byService[c.Labels[LabelService]], c)
+	}
+	known := map[string]bool{}
+	scopes := s.newScopeCache()
+	for _, svc := range services {
+		known[svc.ID] = true
+		if s.rt.isDeploying(svc.ID) {
+			continue
+		}
+		p, e, err := scopes.get(ctx, svc.EnvironmentID)
+		if err != nil {
+			continue
+		}
+		s.reconcileService(ctx, p, e, svc, byService[svc.ID])
+	}
+	// Réplicas de serviços que já não existem (apagados com o launcher em
+	// baixo, por exemplo).
+	for svcID, list := range byService {
+		if known[svcID] {
+			continue
+		}
+		for _, c := range list {
+			s.logger.Info("reconciliador: réplica de serviço inexistente", "container", containerName(c))
+			s.stopAndRemove(ctx, containerName(c))
+		}
+	}
 }
 
 // scopeCache evita ler o mesmo projeto/ambiente da base uma vez por

@@ -2,6 +2,7 @@ package dockerclient
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -37,12 +38,32 @@ type pullProgressLine struct {
 // inacessível). Usado pra validar o launch template no arranque do
 // group, antes de precisar dele de verdade num scale up.
 func (c *Client) PullImage(ctx context.Context, ref string) error {
+	return c.PullImageWithAuth(ctx, ref, nil)
+}
+
+// RegistryAuth são as credenciais de um registry privado, no formato que
+// a API do Docker espera (base64 de JSON no cabeçalho X-Registry-Auth).
+type RegistryAuth struct {
+	Username      string `json:"username"`
+	Password      string `json:"password"`
+	ServerAddress string `json:"serveraddress"`
+}
+
+// PullImageWithAuth é PullImage com credenciais (auth nil = anónimo).
+func (c *Client) PullImageWithAuth(ctx context.Context, ref string, auth *RegistryAuth) error {
 	repo, tag := splitImageRef(ref)
 	q := url.Values{"fromImage": {repo}, "tag": {tag}}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/images/create?"+q.Encode(), nil)
 	if err != nil {
 		return fmt.Errorf("dockerclient: montando request de pull: %w", err)
+	}
+	if auth != nil {
+		encoded, err := json.Marshal(auth)
+		if err != nil {
+			return fmt.Errorf("dockerclient: codificando credenciais: %w", err)
+		}
+		req.Header.Set("X-Registry-Auth", base64.URLEncoding.EncodeToString(encoded))
 	}
 
 	resp, err := c.http.Do(req)
@@ -84,4 +105,15 @@ func splitImageRef(ref string) (repo, tag string) {
 		return ref[:colon], ref[colon+1:]
 	}
 	return ref, "latest"
+}
+
+// RegistryHost devolve o registry de uma referência de imagem -- o
+// primeiro componente se parecer um host (tem "." ou ":", ou é
+// "localhost"), senão o Docker Hub.
+func RegistryHost(ref string) string {
+	first, _, found := strings.Cut(ref, "/")
+	if found && (strings.ContainsAny(first, ".:") || first == "localhost") {
+		return first
+	}
+	return "docker.io"
 }
