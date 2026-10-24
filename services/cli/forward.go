@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"sync/atomic"
 
 	"github.com/coder/websocket"
@@ -33,6 +34,24 @@ func (c credentials) connectionURL(port int) string {
 		u.Scheme, u.RawQuery = "postgres", "sslmode=disable"
 	}
 	return u.String()
+}
+
+// clientSettings é o que se mete num cliente: o URL e, para quem prefere
+// campos (ex: DBeaver, "Connect by: Host"), cada valor à parte.
+func (c credentials) clientSettings(port int) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "  URL:        %s\n", c.connectionURL(port))
+	if c.Kind != "redis" {
+		fmt.Fprintf(&b, "  JDBC:       jdbc:postgresql://127.0.0.1:%d/%s  (DBeaver, DataGrip)\n", port, c.Database)
+	}
+	fmt.Fprintf(&b, "  Host:       127.0.0.1\n  Porta:      %d\n", port)
+	if c.Kind == "redis" {
+		fmt.Fprintf(&b, "  Base:       %s\n", c.Database)
+	} else {
+		fmt.Fprintf(&b, "  Base dados: %s\n", c.Database)
+	}
+	fmt.Fprintf(&b, "  Utilizador: %s\n  Password:   %s\n", c.User, c.Password)
+	return b.String()
 }
 
 func cmdPortForward(args []string) error {
@@ -68,9 +87,9 @@ func cmdPortForward(args []string) error {
 	}
 	*port = ln.Addr().(*net.TCPAddr).Port
 
-	fmt.Printf("A encaminhar 127.0.0.1:%d -> %s\n", *port, fs.Arg(0))
-	fmt.Printf("  %s\n", creds.connectionURL(*port))
-	fmt.Println("Ctrl+C para fechar.")
+	fmt.Printf("A encaminhar 127.0.0.1:%d -> %s\n\n", *port, fs.Arg(0))
+	fmt.Print(creds.clientSettings(*port))
+	fmt.Println("\nDeixa isto a correr enquanto usas o cliente. Ctrl+C para fechar.")
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()

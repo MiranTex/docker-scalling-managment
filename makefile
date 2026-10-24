@@ -1,4 +1,4 @@
-.PHONY: cli build-images migrations-status migrations-check start-demo demo-down start-monitoring db-upgrade-pg17
+.PHONY: cli install-cli build-images migrations-status migrations-check start-demo demo-down start-monitoring db-upgrade-pg17
 
 DEMO_COMPOSE ?= demo/docker-compose.yml
 PGUSER ?= app
@@ -8,6 +8,15 @@ PGDATABASE ?= app
 # ver services/cli/README.md.
 cli:
 	cd services/cli && go build -o ../../bin/bs .
+
+# install-cli põe o bs no PATH (por defeito /usr/local/bin; usa sudo só se
+# não der para escrever lá). Outro sítio: make install-cli PREFIX=~/.local
+PREFIX ?= /usr/local
+install-cli: cli
+	@mkdir -p "$(PREFIX)/bin" 2>/dev/null || sudo mkdir -p "$(PREFIX)/bin"
+	@if [ -w "$(PREFIX)/bin" ]; then install -m 0755 bin/bs "$(PREFIX)/bin/bs"; \
+	else echo "A instalar em $(PREFIX)/bin com sudo"; sudo install -m 0755 bin/bs "$(PREFIX)/bin/bs"; fi
+	@echo "bs instalado em $(PREFIX)/bin/bs -- experimenta: bs projects"
 
 build-images:
 	docker build -t autoscaler-group:latest services/autoscaler
