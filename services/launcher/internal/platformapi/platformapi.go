@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 
@@ -52,6 +53,7 @@ type API struct {
 	users   Users
 	grafana Grafana
 	term    *terminals
+	dial    dialer
 	audit   *audit.Logger
 	logger  *slog.Logger
 }
@@ -60,7 +62,7 @@ func New(svc *platform.Service, tokens TokenVerifier, apiKeys APIKeys, users Use
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &API{svc: svc, tokens: tokens, apiKeys: apiKeys, users: users, term: newTerminals(), audit: audit.NewLogger(logger), logger: logger}
+	return &API{svc: svc, tokens: tokens, apiKeys: apiKeys, users: users, term: newTerminals(), dial: (&net.Dialer{}).DialContext, audit: audit.NewLogger(logger), logger: logger}
 }
 
 // Register acrescenta as rotas a um mux existente (o do httpapi), para o
@@ -112,6 +114,11 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+addons+"/{addon}/backups", developer(a.createBackup))
 	mux.HandleFunc("POST "+addons+"/{addon}/restore", developer(a.restoreBackup))
 	mux.HandleFunc("POST "+addons+"/{addon}/terminal", developer(a.addonTerminal))
+	// Para a CLI (bs port-forward): túnel até ao addon e as credenciais
+	// para o cliente local -- ver tunnel.go.
+	mux.HandleFunc("POST "+addons+"/{addon}/tunnel", developer(a.addonTunnel))
+	mux.HandleFunc("GET "+addons+"/{addon}/credentials", developer(a.addonCredentials))
+	mux.HandleFunc("GET /v1/projects/{project}/tunnel/ws", a.tunnelSocket)
 
 	const services = "/v1/projects/{project}/environments/{env}/services"
 	const svc = services + "/{svc}"

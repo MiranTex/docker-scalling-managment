@@ -1,8 +1,13 @@
-.PHONY: build-images migrations-status migrations-check start-demo demo-down start-monitoring db-upgrade-pg17
+.PHONY: cli build-images migrations-status migrations-check start-demo demo-down start-monitoring db-upgrade-pg17
 
 DEMO_COMPOSE ?= demo/docker-compose.yml
 PGUSER ?= app
 PGDATABASE ?= app
+
+# cli compila a CLI da plataforma (bs) para esta máquina, em bin/bs --
+# ver services/cli/README.md.
+cli:
+	cd services/cli && go build -o ../../bin/bs .
 
 build-images:
 	docker build -t autoscaler-group:latest services/autoscaler

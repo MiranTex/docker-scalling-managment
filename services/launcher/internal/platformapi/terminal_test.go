@@ -74,13 +74,20 @@ func (c closers) Close() error {
 }
 
 func setupTerminalAPI(t *testing.T) (*API, *termDocker, *httptest.Server) {
+	docker := &termDocker{}
+	api, srv := setupAPIWith(t, docker, docker)
+	return api, docker, srv
+}
+
+// setupAPIWith monta o projeto loja/prod com o serviço web (réplica web-1
+// em term) sobre o Docker falso dado.
+func setupAPIWith(t *testing.T, d platform.Docker, docker *termDocker) (*API, *httptest.Server) {
 	t.Helper()
 	ctx := context.Background()
 	key := make([]byte, 32)
 	_, _ = rand.Read(key)
 	box, _ := secretbox.New(base64.StdEncoding.EncodeToString(key))
-	docker := &termDocker{}
-	svc := platform.New(storetest.New(t), docker, box, platform.Config{}, nil)
+	svc := platform.New(storetest.New(t), d, box, platform.Config{PostgresImage: "postgres:17-alpine"}, nil)
 	users := fakeUsers{"dev@x.pt": "u-dev", "viewer@x.pt": "u-viewer"}
 	mux := http.NewServeMux()
 	api := New(svc, accountTokens{}, nil, users, nil)
@@ -107,7 +114,7 @@ func setupTerminalAPI(t *testing.T) (*API, *termDocker, *httptest.Server) {
 	}}
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	return api, docker, srv
+	return api, srv
 }
 
 func askTerminal(t *testing.T, srv *httptest.Server, token string, body any) (int, map[string]any) {
@@ -232,19 +239,19 @@ func TestTerminalSessionLimit(t *testing.T) {
 	target := platform.TerminalTarget{}
 	target.Project.Slug = "loja"
 	for i := 0; i < maxSessionsPerUser; i++ {
-		if _, err := term.redeem(term.issue(terminalTicket{subject: "u", target: target}), "loja"); err != nil {
+		if _, err := term.redeem(term.issue(terminalTicket{subject: "u", target: target}), "loja", false); err != nil {
 			t.Fatalf("sessão %d: %v", i+1, err)
 		}
 	}
-	if _, err := term.redeem(term.issue(terminalTicket{subject: "u", target: target}), "loja"); err == nil {
+	if _, err := term.redeem(term.issue(terminalTicket{subject: "u", target: target}), "loja", false); err == nil {
 		t.Error("passou do limite de sessões")
 	}
-	term.release("u")
-	if _, err := term.redeem(term.issue(terminalTicket{subject: "u", target: target}), "loja"); err != nil {
+	term.release(terminalTicket{subject: "u"})
+	if _, err := term.redeem(term.issue(terminalTicket{subject: "u", target: target}), "loja", false); err != nil {
 		t.Errorf("depois de fechar uma: %v", err)
 	}
 	// Um bilhete de outro projeto não abre neste.
-	if _, err := term.redeem(term.issue(terminalTicket{subject: "v", target: target}), "outro"); err == nil {
+	if _, err := term.redeem(term.issue(terminalTicket{subject: "v", target: target}), "outro", false); err == nil {
 		t.Error("bilhete aceite noutro projeto")
 	}
 }
