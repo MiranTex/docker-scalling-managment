@@ -31,9 +31,8 @@ export default function Sidebar({ role }: { role?: string }) {
       visible: true,
       items: [
         { href: "/projects", label: "Projetos", prefix: true },
-        // Servido pelo portal (app/grafana): cada conta vê as organizações
-        // dos seus projetos.
-        { href: "/grafana/", label: "Métricas e logs", external: true },
+        // Escolhe o projeto e abre a sua organização no Grafana.
+        { href: "/metrics", label: "Métricas e logs" },
       ],
     },
     {
