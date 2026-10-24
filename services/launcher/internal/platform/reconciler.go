@@ -67,6 +67,15 @@ func (s *Service) startupCleanup(ctx context.Context) {
 	for _, c := range jobs {
 		_ = s.docker.RemoveContainer(ctx, c.ID, true)
 	}
+	// Containers de debug de sessões de terminal que o restart cortou.
+	debug, err := s.docker.ListContainers(ctx, true, map[string][]string{"label": {LabelRole + "=" + RoleDebug}})
+	if err != nil {
+		s.logger.Error("listando containers de debug órfãos", "err", err)
+		return
+	}
+	for _, c := range debug {
+		_ = s.docker.RemoveContainer(ctx, c.ID, true)
+	}
 }
 
 // Kick pede uma reconciliação já, em vez de esperar pelo próximo tick

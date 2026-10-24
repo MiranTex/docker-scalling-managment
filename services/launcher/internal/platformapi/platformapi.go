@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"launcher/internal/apikeyclient"
+	"launcher/internal/audit"
 	"launcher/internal/jwtverify"
 	"launcher/internal/platform"
 	"launcher/internal/store"
@@ -50,6 +51,8 @@ type API struct {
 	apiKeys APIKeys
 	users   Users
 	grafana Grafana
+	term    *terminals
+	audit   *audit.Logger
 	logger  *slog.Logger
 }
 
@@ -57,7 +60,7 @@ func New(svc *platform.Service, tokens TokenVerifier, apiKeys APIKeys, users Use
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &API{svc: svc, tokens: tokens, apiKeys: apiKeys, users: users, logger: logger}
+	return &API{svc: svc, tokens: tokens, apiKeys: apiKeys, users: users, term: newTerminals(), audit: audit.NewLogger(logger), logger: logger}
 }
 
 // Register acrescenta as rotas a um mux existente (o do httpapi), para o
@@ -108,6 +111,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+addons+"/{addon}/backups", viewer(a.listBackups))
 	mux.HandleFunc("POST "+addons+"/{addon}/backups", developer(a.createBackup))
 	mux.HandleFunc("POST "+addons+"/{addon}/restore", developer(a.restoreBackup))
+	mux.HandleFunc("POST "+addons+"/{addon}/terminal", developer(a.addonTerminal))
 
 	const services = "/v1/projects/{project}/environments/{env}/services"
 	const svc = services + "/{svc}"
@@ -123,6 +127,10 @@ func (a *API) Register(mux *http.ServeMux) {
 	// Um comando corre com os segredos do ambiente e o output pode
 	// mostrá-los -- por isso não é para viewers.
 	mux.HandleFunc("POST "+svc+"/run", developer(a.runCommand))
+	// O terminal: pede-se um bilhete (developer, pela mesma razão do /run)
+	// e com ele abre-se o WebSocket -- ver terminal.go.
+	mux.HandleFunc("POST "+svc+"/terminal", developer(a.serviceTerminal))
+	mux.HandleFunc("GET /v1/projects/{project}/terminal/ws", a.terminalSocket)
 	mux.HandleFunc("GET "+svc+"/deployments", deployRead(a.listDeployments))
 	mux.HandleFunc("POST "+svc+"/deployments", deployWrite(a.createDeployment))
 	mux.HandleFunc("GET "+svc+"/deployments/{deployment}", deployRead(a.getDeployment))

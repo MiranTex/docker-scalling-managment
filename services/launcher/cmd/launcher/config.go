@@ -97,6 +97,12 @@ type config struct {
 	// grafana: sincronização de organizações/membros com o Grafana (ver
 	// internal/grafanasync). GRAFANA_URL vazio desliga.
 	grafanaURL, grafanaUser, grafanaPassword, grafanaDashboards string
+
+	// terminalOrigins: host[:porta] de onde o portal abre o terminal
+	// (WebSocket). Vazio = só da mesma origem.
+	terminalOrigins []string
+	// debugImage: a do container do modo debug do terminal.
+	debugImage string
 }
 
 func loadConfig() config {
@@ -146,6 +152,9 @@ func loadConfig() config {
 		grafanaUser:       envString("GRAFANA_ADMIN_USER", "admin"),
 		grafanaPassword:   os.Getenv("GRAFANA_ADMIN_PASSWORD"),
 		grafanaDashboards: envString("LAUNCHER_GRAFANA_DASHBOARDS_DIR", "/etc/base-stack/dashboards"),
+
+		terminalOrigins: envList("LAUNCHER_TERMINAL_ORIGINS"),
+		debugImage:      envString("LAUNCHER_DEBUG_IMAGE", "busybox:1.37"),
 	}
 	if cfg.selfContainer == "" {
 		cfg.selfContainer, _ = os.Hostname()
@@ -181,6 +190,7 @@ func (c config) platformConfig() platform.Config {
 		PrometheusContainer:   c.prometheusContainer,
 		PostgresImage:         c.postgresImage,
 		RedisImage:            c.redisImage,
+		DebugImage:            c.debugImage,
 		HostMemoryMB:          c.hostMemoryMB,
 		MemoryOvercommitRatio: c.memoryOvercommitRatio,
 		TraefikDynamicDir:     c.traefikDynamicDir,

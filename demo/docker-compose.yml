@@ -386,6 +386,10 @@ services:
       GRAFANA_URL: "http://monitoring-grafana-1:3000/grafana"
       GRAFANA_ADMIN_USER: "${GRAFANA_ADMIN_USER:-admin}"
       GRAFANA_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:-admin}"
+      # Terminal do portal: o browser abre o WebSocket em api.<domínio> a
+      # partir da página do portal -- estas são as origens (host:porta do
+      # portal) aceites. Em produção, o domínio do portal.
+      LAUNCHER_TERMINAL_ORIGINS: "${LAUNCHER_TERMINAL_ORIGINS:-localhost:3100,localhost:3200,127.0.0.1:3100,127.0.0.1:3200}"
       LAUNCHER_SECRETS_KEY: "${LAUNCHER_SECRETS_KEY:-Gb6oAL1A3uEIJGpHTDeN4YkGTQzI3LDAlii+jX18x6o=}"
     labels:
       base-stack.managed: "true"

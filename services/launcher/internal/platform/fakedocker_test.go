@@ -40,6 +40,10 @@ type fakeDocker struct {
 	// failStartState: estado em que fica um container depois de arrancar
 	// (ex: "exited", para simular um processo que termina logo).
 	failStartState string
+	// noShell: containers sem /bin/sh (o exec de teste sai com 127).
+	noShell map[string]bool
+	// execs: exec id -> container onde foi criado.
+	execs map[string]string
 }
 
 func (f *fakeDocker) PullImageWithAuth(_ context.Context, ref string, auth *dockerclient.RegistryAuth) error {

@@ -154,9 +154,33 @@ Todas as rotas exigem `Authorization: Bearer <token>`, um de:
 | `GET`✱, `POST`✱ `.../services/{s}/deployments` · `GET`✱ `.../deployments/{id}` | deploys e rollback (`{"revision": n}`) |
 | `GET .../services/{s}/revisions`, `/replicas` | histórico e estado ao vivo |
 | `POST .../services/{s}/run` | comando pontual com a revisão atual |
+| `POST .../services/{s}/terminal`, `.../addons/{a}/terminal` · `GET /{p}/terminal/ws?ticket=` | terminal (ver abaixo) |
 | `GET`, `POST .../services/{s}/template-update` · `POST .../services/{s}/save-as-template` | diferenças/aplicar versão nova do modelo; guardar como modelo |
 | `GET`, `POST .../services/{s}/domains` · `POST .../domains/{h}/verify` · `DELETE .../domains/{h}` | domínios próprios |
 | `GET .../environments/{e}/jobs[/{id}]` · `POST .../jobs/{id}/cancel` | jobs, o seu output, e cancelar um a correr |
+
+### Terminal
+
+Uma shell dentro de uma réplica ou de um addon, para developers e admins
+do projeto (vê o env do serviço, segredos incluídos -- como o `/run`).
+
+1. `POST .../terminal` com `{"replica": "", "debug": false}` devolve um
+   bilhete de uso único (30s) e o `url` do WebSocket. Sem `/bin/sh` na
+   imagem responde `409 no_shell`.
+2. O WebSocket nesse `url` é a sessão: mensagens binárias são o terminal
+   (nos dois sentidos), as de texto são controlo
+   (`{"type":"resize","rows":40,"cols":120}`). O bilhete é a autenticação
+   -- o browser não manda `Authorization` num WebSocket -- e a origem tem
+   de estar em `LAUNCHER_TERMINAL_ORIGINS`.
+
+**Modo debug** (`"debug": true`): um container `busybox` temporário com a
+rede e os processos do alvo -- serve imagens sem shell; os ficheiros do
+alvo ficam em `/proc/1/root`. É removido ao fechar a sessão (e no arranque
+do launcher, se algum ficou para trás).
+
+Só containers com as labels do projeto e ambiente do URL; no máximo 3
+sessões por conta; fecha após 15 min sem input. Abrir e fechar ficam no
+log de auditoria (`terminal.open`, `terminal.close`), o que se escreve não.
 
 ## Configuração
 
@@ -170,6 +194,8 @@ Todas as rotas exigem `Authorization: Bearer <token>`, um de:
 | `LAUNCHER_PUBLIC_IPS` | IPs públicos do host, para verificar o DNS dos domínios próprios |
 | `LAUNCHER_ADDON_POSTGRES_IMAGE`, `LAUNCHER_ADDON_REDIS_IMAGE` | por defeito `postgres:17-alpine`, `redis:7-alpine` |
 | `LAUNCHER_HOST_MEMORY_MB`, `LAUNCHER_MEMORY_OVERCOMMIT_RATIO` | teto de memória do host |
+| `LAUNCHER_TERMINAL_ORIGINS` | `host[:porta]` do portal de onde o browser abre o terminal, separados por vírgula; vazio = só a mesma origem |
+| `LAUNCHER_DEBUG_IMAGE` | imagem do modo debug do terminal (por defeito `busybox:1.37`) |
 | `LAUNCHER_SELF_CONTAINER`, `TRAEFIK_CONTAINER`, `LAUNCHER_PROMETHEUS_CONTAINER` | containers da plataforma ligados a todas as redes de ambiente (por defeito o launcher, `traefik` e `monitoring-prometheus-1`) |
 
 ## Limitações conhecidas
