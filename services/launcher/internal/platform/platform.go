@@ -13,6 +13,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"regexp"
@@ -91,6 +92,11 @@ type Docker interface {
 	PullImageWithAuth(ctx context.Context, ref string, auth *dockerclient.RegistryAuth) error
 	ContainerStats(ctx context.Context, id string) (*dockerclient.Stats, error)
 	VolumesWithUsage(ctx context.Context) ([]dockerclient.Volume, error)
+	CreateExec(ctx context.Context, containerID string, cfg dockerclient.ExecConfig) (string, error)
+	StartExec(ctx context.Context, execID string, tty bool) (io.ReadWriteCloser, error)
+	StartExecDetached(ctx context.Context, execID string) error
+	ResizeExec(ctx context.Context, execID string, rows, cols int) error
+	InspectExec(ctx context.Context, execID string) (*dockerclient.ExecInspect, error)
 }
 
 type Config struct {
@@ -108,6 +114,9 @@ type Config struct {
 	// env (ex: para fixar uma minor version).
 	PostgresImage string
 	RedisImage    string
+	// DebugImage é a do container do modo debug do terminal (vazio =
+	// busybox).
+	DebugImage string
 
 	// Capacidade declarada do host -- a mesma de internal/httpapi
 	// (CapacityConfig). Zero desliga o teto.

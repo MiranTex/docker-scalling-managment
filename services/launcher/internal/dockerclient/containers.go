@@ -224,6 +224,9 @@ type CreateHostConfig struct {
 	RestartPolicy *RestartPolicy `json:"RestartPolicy,omitempty"`
 	// SecurityOpt, ex: "no-new-privileges" -- ver AppSecurityOpt.
 	SecurityOpt []string `json:"SecurityOpt,omitempty"`
+	// PidMode "container:<id>" partilha os processos de outro container
+	// (o container de debug do terminal vê os do serviço).
+	PidMode string `json:"PidMode,omitempty"`
 
 	Resources
 }

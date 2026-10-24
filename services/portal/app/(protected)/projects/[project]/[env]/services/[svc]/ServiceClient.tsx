@@ -16,6 +16,7 @@ import {
   type Service,
 } from "@/lib/platformClient";
 import TabBar, { useActiveTab } from "@/components/TabBar";
+import TerminalModal from "@/components/TerminalModal";
 import ConfirmModal from "../../../../../admin/database/ConfirmModal";
 import DomainsCard from "./DomainsCard";
 import ServiceConfig from "./ServiceConfig";
@@ -43,6 +44,7 @@ export default function ServiceClient({ project, env, svc }: { project: string; 
   const [image, setImage] = useState("");
   const [command, setCommand] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [terminal, setTerminal] = useState(false);
   const path = (...rest: string[]) => servicePath(project, env, svc, ...rest);
 
   async function load() {
@@ -231,7 +233,19 @@ export default function ServiceClient({ project, env, svc }: { project: string; 
 
       {tab === "overview" && (
       <div className="card full">
-        <h2>Réplicas</h2>
+        <div className="row" style={{ justifyContent: "space-between" }}>
+          <h2>Réplicas</h2>
+          {canEdit && (
+            <button
+              className="secondary"
+              disabled={!replicas.some((r) => r.state === "running")}
+              onClick={() => setTerminal(true)}
+              title="Shell dentro de uma réplica (com o env do serviço, incluindo segredos)"
+            >
+              Terminal
+            </button>
+          )}
+        </div>
         {replicas.length === 0 ? (
           <p className="muted">Nenhuma réplica a correr.</p>
         ) : (
@@ -394,6 +408,14 @@ export default function ServiceClient({ project, env, svc }: { project: string; 
           confirmLabel="Apagar"
           onConfirm={remove}
           onCancel={() => setConfirmDelete(false)}
+        />
+      )}
+      {terminal && (
+        <TerminalModal
+          title={`Terminal · ${svc}`}
+          path={path("terminal")}
+          replicas={replicas.filter((r) => r.state === "running").map((r) => r.name)}
+          onClose={() => setTerminal(false)}
         />
       )}
     </>

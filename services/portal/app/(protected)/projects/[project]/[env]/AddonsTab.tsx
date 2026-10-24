@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Modal from "@/components/Modal";
+import TerminalModal from "@/components/TerminalModal";
 import { api, envPath, formatBytes, statusBadge, type Addon, type Backup } from "@/lib/platformClient";
 import ConfirmModal from "../../../admin/database/ConfirmModal";
 import { useCan } from "@/lib/projectRole";
@@ -20,6 +21,7 @@ export default function AddonsTab({ project, env }: { project: string; env: stri
   const [deleteTarget, setDeleteTarget] = useState<Addon | null>(null);
   const [purge, setPurge] = useState(false);
   const [restoreTarget, setRestoreTarget] = useState<{ addon: string; file: string } | null>(null);
+  const [terminal, setTerminal] = useState<Addon | null>(null);
 
   async function load() {
     try {
@@ -208,9 +210,14 @@ export default function AddonsTab({ project, env }: { project: string; env: stri
                 </td>
                 <td>
                   {canEdit && (
-                  <button className="danger" onClick={() => setDeleteTarget(a)}>
-                    Apagar
-                  </button>
+                  <div className="actions">
+                    <button className="secondary" onClick={() => setTerminal(a)} title={a.kind === "postgres" ? "Shell no container (psql disponível)" : "Shell no container (redis-cli disponível)"}>
+                      Terminal
+                    </button>
+                    <button className="danger" onClick={() => setDeleteTarget(a)}>
+                      Apagar
+                    </button>
+                  </div>
                   )}
                 </td>
               </tr>
@@ -264,6 +271,14 @@ export default function AddonsTab({ project, env }: { project: string; env: stri
             Cancelar
           </button>
         </Modal>
+      )}
+
+      {terminal && (
+        <TerminalModal
+          title={`Terminal · ${terminal.slug}`}
+          path={envPath(project, env, "addons", terminal.slug, "terminal")}
+          onClose={() => setTerminal(null)}
+        />
       )}
 
       {deleteTarget && (

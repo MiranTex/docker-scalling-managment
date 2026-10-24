@@ -65,7 +65,8 @@ func main() {
 	go platformSvc.Run(ctx)
 
 	mux := handler.Routes()
-	api := platformapi.New(platformSvc, tokens, apikeyclient.New(cfg.authServiceURL), authusers.New(cfg.authServiceURL), logger)
+	api := platformapi.New(platformSvc, tokens, apikeyclient.New(cfg.authServiceURL), authusers.New(cfg.authServiceURL), logger).
+		WithTerminalOrigins(cfg.terminalOrigins)
 	if cfg.grafanaURL != "" {
 		syncer := grafanasync.New(grafanasync.Config{
 			URL: cfg.grafanaURL, AdminUser: cfg.grafanaUser, AdminPassword: cfg.grafanaPassword,
