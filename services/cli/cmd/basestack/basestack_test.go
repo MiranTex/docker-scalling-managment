@@ -1,0 +1,113 @@
+package main
+
+import (
+	"bytes"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func testSettings() Settings {
+	s := defaultSettings()
+	s.AdminEmail = "admin@example.test"
+	s.Secrets = generateSecrets()
+	return s
+}
+
+func TestRenderUsesGeneratedSecretsAndOwnNames(t *testing.T) {
+	dir := t.TempDir()
+	s := testSettings()
+	if err := render(dir, s); err != nil {
+		t.Fatal(err)
+	}
+	compose, err := os.ReadFile(filepath.Join(dir, "compose.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := string(compose)
+	for _, want := range []string{
+		"name: basestack", "basestack-platform", "container_name: basestack-traefik",
+		s.Secrets.LauncherSecretsKey, s.Secrets.SecretsMasterKey, s.Secrets.GrafanaAdminPassword,
+		"postgres://launcher:" + s.Secrets.LauncherDBPassword + "@database",
+		"image: basestack/launcher:dev", `"3100:3000"`, `HOSTNAME: "0.0.0.0"`, "Host(`api.127.0.0.1.nip.io`)",
+		`AUTH_BOOTSTRAP_SUPERADMIN_EMAIL: "admin@example.test"`,
+	} {
+		if !strings.Contains(c, want) {
+			t.Errorf("compose.yml não tem %q", want)
+		}
+	}
+	// Nada da demo: chaves fixas, admin/admin, redes e volumes partilhados.
+	for _, bad := range []string{"Gb6oAL1A3uEIJGpHTDeN4YkGTQzI3LDAlii", "dYqiYX4FVzR2YzOtaCVk1lJuscTZf1ewnLZORaqqgWc", "auth-net", "observability-net", "auth-signing-key\n    name:", ":-admin}", "POSTGRES_PASSWORD: app"} {
+		if strings.Contains(c, bad) {
+			t.Errorf("compose.yml ainda tem %q da demo", bad)
+		}
+	}
+	if info, _ := os.Stat(filepath.Join(dir, "compose.yml")); info.Mode().Perm() != 0o600 {
+		t.Errorf("compose.yml com permissões %v, quero 0600 (tem passwords)", info.Mode().Perm())
+	}
+
+	sql, _ := os.ReadFile(filepath.Join(dir, "config/db-init/01-roles.sql"))
+	for _, r := range s.DBRoles() {
+		if !strings.Contains(string(sql), "CREATE ROLE "+r.Name+" WITH LOGIN PASSWORD '"+r.Password+"'") {
+			t.Errorf("roles sem %s", r.Name)
+		}
+	}
+	for _, f := range []string{"config/prometheus.yml", "config/loki-config.yml", "config/promtail-config.yml", "config/dashboards/projects.json"} {
+		if _, err := os.Stat(filepath.Join(dir, f)); err != nil {
+			t.Errorf("falta %s", f)
+		}
+	}
+}
+
+func TestSecretsAreUniquePerInstall(t *testing.T) {
+	a, b := generateSecrets(), generateSecrets()
+	if a.LauncherSecretsKey == b.LauncherSecretsKey || a.DatabasePassword == b.DatabasePassword {
+		t.Error("duas instalações com os mesmos segredos")
+	}
+}
+
+// As cópias em assets/ têm de ser iguais às de services/monitoring, que a
+// demo ainda usa -- senão uma correção num sítio não chega ao outro.
+func TestAssetsMatchMonitoring(t *testing.T) {
+	pairs := map[string]string{
+		"assets/prometheus.yml":      "../../../monitoring/prometheus/prometheus.yml",
+		"assets/loki-config.yml":     "../../../monitoring/loki/loki-config.yml",
+		"assets/promtail-config.yml": "../../../monitoring/promtail/promtail-config.yml",
+	}
+	dashboards, _ := filepath.Glob("../../../monitoring/grafana/dashboards/*.json")
+	for _, d := range dashboards {
+		pairs["assets/dashboards/"+filepath.Base(d)] = d
+	}
+	for embedded, original := range pairs {
+		want, err := os.ReadFile(original)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := assets.ReadFile(embedded)
+		if err != nil {
+			t.Errorf("%s não está embutido", embedded)
+			continue
+		}
+		if !bytes.Equal(got, want) {
+			t.Errorf("%s difere de %s -- copia de novo", embedded, original)
+		}
+	}
+}
+
+// O compose gerado é válido para o próprio docker compose (se houver
+// Docker nesta máquina).
+func TestComposeIsValid(t *testing.T) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skip("sem docker")
+	}
+	dir := t.TempDir()
+	if err := render(dir, testSettings()); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("docker", "compose", "--file", filepath.Join(dir, "compose.yml"), "config", "--quiet").CombinedOutput()
+	if err != nil {
+		t.Fatalf("docker compose config: %v\n%s", err, out)
+	}
+}

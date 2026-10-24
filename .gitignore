@@ -2,3 +2,5 @@
 .claude
 .DS_Store
 /bin/
+/services/cli/bs
+/services/cli/basestack

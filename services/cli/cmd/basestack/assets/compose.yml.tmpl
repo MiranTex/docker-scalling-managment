@@ -1,0 +1,376 @@
+# Gerado pelo basestack -- não editar: é reescrito a cada "basestack up" a
+# partir de ~/.basestack/settings.json (ou $BASESTACK_HOME).
+#
+# Tudo o que é da plataforma tem nomes próprios (basestack-*), para nunca
+# partilhar redes, volumes ou chaves com outra instalação no mesmo Docker.
+name: basestack
+
+networks:
+  # A rede da plataforma (auth, portal, launcher...). O Traefik chega por
+  # aqui à API do launcher.
+  platform:
+    name: basestack-platform
+    labels:
+      base-stack.managed: "true"
+  observability:
+    name: basestack-observability
+    labels:
+      base-stack.managed: "true"
+  # Só quem está aqui pode dizer ao Grafana quem é o utilizador (portal e
+  # launcher); o gateway fica de fora da whitelist do auth proxy.
+  grafana:
+    name: basestack-grafana
+    ipam:
+      config:
+        - subnet: 172.31.251.0/24
+  # Quem lê a API do Docker (pelo proxy só de leitura) lê o env de todos os
+  # containers -- por isso esta rede é interna e só para quem precisa.
+  docker-api-ro:
+    internal: true
+
+volumes:
+  database-data:
+  database-backups:
+  auth-signing-key:
+  traefik-acme:
+  traefik-dynamic:
+  prometheus-data:
+  loki-data:
+
+services:
+  docker-api-ro:
+    restart: unless-stopped
+    image: tecnativa/docker-socket-proxy:v0.4.0
+    environment:
+      CONTAINERS: "1"
+      NETWORKS: "1"
+      IMAGES: "1"
+      INFO: "1"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    mem_limit: 64m
+    cpus: 0.25
+    networks:
+      - docker-api-ro
+
+  traefik:
+    restart: unless-stopped
+    image: traefik:v3.6.1
+    container_name: basestack-traefik
+    command:
+      - --providers.docker=true
+      - --providers.docker.endpoint=tcp://docker-api-ro:2375
+      - --providers.docker.exposedByDefault=false
+      - --providers.docker.network=basestack-platform
+      - --providers.file.directory=/etc/traefik/dynamic
+      - --providers.file.watch=true
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.le.acme.email={{.ACMEEmail}}
+      - --certificatesresolvers.le.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.le.acme.httpchallenge.entrypoint=web
+      - --certificatesresolvers.le.acme.caserver={{.ACMECAServer}}
+      - --accesslog=true
+      - --accesslog.format=json
+      - --entrypoints.metrics.address=:8082
+      - --metrics.prometheus=true
+      - --metrics.prometheus.entrypoint=metrics
+    ports:
+      - "{{.HTTPPort}}:80"
+      - "{{.HTTPSPort}}:443"
+    volumes:
+      - traefik-dynamic:/etc/traefik/dynamic:ro
+      - traefik-acme:/letsencrypt
+    labels:
+      base-stack.managed: "true"
+      prometheus.scrape: "true"
+      prometheus.port: "8082"
+    mem_limit: 128m
+    cpus: 0.25
+    depends_on:
+      - docker-api-ro
+    networks:
+      - platform
+      - docker-api-ro
+      - observability
+
+  database:
+    restart: unless-stopped
+    image: {{image "database"}}
+    environment:
+      POSTGRES_DB: app
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: "{{.Secrets.DatabasePassword}}"
+      PGBACKREST_STANZA: basestack
+      AUTH_SERVICE_URL: "http://auth:8080"
+      AUTH_ISSUER: "auth.base-stack.local"
+      AUTH_AUDIENCE: "base-stack"
+      DBADMIN_PROVISIONED_DB_HOST: database
+      DBADMIN_PROVISIONED_DB_PORT: "5432"
+      DBADMIN_PROVISIONED_DB_SSLMODE: disable
+    labels:
+      base-stack.managed: "true"
+    volumes:
+      - database-data:/var/lib/postgresql/data
+      - database-backups:/var/lib/pgbackrest
+      - ./config/db-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    mem_limit: 512m
+    cpus: 1.0
+    networks:
+      - platform
+
+  auth:
+    restart: unless-stopped
+    image: {{image "auth"}}
+    environment:
+      AUTH_DATABASE_URL: "postgres://auth:{{.Secrets.AuthDBPassword}}@database:5432/app?sslmode=disable"
+      AUTH_ISSUER: "auth.base-stack.local"
+      AUTH_AUDIENCE: "base-stack"
+      LOG_FORMAT: "json"
+      LOG_LEVEL: "info"
+      # Promove esta conta a super-admin num arranque do auth, se ela já
+      # existir e ainda não houver nenhum -- ver "basestack restart auth".
+      AUTH_BOOTSTRAP_SUPERADMIN_EMAIL: "{{.AdminEmail}}"
+    labels:
+      base-stack.managed: "true"
+    volumes:
+      - auth-signing-key:/var/lib/auth
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    depends_on:
+      database:
+        condition: service_healthy
+    mem_limit: 128m
+    cpus: 0.5
+    networks:
+      - platform
+
+  secretsadmin:
+    restart: unless-stopped
+    image: {{image "secretsadmin"}}
+    environment:
+      SECRETSADMIN_DATABASE_URL: "postgres://secretsadmin:{{.Secrets.SecretsadminDBPassword}}@database:5432/app?sslmode=disable"
+      AUTH_SERVICE_URL: "http://auth:8080"
+      AUTH_ISSUER: "auth.base-stack.local"
+      AUTH_AUDIENCE: "base-stack"
+      SECRETS_MASTER_KEY: "{{.Secrets.SecretsMasterKey}}"
+    labels:
+      base-stack.managed: "true"
+    depends_on:
+      database:
+        condition: service_healthy
+    mem_limit: 128m
+    cpus: 0.25
+    networks:
+      - platform
+
+  templatesadmin:
+    restart: unless-stopped
+    image: {{image "templatesadmin"}}
+    environment:
+      TEMPLATESADMIN_DATABASE_URL: "postgres://templatesadmin:{{.Secrets.TemplatesadminDBPassword}}@database:5432/app?sslmode=disable"
+      DOCKER_SOCKET: "tcp://docker-api-ro:2375"
+      AUTH_SERVICE_URL: "http://auth:8080"
+      AUTH_ISSUER: "auth.base-stack.local"
+      AUTH_AUDIENCE: "base-stack"
+    labels:
+      base-stack.managed: "true"
+    depends_on:
+      database:
+        condition: service_healthy
+      docker-api-ro:
+        condition: service_started
+    mem_limit: 128m
+    cpus: 0.25
+    networks:
+      - platform
+      - docker-api-ro
+
+  launcher:
+    restart: unless-stopped
+    image: {{image "launcher"}}
+    environment:
+      LAUNCHER_DATABASE_URL: "postgres://launcher:{{.Secrets.LauncherDBPassword}}@database:5432/app?sslmode=disable"
+      AUTH_SERVICE_URL: "http://auth:8080"
+      AUTH_ISSUER: "auth.base-stack.local"
+      AUTH_AUDIENCE: "base-stack"
+      TEMPLATESADMIN_SERVICE_URL: "http://templatesadmin:8093"
+      SECRETSADMIN_SERVICE_URL: "http://secretsadmin:8092"
+      LAUNCHER_SELF_URL: "http://launcher:8094"
+      AUTOSCALER_GROUP_IMAGE: "{{image "autoscaler-group"}}"
+      PUBLIC_BASE_DOMAIN: "{{.Domain}}"
+      PUBLIC_TLS_CERT_RESOLVER: "{{.TLSCertResolver}}"
+      LAUNCHER_TRAEFIK_DYNAMIC_DIR: /etc/traefik/dynamic
+      TRAEFIK_CONTAINER: basestack-traefik
+      LAUNCHER_PROMETHEUS_CONTAINER: basestack-prometheus
+      GRAFANA_URL: "http://basestack-grafana:3000/grafana"
+      GRAFANA_ADMIN_USER: admin
+      GRAFANA_ADMIN_PASSWORD: "{{.Secrets.GrafanaAdminPassword}}"
+      LAUNCHER_TERMINAL_ORIGINS: "{{.TerminalOrigins}}"
+      LAUNCHER_SECRETS_KEY: "{{.Secrets.LauncherSecretsKey}}"
+    labels:
+      base-stack.managed: "true"
+      # A API de plataforma (CLI bs, CI) em api.<domínio> -- só /v1/projects.
+      traefik.enable: "true"
+      traefik.docker.network: basestack-platform
+      traefik.http.routers.platform-api.rule: "Host(`api.{{.Domain}}`) && PathPrefix(`/v1/projects`)"
+      traefik.http.routers.platform-api.entrypoints: web
+      traefik.http.routers.platform-api.service: platform-api
+      traefik.http.routers.platform-api-tls.rule: "Host(`api.{{.Domain}}`) && PathPrefix(`/v1/projects`)"
+      traefik.http.routers.platform-api-tls.entrypoints: websecure
+      traefik.http.routers.platform-api-tls.service: platform-api
+      traefik.http.routers.platform-api-tls.tls: "true"
+      traefik.http.routers.platform-api-tls.tls.certresolver: "{{.TLSCertResolver}}"
+      traefik.http.services.platform-api.loadbalancer.server.port: "8094"
+    volumes:
+      # O único serviço com o socket do Docker direto: é quem cria os
+      # containers dos projetos.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - traefik-dynamic:/etc/traefik/dynamic
+      - ./config/dashboards:/etc/base-stack/dashboards:ro
+    depends_on:
+      database:
+        condition: service_healthy
+    mem_limit: 128m
+    cpus: 0.25
+    networks:
+      - platform
+      - grafana
+    stop_grace_period: 20s
+
+  portal:
+    restart: unless-stopped
+    image: {{image "portal"}}
+    environment:
+      AUTH_SERVICE_URL: "http://auth:8080"
+      DBADMIN_SERVICE_URL: "http://database:8091"
+      SECRETSADMIN_SERVICE_URL: "http://secretsadmin:8092"
+      TEMPLATESADMIN_SERVICE_URL: "http://templatesadmin:8093"
+      LAUNCHER_SERVICE_URL: "http://launcher:8094"
+      GRAFANA_INTERNAL_URL: "http://basestack-grafana:3000"
+      # Escutar em todas as interfaces: o portal está em duas redes, e a
+      # porta publicada pode chegar por qualquer uma (ver o Dockerfile).
+      HOSTNAME: "0.0.0.0"
+    labels:
+      base-stack.managed: "true"
+    ports:
+      - "{{.PortalPort}}:3000"
+    depends_on:
+      - auth
+      - database
+      - secretsadmin
+      - templatesadmin
+      - launcher
+    mem_limit: 256m
+    cpus: 0.5
+    networks:
+      - platform
+      - grafana
+
+  # --- Observabilidade ---
+
+  prometheus:
+    restart: unless-stopped
+    image: prom/prometheus:latest
+    # O launcher liga-o a cada rede de ambiente (métricas das apps).
+    container_name: basestack-prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=6h
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    depends_on:
+      - docker-api-ro
+    networks:
+      - observability
+      - docker-api-ro
+    mem_limit: 256m
+    cpus: 0.5
+
+  loki:
+    restart: unless-stopped
+    image: grafana/loki:latest
+    command: -config.file=/etc/loki/loki-config.yml
+    volumes:
+      - ./config/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki-data:/loki
+    networks:
+      - observability
+    mem_limit: 256m
+    cpus: 0.5
+
+  promtail:
+    restart: unless-stopped
+    image: grafana/promtail:latest
+    command: -config.file=/etc/promtail/promtail-config.yml
+    volumes:
+      - ./config/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+    networks:
+      - observability
+      - docker-api-ro
+    depends_on:
+      - loki
+      - docker-api-ro
+    mem_limit: 128m
+    cpus: 0.3
+
+  prom-label-proxy:
+    restart: unless-stopped
+    image: quay.io/prometheuscommunity/prom-label-proxy:v0.11.1
+    command:
+      - -label=project
+      - -header-name=X-Project
+      - -upstream=http://prometheus:9090
+      - -insecure-listen-address=0.0.0.0:8080
+      - -enable-label-apis
+    depends_on:
+      - prometheus
+    networks:
+      - observability
+    mem_limit: 64m
+    cpus: 0.25
+
+  grafana:
+    restart: unless-stopped
+    image: grafana/grafana:latest
+    container_name: basestack-grafana
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: "{{.Secrets.GrafanaAdminPassword}}"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      # Entra-se pelo portal (/grafana), que diz ao Grafana quem é a conta.
+      GF_AUTH_PROXY_ENABLED: "true"
+      GF_AUTH_PROXY_HEADER_NAME: X-WEBAUTH-USER
+      GF_AUTH_PROXY_HEADER_PROPERTY: username
+      GF_AUTH_PROXY_HEADERS: "Email:X-WEBAUTH-EMAIL Name:X-WEBAUTH-NAME"
+      GF_AUTH_PROXY_AUTO_SIGN_UP: "true"
+      # A rede basestack-grafana sem o gateway (.1): pedidos vindos do host
+      # não conseguem fingir ser outra conta.
+      GF_AUTH_PROXY_WHITELIST: "172.31.251.2/31, 172.31.251.4/30, 172.31.251.8/29, 172.31.251.16/28, 172.31.251.32/27, 172.31.251.64/26, 172.31.251.128/25"
+      GF_USERS_AUTO_ASSIGN_ORG: "true"
+      GF_USERS_AUTO_ASSIGN_ORG_ID: "1"
+      GF_USERS_AUTO_ASSIGN_ORG_ROLE: Viewer
+      GF_SERVER_ROOT_URL: "http://localhost:{{.PortalPort}}/grafana/"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      GF_LIVE_MAX_CONNECTIONS: "0"
+    ports:
+      # Acesso de emergência (admin), só a partir desta máquina.
+      - "127.0.0.1:{{.GrafanaPort}}:3000"
+    networks:
+      - observability
+      - grafana
+    depends_on:
+      - prometheus
+      - loki
+    mem_limit: 768m
+    cpus: 0.5

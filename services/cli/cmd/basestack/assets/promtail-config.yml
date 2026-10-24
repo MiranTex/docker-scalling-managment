@@ -1,0 +1,67 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+    # Tenant por defeito: tudo o que não é de um projeto (plataforma,
+    # monitoring, outras apps do host). Ver pipeline_stages abaixo.
+    tenant_id: platform
+
+scrape_configs:
+  # docker_sd_configs descobre automaticamente TODOS os containers Docker
+  # do host (não só os do nosso compose) via o proxy só de leitura da API
+  # do Docker (docker-api-ro, ver docker-compose.yml) --
+  # mesmo princípio de auto-descoberta que o cAdvisor usa pra métricas.
+  - job_name: docker
+    docker_sd_configs:
+      - host: tcp://docker-api-ro:2375
+        refresh_interval: 5s
+    relabel_configs:
+      # Nome do container (a API do Docker sempre prefixa com "/")
+      - source_labels: ["__meta_docker_container_name"]
+        regex: "/(.*)"
+        target_label: "container"
+      # stdout ou stderr
+      - source_labels: ["__meta_docker_container_log_stream"]
+        target_label: "stream"
+      # Nome do serviço no docker-compose (ex: "group-demo", "prometheus")
+      - source_labels: ["__meta_docker_container_label_com_docker_compose_service"]
+        target_label: "compose_service"
+      # Nome do projeto compose (útil se um dia apontares isto pra outro
+      # projeto além deste, ex: "polskamit-mitsui-laravel")
+      - source_labels: ["__meta_docker_container_label_com_docker_compose_project"]
+        target_label: "compose_project"
+      # Qual aplicação um autoscaler-group gere -- o nome do container de um
+      # group lançado pelo launcher é opaco ("group-<hex>").
+      - source_labels: ["__meta_docker_container_label_autoscaler_target_service"]
+        target_label: "target_service"
+      # Projeto/ambiente/serviço dos containers de projeto (ver
+      # services/launcher/internal/platform): é por estas labels que os
+      # logs de uma app se filtram no Grafana (dashboard "Projetos"),
+      # sem depender de nomes de container (que mudam a cada deploy).
+      - source_labels: ["__meta_docker_container_label_base_stack_project"]
+        target_label: "project"
+      - source_labels: ["__meta_docker_container_label_base_stack_env"]
+        target_label: "env"
+      # Serviço (apps) ou addon (bases de dados) -- o slug, não o id.
+      - source_labels: ["__meta_docker_container_label_base_stack_service_slug"]
+        target_label: "service"
+      - source_labels: ["__meta_docker_container_label_base_stack_role"]
+        target_label: "role"
+      # compose_service vazio (container fora do compose, ex: um group
+      # dinâmico) cai para o nome do container, para o seletor de logs no
+      # Grafana nunca ter uma opção em branco.
+      - source_labels: ["compose_service", "container"]
+        separator: ";"
+        regex: "^;(.*)$"
+        target_label: "compose_service"
+        replacement: "${1}"
+    # Os logs de um container de projeto vão para o tenant desse projeto
+    # (o slug), para o Grafana de um projeto só conseguir ler os seus.
+    pipeline_stages:
+      - tenant:
+          label: project

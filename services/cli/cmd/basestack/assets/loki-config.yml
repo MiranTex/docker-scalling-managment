@@ -1,0 +1,42 @@
+# Config mínima do Loki: guarda tudo em disco local (volume loki-data),
+# retenção curta.
+#
+# Multi-tenant: cada projeto é um tenant (o Promtail escolhe-o pela label
+# "project"), e o resto da plataforma vai para o tenant "platform". Quem
+# lê tem de dizer que tenant(s) quer no cabeçalho X-Scope-OrgID -- é isso
+# que isola os logs de um projeto no Grafana (ver services/launcher,
+# internal/grafanasync). Não há autenticação: o Loki só é alcançável pela
+# rede interna e por 127.0.0.1.
+auth_enabled: true
+
+# A organização "Plataforma" do Grafana lê todos os tenants de uma vez
+# ("platform|loja|blog").
+querier:
+  multi_tenant_queries_enabled: true
+
+server:
+  http_listen_port: 3100
+
+common:
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  retention_period: 24h

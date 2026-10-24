@@ -13,6 +13,10 @@ RUN npm run build
 FROM node:20-alpine
 WORKDIR /app
 ENV NODE_ENV=production
+# O server.js do Next escuta no IP do hostname do container -- com o portal
+# em mais de uma rede, a porta publicada pode chegar pela outra e ficar
+# pendurada. 0.0.0.0: todas as interfaces.
+ENV HOSTNAME=0.0.0.0
 COPY --from=builder /src/public ./public
 COPY --from=builder /src/.next/standalone ./
 COPY --from=builder /src/.next/static ./.next/static

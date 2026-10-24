@@ -1,4 +1,4 @@
-.PHONY: cli install-cli build-images migrations-status migrations-check start-demo demo-down start-monitoring db-upgrade-pg17
+.PHONY: cli install-cli basestack install-basestack build-images migrations-status migrations-check start-demo demo-down start-monitoring db-upgrade-pg17
 
 DEMO_COMPOSE ?= demo/docker-compose.yml
 PGUSER ?= app
@@ -7,7 +7,7 @@ PGDATABASE ?= app
 # cli compila a CLI da plataforma (bs) para esta máquina, em bin/bs --
 # ver services/cli/README.md.
 cli:
-	cd services/cli && go build -o ../../bin/bs .
+	cd services/cli && go build -o ../../bin/bs ./cmd/bs
 
 # install-cli põe o bs no PATH (por defeito /usr/local/bin; usa sudo só se
 # não der para escrever lá). Outro sítio: make install-cli PREFIX=~/.local
@@ -17,6 +17,16 @@ install-cli: cli
 	@if [ -w "$(PREFIX)/bin" ]; then install -m 0755 bin/bs "$(PREFIX)/bin/bs"; \
 	else echo "A instalar em $(PREFIX)/bin com sudo"; sudo install -m 0755 bin/bs "$(PREFIX)/bin/bs"; fi
 	@echo "bs instalado em $(PREFIX)/bin/bs -- experimenta: bs projects"
+
+# basestack instala e gere a plataforma numa máquina (ver
+# services/cli/README.md); é para quem opera, o bs para quem usa.
+basestack:
+	cd services/cli && go build -o ../../bin/basestack ./cmd/basestack
+
+install-basestack: basestack
+	@if [ -w "$(PREFIX)/bin" ]; then install -m 0755 bin/basestack "$(PREFIX)/bin/basestack"; \
+	else echo "A instalar em $(PREFIX)/bin com sudo"; sudo install -m 0755 bin/basestack "$(PREFIX)/bin/basestack"; fi
+	@echo "basestack instalado em $(PREFIX)/bin/basestack -- experimenta: basestack doctor"
 
 build-images:
 	docker build -t autoscaler-group:latest services/autoscaler
