@@ -24,31 +24,46 @@ import (
 // abre com ele o WebSocket. O bilhete é a autenticação do WebSocket: o
 // browser não consegue pôr um Authorization num WebSocket, e assim o
 // access token nunca vai no URL.
+//
+// Os túneis (tunnel.go) usam os mesmos bilhetes, com limites próprios.
 const (
 	ticketTTL          = 30 * time.Second
 	terminalIdle       = 15 * time.Minute
 	maxSessionsPerUser = 3
+	tunnelIdle         = 30 * time.Minute
+	maxTunnelsPerUser  = 20
 )
 
 type terminalTicket struct {
 	subject string
 	target  platform.TerminalTarget
 	debug   bool
+	// tunnel: o endereço (host:porta) de um túnel; vazio = terminal.
+	tunnel  string
 	expires time.Time
 }
 
 type terminals struct {
 	mu       sync.Mutex
 	tickets  map[string]terminalTicket
-	sessions map[string]int // conta -> sessões abertas
+	sessions map[string]int // conta (+ "/tunnel") -> abertos
 	// origins: de onde o browser pode abrir o WebSocket (host[:porta] do
-	// portal). Vazio = só da mesma origem.
-	origins []string
-	idle    time.Duration
+	// portal). Vazio = só da mesma origem; a CLI não manda Origin.
+	origins    []string
+	idle       time.Duration
+	tunnelIdle time.Duration
 }
 
 func newTerminals() *terminals {
-	return &terminals{tickets: map[string]terminalTicket{}, sessions: map[string]int{}, idle: terminalIdle}
+	return &terminals{tickets: map[string]terminalTicket{}, sessions: map[string]int{}, idle: terminalIdle, tunnelIdle: tunnelIdle}
+}
+
+// sessionKey separa os limites de terminais e de túneis.
+func sessionKey(tk terminalTicket) string {
+	if tk.tunnel != "" {
+		return tk.subject + "/tunnel"
+	}
+	return tk.subject
 }
 
 // WithTerminalOrigins diz de que origens (host[:porta] do portal) o
@@ -78,26 +93,32 @@ func (t *terminals) issue(tk terminalTicket) string {
 }
 
 // redeem gasta o bilhete (uso único) e reserva uma sessão para a conta.
-func (t *terminals) redeem(id, project string) (terminalTicket, error) {
+// tunnel diz que tipo de bilhete o endpoint aceita.
+func (t *terminals) redeem(id, project string, tunnel bool) (terminalTicket, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	tk, ok := t.tickets[id]
 	delete(t.tickets, id)
-	if !ok || time.Now().After(tk.expires) || tk.target.Project.Slug != project {
+	if !ok || time.Now().After(tk.expires) || tk.target.Project.Slug != project || (tk.tunnel != "") != tunnel {
 		return terminalTicket{}, errors.New("bilhete inválido ou expirado")
 	}
-	if t.sessions[tk.subject] >= maxSessionsPerUser {
+	key := sessionKey(tk)
+	switch {
+	case tunnel && t.sessions[key] >= maxTunnelsPerUser:
+		return terminalTicket{}, fmt.Errorf("já tens %d túneis abertos -- fecha alguns primeiro", maxTunnelsPerUser)
+	case !tunnel && t.sessions[key] >= maxSessionsPerUser:
 		return terminalTicket{}, fmt.Errorf("já tens %d terminais abertos -- fecha um primeiro", maxSessionsPerUser)
 	}
-	t.sessions[tk.subject]++
+	t.sessions[key]++
 	return tk, nil
 }
 
-func (t *terminals) release(subject string) {
+func (t *terminals) release(tk terminalTicket) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.sessions[subject]--; t.sessions[subject] <= 0 {
-		delete(t.sessions, subject)
+	key := sessionKey(tk)
+	if t.sessions[key]--; t.sessions[key] <= 0 {
+		delete(t.sessions, key)
 	}
 }
 
@@ -141,14 +162,20 @@ func (a *API) issueTerminal(w http.ResponseWriter, r *http.Request, who principa
 		return
 	}
 	ticket := a.term.issue(terminalTicket{subject: who.Subject, target: target, debug: debug})
-	path := "/v1/projects/" + url.PathEscape(target.Project.Slug) + "/terminal/ws?ticket=" + ticket
-	wsURL := path
-	if base := a.svc.APIURL(); base != "" {
-		wsURL = "ws" + strings.TrimPrefix(base, "http") + path
-	}
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"url": wsURL, "container": target.Container, "debug": debug, "expiresInSeconds": int(ticketTTL / time.Second),
+		"url": a.socketURL(target.Project.Slug, "terminal", ticket), "container": target.Container, "debug": debug,
+		"expiresInSeconds": int(ticketTTL / time.Second),
 	})
+}
+
+// socketURL é o endereço do WebSocket de um bilhete: absoluto (ws[s]://
+// api.<domínio>) quando há API pública, senão só o caminho.
+func (a *API) socketURL(project, kind, ticket string) string {
+	path := "/v1/projects/" + url.PathEscape(project) + "/" + kind + "/ws?ticket=" + ticket
+	if base := a.svc.APIURL(); base != "" {
+		return "ws" + strings.TrimPrefix(base, "http") + path
+	}
+	return path
 }
 
 // terminalControl são as mensagens de texto do browser; as binárias são
@@ -160,12 +187,12 @@ type terminalControl struct {
 }
 
 func (a *API) terminalSocket(w http.ResponseWriter, r *http.Request) {
-	tk, err := a.term.redeem(r.URL.Query().Get("ticket"), r.PathValue("project"))
+	tk, err := a.term.redeem(r.URL.Query().Get("ticket"), r.PathValue("project"), false)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "invalid_ticket", err.Error())
 		return
 	}
-	defer a.term.release(tk.subject)
+	defer a.term.release(tk)
 
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: a.term.origins})
 	if err != nil {

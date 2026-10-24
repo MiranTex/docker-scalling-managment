@@ -155,6 +155,7 @@ Todas as rotas exigem `Authorization: Bearer <token>`, um de:
 | `GET .../services/{s}/revisions`, `/replicas` | histórico e estado ao vivo |
 | `POST .../services/{s}/run` | comando pontual com a revisão atual |
 | `POST .../services/{s}/terminal`, `.../addons/{a}/terminal` · `GET /{p}/terminal/ws?ticket=` | terminal (ver abaixo) |
+| `POST .../addons/{a}/tunnel` · `GET /{p}/tunnel/ws?ticket=` · `GET .../addons/{a}/credentials` | túnel até ao addon e as credenciais dele (CLI `bs port-forward`) |
 | `GET`, `POST .../services/{s}/template-update` · `POST .../services/{s}/save-as-template` | diferenças/aplicar versão nova do modelo; guardar como modelo |
 | `GET`, `POST .../services/{s}/domains` · `POST .../domains/{h}/verify` · `DELETE .../domains/{h}` | domínios próprios |
 | `GET .../environments/{e}/jobs[/{id}]` · `POST .../jobs/{id}/cancel` | jobs, o seu output, e cancelar um a correr |
@@ -181,6 +182,16 @@ do launcher, se algum ficou para trás).
 Só containers com as labels do projeto e ambiente do URL; no máximo 3
 sessões por conta; fecha após 15 min sem input. Abrir e fechar ficam no
 log de auditoria (`terminal.open`, `terminal.close`), o que se escreve não.
+
+### Túneis
+
+Para a CLI (`services/cli`, `bs port-forward`): `POST .../addons/{a}/tunnel`
+dá um bilhete como o do terminal, e o WebSocket em `GET /{p}/tunnel/ws`
+passa bytes crus entre o cliente e o addon -- o launcher liga ao container
+do addon na rede do ambiente (5432 ou 6379). Um bilhete por ligação; até 20
+túneis por conta; fecham após 30 min sem tráfego. `GET .../credentials`
+revela o utilizador e a password do addon (developer e acima, auditado:
+`addon.credentials`), para a CLI mostrar a ligação completa.
 
 ## Configuração
 
