@@ -51,8 +51,10 @@ export const config = {
     "/tokens/:path*",
     "/admin/:path*",
     "/projects/:path*",
+    "/metrics/:path*",
     "/api/tokens/:path*",
     "/api/admin/:path*",
     "/api/platform/:path*",
+    "/grafana/:path*",
   ],
 };

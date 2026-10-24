@@ -36,6 +36,10 @@ func (accountTokens) Verify(_ context.Context, token string) (jwtverify.Claims, 
 
 type fakeUsers map[string]string // email -> id
 
+func (f fakeUsers) Me(context.Context, string) (string, string, string, error) {
+	return "", "", "", errors.New("não usado nestes testes")
+}
+
 func (f fakeUsers) Resolve(_ context.Context, bearer, email string) (string, string, error) {
 	if bearer == "" {
 		return "", "", errors.New("sem bearer")

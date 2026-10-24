@@ -55,3 +55,29 @@ func (c *Client) Resolve(ctx context.Context, bearer, email string) (string, str
 	}
 	return out.ID, out.Email, nil
 }
+
+// Me devolve a conta dona do access token (id, email e role atual).
+func (c *Client) Me(ctx context.Context, bearer string) (id, email, role string, err error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.authURL+"/v1/me", nil)
+	if err != nil {
+		return "", "", "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+bearer)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return "", "", "", fmt.Errorf("authusers: pedindo ao auth: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", "", "", fmt.Errorf("authusers: auth respondeu %d", resp.StatusCode)
+	}
+	var out struct {
+		ID    string `json:"id"`
+		Email string `json:"email"`
+		Role  string `json:"role"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", "", "", fmt.Errorf("authusers: resposta ilegível: %w", err)
+	}
+	return out.ID, out.Email, out.Role, nil
+}

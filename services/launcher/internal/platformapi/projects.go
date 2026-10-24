@@ -33,6 +33,7 @@ func (a *API) createProject(w http.ResponseWriter, r *http.Request, who principa
 		a.fail(w, err)
 		return
 	}
+	a.kickGrafana()
 	writeJSON(w, http.StatusCreated, p)
 }
 
@@ -88,6 +89,7 @@ func (a *API) deleteProject(w http.ResponseWriter, r *http.Request, _ principal)
 		a.fail(w, err)
 		return
 	}
+	a.kickGrafana()
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -103,6 +105,7 @@ func (a *API) createEnvironment(w http.ResponseWriter, r *http.Request, who prin
 		a.fail(w, err)
 		return
 	}
+	a.kickGrafana()
 	writeJSON(w, http.StatusCreated, e)
 }
 
@@ -111,6 +114,7 @@ func (a *API) deleteEnvironment(w http.ResponseWriter, r *http.Request, _ princi
 		a.fail(w, err)
 		return
 	}
+	a.kickGrafana()
 	w.WriteHeader(http.StatusNoContent)
 }
 

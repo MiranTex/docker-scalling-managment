@@ -51,6 +51,13 @@ networks:
     name: observability-net
     external: true
 
+  # Rede do Grafana (criada pelo services/monitoring): o portal serve-o em
+  # /grafana e o launcher sincroniza organizações e membros. Só quem está
+  # aqui pode dizer ao Grafana quem é o utilizador.
+  grafana-proxy:
+    name: grafana-proxy
+    external: true
+
   # Só o proxy da API do Docker (docker-api-ro) e quem precisa de LER o
   # Docker (traefik, templatesadmin). "internal" corta saída para fora, e
   # nada de label base-stack.managed: sem ela, a rede não aparece em
@@ -373,6 +380,12 @@ services:
       # de um serviço só entra no routing quando o DNS dele resolve para um
       # destes. Vazio (dev) = sem verificação, o domínio fica logo ativo.
       LAUNCHER_PUBLIC_IPS: "${LAUNCHER_PUBLIC_IPS:-}"
+      # Sincronização com o Grafana (ver services/launcher/internal/grafanasync):
+      # uma organização por projeto, com os dados só desse projeto. Vazio
+      # desliga. A password tem de ser a GRAFANA_ADMIN_PASSWORD do monitoring.
+      GRAFANA_URL: "http://monitoring-grafana-1:3000/grafana"
+      GRAFANA_ADMIN_USER: "${GRAFANA_ADMIN_USER:-admin}"
+      GRAFANA_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:-admin}"
       LAUNCHER_SECRETS_KEY: "${LAUNCHER_SECRETS_KEY:-Gb6oAL1A3uEIJGpHTDeN4YkGTQzI3LDAlii+jX18x6o=}"
     labels:
       base-stack.managed: "true"
@@ -400,6 +413,8 @@ services:
       # Tudo o que cria passa por SpecPolicy (binds, rede).
       - /var/run/docker.sock:/var/run/docker.sock
       - traefik-dynamic:/etc/traefik/dynamic
+      # Dashboards que a sincronização envia para cada organização.
+      - ../services/monitoring/grafana/dashboards:/etc/base-stack/dashboards:ro
     depends_on:
       database:
         condition: service_healthy
@@ -407,6 +422,7 @@ services:
     cpus: 0.25
     networks:
       - auth-net
+      - grafana-proxy
     # Default do Docker (10s) não chega para drenar os pedidos HTTP em
     # curso (15s, ver cmd/launcher/main.go). O launcher já não derruba os
     # groups ao desligar -- ver "Derrubar" em demo/README.md.
@@ -502,6 +518,8 @@ services:
       # Idem para o launcher -- ver /admin/launcher e demo/README.md,
       # "Lançar containers sem autoscaling (launcher)".
       LAUNCHER_SERVICE_URL: "http://launcher:8094"
+      # O portal serve o Grafana em /grafana (ver app/grafana).
+      GRAFANA_INTERNAL_URL: "http://monitoring-grafana-1:3000"
     labels:
       base-stack.managed: "true"
     ports:
@@ -518,6 +536,7 @@ services:
     cpus: 0.5
     networks:
       - auth-net
+      - grafana-proxy
 
 volumes:
   # -pg17: a imagem do database passou a Postgres 17, que não arranca sobre

@@ -25,6 +25,7 @@ func (a *API) createAddon(w http.ResponseWriter, r *http.Request, who principal)
 		a.fail(w, err)
 		return
 	}
+	a.kickGrafana()
 	writeJSON(w, http.StatusCreated, addon)
 }
 
@@ -50,6 +51,7 @@ func (a *API) deleteAddon(w http.ResponseWriter, r *http.Request, _ principal) {
 		a.fail(w, err)
 		return
 	}
+	a.kickGrafana()
 	w.WriteHeader(http.StatusNoContent)
 }
 

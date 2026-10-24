@@ -32,6 +32,7 @@ func (a *API) createService(w http.ResponseWriter, r *http.Request, who principa
 		a.fail(w, err)
 		return
 	}
+	a.kickGrafana()
 	writeJSON(w, http.StatusCreated, svc)
 }
 
@@ -65,6 +66,7 @@ func (a *API) deleteService(w http.ResponseWriter, r *http.Request, _ principal)
 		a.fail(w, err)
 		return
 	}
+	a.kickGrafana()
 	w.WriteHeader(http.StatusNoContent)
 }
 

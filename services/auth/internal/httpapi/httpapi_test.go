@@ -1155,3 +1155,19 @@ func TestResolveUser(t *testing.T) {
 		t.Errorf("sem sessão = %d", rec.Code)
 	}
 }
+
+func TestMe(t *testing.T) {
+	deps := newTestDeps()
+	mux := deps.handler.Routes()
+	access := loginAndGetAccessToken(t, mux, "ana@example.test")
+	rec := doAuthedRequest(t, mux, http.MethodGet, "/v1/me", access, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if me := decodeBody[meResponse](t, rec); me.Email != "ana@example.test" || me.ID == "" || me.Role != "user" {
+		t.Errorf("me = %+v", me)
+	}
+	if rec := doRequest(t, mux, http.MethodGet, "/v1/me", nil); rec.Code != http.StatusUnauthorized {
+		t.Errorf("sem sessão = %d", rec.Code)
+	}
+}

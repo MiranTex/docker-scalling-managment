@@ -68,3 +68,21 @@ scrape_configs:
         regex: "^;(.*)$"
         target_label: compose_service
         replacement: "${1}"
+    # As métricas do Traefik dizem o serviço pelo nome do router
+    # (bs_<projeto>_<ambiente>_<serviço>@file, ver services/launcher,
+    # routing.go) -- daí se tiram project/env/project_service, para os
+    # pedidos de um serviço aparecerem no Grafana do seu projeto (que só
+    # vê séries com project="<slug>", ver prom-label-proxy).
+    metric_relabel_configs:
+      - source_labels: [service]
+        regex: "bs_([^_]+)_([^_]+)_(.+)@file"
+        target_label: project
+        replacement: "${1}"
+      - source_labels: [service]
+        regex: "bs_([^_]+)_([^_]+)_(.+)@file"
+        target_label: env
+        replacement: "${2}"
+      - source_labels: [service]
+        regex: "bs_([^_]+)_([^_]+)_(.+)@file"
+        target_label: project_service
+        replacement: "${3}"

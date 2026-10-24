@@ -25,6 +25,7 @@ import (
 	"launcher/internal/apikeyclient"
 	"launcher/internal/authusers"
 	"launcher/internal/dockerclient"
+	"launcher/internal/grafanasync"
 	"launcher/internal/httpapi"
 	"launcher/internal/jwtverify"
 	"launcher/internal/platform"
@@ -64,7 +65,20 @@ func main() {
 	go platformSvc.Run(ctx)
 
 	mux := handler.Routes()
-	platformapi.New(platformSvc, tokens, apikeyclient.New(cfg.authServiceURL), authusers.New(cfg.authServiceURL), logger).Register(mux)
+	api := platformapi.New(platformSvc, tokens, apikeyclient.New(cfg.authServiceURL), authusers.New(cfg.authServiceURL), logger)
+	if cfg.grafanaURL != "" {
+		syncer := grafanasync.New(grafanasync.Config{
+			URL: cfg.grafanaURL, AdminUser: cfg.grafanaUser, AdminPassword: cfg.grafanaPassword,
+			DashboardsDir: cfg.grafanaDashboards,
+			// Como o Grafana alcança cada fonte de dados (rede observability-net).
+			PrometheusURL: "http://prometheus:9090",
+			PromProxyURL:  "http://prom-label-proxy:8080",
+			LokiURL:       "http://loki:3100",
+		}, db, logger)
+		go syncer.Run(ctx)
+		api.WithGrafana(syncer)
+	}
+	api.Register(mux)
 
 	srv := &http.Server{
 		Addr:    cfg.listenAddr,
