@@ -302,10 +302,10 @@ func TestDashboardsResentAfterGrafanaLosesThem(t *testing.T) {
 	}
 }
 
-// Na organização de um projeto, "project" é uma constante com o slug --
-// não uma lista tirada dos logs, que fica vazia se o projeto não tiver
-// logs no intervalo.
-func TestProjectVariablePinnedInProjectOrg(t *testing.T) {
+// Na organização de um projeto, "project" é uma constante com o slug e
+// env/service são listas com o que o projeto tem -- não listas tiradas dos
+// logs, que ficam vazias se o projeto não tiver logs no intervalo.
+func TestProjectVariablesPinnedFromPlatform(t *testing.T) {
 	ctx := context.Background()
 	db := storetest.New(t)
 	grafana := newFakeGrafana()
@@ -314,9 +314,35 @@ func TestProjectVariablePinnedInProjectOrg(t *testing.T) {
 	dir := t.TempDir()
 	_ = os.WriteFile(filepath.Join(dir, "projects.json"), []byte(`{"uid":"base-stack-projects","templating":{"list":[
 		{"name":"project","label":"Projeto","type":"query","query":"label_values(project)"},
-		{"name":"env","type":"query","query":"label_values({project=~\"$project\"}, env)"}]}}`), 0o644)
+		{"name":"env","type":"query","query":"label_values({project=~\"$project\"}, env)","allValue":".*"},
+		{"name":"service","type":"query","query":"label_values({project=~\"$project\"}, service)","allValue":".*"},
+		{"name":"other","type":"query","query":"x"}]}}`), 0o644)
 	s := New(Config{URL: srv.URL + "/grafana", AdminUser: "admin", AdminPassword: "pw", DashboardsDir: dir}, db, nil)
 	if err := db.CreateProject(ctx, store.Project{ID: "p1", AccountID: store.DefaultAccountID, Slug: "loja", Name: "Loja", CreatedBy: "t"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreateProject(ctx, store.Project{ID: "p2", AccountID: store.DefaultAccountID, Slug: "blog", Name: "Blog", CreatedBy: "t"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range []store.Environment{
+		{ID: "e1", ProjectID: "p1", Slug: "prod", Network: "bs-loja-prod", CreatedBy: "t"},
+		{ID: "e2", ProjectID: "p1", Slug: "dev", Network: "bs-loja-dev", CreatedBy: "t"},
+		{ID: "e3", ProjectID: "p2", Slug: "stage", Network: "bs-blog-stage", CreatedBy: "t"},
+	} {
+		if err := db.CreateEnvironment(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, sv := range []store.Service{
+		{ID: "s1", EnvironmentID: "e1", Slug: "web", Kind: "web", ScalingMode: "fixed", Replicas: 1, DesiredState: "running", CreatedBy: "t"},
+		{ID: "s2", EnvironmentID: "e2", Slug: "web", Kind: "web", ScalingMode: "fixed", Replicas: 1, DesiredState: "running", CreatedBy: "t"},
+		{ID: "s3", EnvironmentID: "e3", Slug: "api", Kind: "web", ScalingMode: "fixed", Replicas: 1, DesiredState: "running", CreatedBy: "t"},
+	} {
+		if err := db.CreateService(ctx, sv); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.CreateAddon(ctx, store.Addon{ID: "a1", EnvironmentID: "e1", Slug: "db", Kind: "postgres", Image: "postgres:17-alpine", EnvVar: "DATABASE_URL", CreatedBy: "t"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.SyncAll(ctx); err != nil {
@@ -327,11 +353,22 @@ func TestProjectVariablePinnedInProjectOrg(t *testing.T) {
 	if project["type"] != "constant" || project["query"] != "loja" || project["hide"] != float64(2) {
 		t.Errorf("variável project na org do projeto = %v", project)
 	}
-	if env := vars[1].(map[string]any); env["type"] != "query" {
-		t.Errorf("as outras variáveis ficam como estão: %v", env)
+	pinned := func(v any) (string, any) {
+		m := v.(map[string]any)
+		return fmt.Sprint(m["type"], " ", m["query"]), m["allValue"]
 	}
-	platform := grafana.dashBodies[grafana.orgID("Plataforma")]["templating"].(map[string]any)["list"].([]any)[0].(map[string]any)
-	if platform["type"] != "query" {
-		t.Errorf("na Plataforma o projeto continua escolhível: %v", platform)
+	for i, want := range []string{"custom dev,prod", "custom db,web"} {
+		if got, all := pinned(vars[i+1]); got != want || all != ".*" {
+			t.Errorf("variável %d na org do projeto = %q (allValue %v), quero %q", i+1, got, all, want)
+		}
+	}
+	if other, _ := pinned(vars[3]); other != "query x" {
+		t.Errorf("as outras variáveis ficam como estão: %v", other)
+	}
+	platform := grafana.dashBodies[grafana.orgID("Plataforma")]["templating"].(map[string]any)["list"].([]any)
+	for i, want := range []string{"query label_values(project)", "custom dev,prod,stage", "custom api,db,web"} {
+		if got, _ := pinned(platform[i]); got != want {
+			t.Errorf("Plataforma, variável %d = %q, quero %q", i, got, want)
+		}
 	}
 }

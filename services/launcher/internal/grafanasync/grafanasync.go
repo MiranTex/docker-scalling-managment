@@ -237,11 +237,10 @@ func withHeader(name, value string) (map[string]any, map[string]string) {
 // no Grafana: um Grafana recriado volta vazio, com as organizações
 // recriadas com os mesmos ids, e a memória deste processo não sabe disso.
 //
-// constants troca variáveis do dashboard por constantes escondidas -- numa
-// organização de projeto, "project" é sempre esse projeto, e não pode
-// depender de haver logs no intervalo escolhido (sem logs a lista vinha
-// vazia e as consultas ao Loki falhavam).
-func (s *Syncer) ensureDashboards(ctx context.Context, orgID int64, files []string, constants map[string]string) error {
+// pins fixa variáveis do dashboard com o que a plataforma sabe, em vez de
+// as tirar dos logs: sem logs no intervalo escolhido as listas vinham
+// vazias (e com "project" vazio as consultas ao Loki falhavam).
+func (s *Syncer) ensureDashboards(ctx context.Context, orgID int64, files []string, pins map[string]pin) error {
 	for _, f := range files {
 		raw, err := os.ReadFile(filepath.Join(s.cfg.DashboardsDir, f))
 		if err != nil {
@@ -251,7 +250,7 @@ func (s *Syncer) ensureDashboards(ctx context.Context, orgID int64, files []stri
 		if err := json.Unmarshal(raw, &dash); err != nil {
 			return fmt.Errorf("dashboard %s inválido: %w", f, err)
 		}
-		pinVariables(dash, constants)
+		pinVariables(dash, pins)
 		final, _ := json.Marshal(dash)
 		sum := sha256.Sum256(final)
 		key := fmt.Sprintf("%d/%s", orgID, f)
@@ -274,22 +273,115 @@ func (s *Syncer) ensureDashboards(ctx context.Context, orgID int64, files []stri
 	return nil
 }
 
-// pinVariables substitui as variáveis indicadas por constantes escondidas.
-func pinVariables(dash map[string]any, constants map[string]string) {
+// pin fixa uma variável: Constant é um valor escondido (o projeto, na
+// organização dele); senão Options é a lista de escolhas, mais "All".
+type pin struct {
+	Constant string
+	Options  []string
+}
+
+// pinVariables substitui as variáveis indicadas por constantes escondidas
+// ou por listas fixas; as listas mantêm o "All" e o allValue do ficheiro.
+func pinVariables(dash map[string]any, pins map[string]pin) {
 	templating, _ := dash["templating"].(map[string]any)
 	list, _ := templating["list"].([]any)
 	for i, item := range list {
 		v, _ := item.(map[string]any)
 		name, _ := v["name"].(string)
-		value, ok := constants[name]
+		p, ok := pins[name]
 		if !ok {
 			continue
 		}
+		if p.Constant != "" {
+			list[i] = map[string]any{
+				"name": name, "label": v["label"], "type": "constant", "query": p.Constant, "hide": 2,
+				"current": map[string]any{"text": p.Constant, "value": p.Constant},
+			}
+			continue
+		}
+		multi, _ := v["multi"].(bool)
+		options := []any{map[string]any{"text": "All", "value": "$__all", "selected": true}}
+		for _, o := range p.Options {
+			options = append(options, map[string]any{"text": o, "value": o, "selected": false})
+		}
 		list[i] = map[string]any{
-			"name": name, "label": v["label"], "type": "constant", "query": value, "hide": 2,
-			"current": map[string]any{"text": value, "value": value},
+			"name": name, "label": v["label"], "type": "custom", "query": strings.Join(p.Options, ","),
+			"includeAll": true, "allValue": v["allValue"], "multi": multi, "options": options,
+			"current": map[string]any{"text": "All", "value": "$__all"},
 		}
 	}
+}
+
+// inventory devolve, por projeto, os ambientes e os serviços (apps e
+// addons) que existem -- são os valores dos labels env e service.
+func (s *Syncer) inventory(ctx context.Context) (envs, services map[string][]string, err error) {
+	projects, err := s.db.ListProjects(ctx, store.DefaultAccountID)
+	if err != nil {
+		return nil, nil, err
+	}
+	slugOf := map[string]string{}
+	for _, p := range projects {
+		slugOf[p.ID] = p.Slug
+	}
+	allEnvs, err := s.db.ListAllEnvironments(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	projectOf := map[string]string{} // env id -> slug do projeto
+	envSet, svcSet := map[string]map[string]bool{}, map[string]map[string]bool{}
+	add := func(m map[string]map[string]bool, project, v string) {
+		if m[project] == nil {
+			m[project] = map[string]bool{}
+		}
+		m[project][v] = true
+	}
+	for _, e := range allEnvs {
+		if slug, ok := slugOf[e.ProjectID]; ok {
+			projectOf[e.ID] = slug
+			add(envSet, slug, e.Slug)
+		}
+	}
+	svcs, err := s.db.ListAllServices(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, sv := range svcs {
+		if slug, ok := projectOf[sv.EnvironmentID]; ok {
+			add(svcSet, slug, sv.Slug)
+		}
+	}
+	addons, err := s.db.ListAllAddons(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, a := range addons {
+		if slug, ok := projectOf[a.EnvironmentID]; ok {
+			add(svcSet, slug, a.Slug)
+		}
+	}
+	return sortedSets(envSet), sortedSets(svcSet), nil
+}
+
+func sortedSets(m map[string]map[string]bool) map[string][]string {
+	out := map[string][]string{}
+	for k, set := range m {
+		for v := range set {
+			out[k] = append(out[k], v)
+		}
+		sort.Strings(out[k])
+	}
+	return out
+}
+
+// union junta as listas de todos os projetos (para a Plataforma).
+func union(m map[string][]string) []string {
+	set := map[string]bool{}
+	for _, vs := range m {
+		for _, v := range vs {
+			set[v] = true
+		}
+	}
+	return sortedSets(map[string]map[string]bool{"": set})[""]
 }
 
 func (s *Syncer) dashboardFiles() ([]string, error) {
@@ -379,6 +471,11 @@ func (s *Syncer) SyncAll(ctx context.Context) error {
 		return fmt.Errorf("lendo dashboards: %w", err)
 	}
 
+	envs, services, err := s.inventory(ctx)
+	if err != nil {
+		return err
+	}
+
 	platformID, err := s.ensureOrg(ctx, orgs, platformOrg)
 	if err != nil {
 		return err
@@ -394,7 +491,9 @@ func (s *Syncer) SyncAll(ctx context.Context) error {
 	if err := s.ensureDatasource(ctx, platformID, datasource{UID: "loki", Name: "Loki", Type: "loki", URL: s.cfg.LokiURL, Access: "proxy", JSONData: lokiJSON, SecureJSONData: lokiSecure}); err != nil {
 		return err
 	}
-	if err := s.ensureDashboards(ctx, platformID, files, nil); err != nil {
+	if err := s.ensureDashboards(ctx, platformID, files, map[string]pin{
+		"env": {Options: union(envs)}, "service": {Options: union(services)},
+	}); err != nil {
 		return err
 	}
 
@@ -414,7 +513,9 @@ func (s *Syncer) SyncAll(ctx context.Context) error {
 		if err := s.ensureDatasource(ctx, id, datasource{UID: "loki", Name: "Loki", Type: "loki", URL: s.cfg.LokiURL, Access: "proxy", JSONData: lokiJSON, SecureJSONData: lokiSecure}); err != nil {
 			return err
 		}
-		if err := s.ensureDashboards(ctx, id, []string{projectsDashboard}, map[string]string{"project": p.Slug}); err != nil {
+		if err := s.ensureDashboards(ctx, id, []string{projectsDashboard}, map[string]pin{
+			"project": {Constant: p.Slug}, "env": {Options: envs[p.Slug]}, "service": {Options: services[p.Slug]},
+		}); err != nil {
 			return err
 		}
 	}

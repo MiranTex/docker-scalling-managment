@@ -105,6 +105,7 @@ func (a *API) createEnvironment(w http.ResponseWriter, r *http.Request, who prin
 		a.fail(w, err)
 		return
 	}
+	a.kickGrafana()
 	writeJSON(w, http.StatusCreated, e)
 }
 
@@ -113,6 +114,7 @@ func (a *API) deleteEnvironment(w http.ResponseWriter, r *http.Request, _ princi
 		a.fail(w, err)
 		return
 	}
+	a.kickGrafana()
 	w.WriteHeader(http.StatusNoContent)
 }
 
