@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Modal from "@/components/Modal";
 import TerminalModal from "@/components/TerminalModal";
+import CopyCommand from "@/components/CopyCommand";
 import { api, envPath, formatBytes, statusBadge, type Addon, type Backup } from "@/lib/platformClient";
 import ConfirmModal from "../../../admin/database/ConfirmModal";
 import { useCan } from "@/lib/projectRole";
@@ -218,6 +219,14 @@ export default function AddonsTab({ project, env }: { project: string; env: stri
                       Apagar
                     </button>
                   </div>
+                  )}
+                  {canEdit && (
+                    <div title="Abre a base de dados na tua máquina (DBeaver, psql...) com a CLI bs -- ver services/cli/README.md">
+                      <p className="muted" style={{ margin: "8px 0 4px" }}>
+                        Da tua máquina:
+                      </p>
+                      <CopyCommand command={`bs port-forward ${project}/${env}/${a.slug}`} />
+                    </div>
                   )}
                 </td>
               </tr>

@@ -121,3 +121,16 @@ func TestAPIErrorsCarryTheMessage(t *testing.T) {
 		t.Errorf("err = %#v", err)
 	}
 }
+
+func TestClientSettingsForDBeaver(t *testing.T) {
+	pg := credentials{Kind: "postgres", User: "app", Password: "pw", Database: "app", Port: 5432}
+	got := pg.clientSettings(15432)
+	for _, want := range []string{"jdbc:postgresql://127.0.0.1:15432/app", "Porta:      15432", "Utilizador: app", "Password:   pw", "Base dados: app"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("falta %q em:\n%s", want, got)
+		}
+	}
+	if redis := (credentials{Kind: "redis", User: "default", Password: "pw", Database: "0"}).clientSettings(6379); strings.Contains(redis, "jdbc") {
+		t.Errorf("Redis não tem JDBC:\n%s", redis)
+	}
+}
