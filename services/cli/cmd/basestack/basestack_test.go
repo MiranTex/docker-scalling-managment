@@ -31,7 +31,7 @@ func TestRenderUsesGeneratedSecretsAndOwnNames(t *testing.T) {
 		"name: basestack", "basestack-platform", "container_name: basestack-traefik",
 		s.Secrets.LauncherSecretsKey, s.Secrets.SecretsMasterKey, s.Secrets.GrafanaAdminPassword,
 		"postgres://launcher:" + s.Secrets.LauncherDBPassword + "@database",
-		"image: basestack/launcher:dev", `"3100:3000"`, "Host(`api.127.0.0.1.nip.io`)",
+		"image: basestack/launcher:dev", `"3100:3000"`, `HOSTNAME: "0.0.0.0"`, "Host(`api.127.0.0.1.nip.io`)",
 		`AUTH_BOOTSTRAP_SUPERADMIN_EMAIL: "admin@example.test"`,
 	} {
 		if !strings.Contains(c, want) {

@@ -256,6 +256,9 @@ services:
       TEMPLATESADMIN_SERVICE_URL: "http://templatesadmin:8093"
       LAUNCHER_SERVICE_URL: "http://launcher:8094"
       GRAFANA_INTERNAL_URL: "http://basestack-grafana:3000"
+      # Escutar em todas as interfaces: o portal está em duas redes, e a
+      # porta publicada pode chegar por qualquer uma (ver o Dockerfile).
+      HOSTNAME: "0.0.0.0"
     labels:
       base-stack.managed: "true"
     ports:
