@@ -1,0 +1,88 @@
+# Auto-descoberta via Docker: em vez de listar alvos fixos, o Prometheus
+# pergunta à API do Docker (pelo proxy só de leitura) quem existe e filtra pelos que tiverem a label
+# prometheus.scrape=true, pegando a porta da label prometheus.port. Assim
+# qualquer projeto novo na rede "observability-net" só precisa dessas duas
+# labels no seu container -- nada aqui precisa ser editado.
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: docker-sd
+    docker_sd_configs:
+      - host: tcp://docker-api-ro:2375
+        refresh_interval: 5s
+    relabel_configs:
+      - source_labels: [__meta_docker_container_label_prometheus_scrape]
+        regex: "true"
+        action: keep
+      # Endereço = NOME do container + porta (nunca __meta_docker_network_ip):
+      # confirmado ao vivo que esse meta label só reflete o IP da rede
+      # "primária" do container -- a que ele tinha ao ser criado -- mesmo
+      # que ele seja ligado a "observability-net" DEPOIS (via
+      # `docker network connect`, ou a UI /admin/networks do launcher, ou
+      # até listando as duas redes no mesmo docker-compose.yml -- o Compose
+      # escolhe a primária sozinho, sem opção de configurar qual). Um
+      # container assim nunca teria __meta_docker_network_ip apontando pra
+      # "observability-net", ficando pra sempre inatingível a partir daqui.
+      # O nome resolve certo via DNS interno do Docker em QUALQUER rede a
+      # que o container esteja ligado, primária ou não.
+      - source_labels: [__meta_docker_container_name, __meta_docker_container_label_prometheus_port]
+        separator: ";"
+        regex: "/(.*);(.*)"
+        target_label: __address__
+        replacement: "${1}:${2}"
+      # Caminho das métricas por container (label prometheus.path). Sem a
+      # label fica o default do Prometheus, /metrics -- tudo o que já era
+      # recolhido antes continua igual.
+      - source_labels: [__meta_docker_container_label_prometheus_path]
+        regex: "(.+)"
+        target_label: __metrics_path__
+      # Projeto/ambiente/serviço das apps de projeto (ver
+      # services/launcher/internal/platform), para filtrar as métricas no
+      # Grafana como os logs. "project_service" e não "service": a label
+      # "service" é demasiado comum nas métricas das próprias apps.
+      - source_labels: [__meta_docker_container_label_base_stack_project]
+        target_label: project
+      - source_labels: [__meta_docker_container_label_base_stack_env]
+        target_label: env
+      - source_labels: [__meta_docker_container_label_base_stack_service_slug]
+        target_label: project_service
+      # "compose_service" (não "service"): o nosso próprio /metrics já usa a
+      # label "service" pro serviço que o autoscaler gerencia (ex: "demo") --
+      # se relabelássemos pra "service" aqui, colidiria e o Prometheus
+      # renomearia a nossa pra "exported_service" automaticamente.
+      - source_labels: [__meta_docker_container_label_com_docker_compose_service]
+        target_label: compose_service
+      - source_labels: [__meta_docker_container_name]
+        regex: "/(.*)"
+        target_label: container
+      # Um group lançado pelo launcher tem nome opaco ("group-<hex>") e
+      # nenhuma label de compose -- sem isto seria impossível dizer, só a
+      # olhar para a série, qual aplicação ele gere.
+      - source_labels: [__meta_docker_container_label_autoscaler_target_service]
+        target_label: target_service
+      # compose_service vazio (container fora do compose) cai para o nome do
+      # container, para os dropdowns do Grafana nunca terem uma opção em branco.
+      - source_labels: [compose_service, container]
+        separator: ";"
+        regex: "^;(.*)$"
+        target_label: compose_service
+        replacement: "${1}"
+    # As métricas do Traefik dizem o serviço pelo nome do router
+    # (bs_<projeto>_<ambiente>_<serviço>@file, ver services/launcher,
+    # routing.go) -- daí se tiram project/env/project_service, para os
+    # pedidos de um serviço aparecerem no Grafana do seu projeto (que só
+    # vê séries com project="<slug>", ver prom-label-proxy).
+    metric_relabel_configs:
+      - source_labels: [service]
+        regex: "bs_([^_]+)_([^_]+)_(.+)@file"
+        target_label: project
+        replacement: "${1}"
+      - source_labels: [service]
+        regex: "bs_([^_]+)_([^_]+)_(.+)@file"
+        target_label: env
+        replacement: "${2}"
+      - source_labels: [service]
+        regex: "bs_([^_]+)_([^_]+)_(.+)@file"
+        target_label: project_service
+        replacement: "${3}"

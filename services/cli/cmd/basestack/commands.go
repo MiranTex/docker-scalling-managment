@@ -1,0 +1,300 @@
+package main
+
+import (
+	"bufio"
+	"errors"
+	"flag"
+	"fmt"
+	"net/mail"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+)
+
+func cmdInit(args []string) error {
+	fs := flag.NewFlagSet("init", flag.ContinueOnError)
+	def := defaultSettings()
+	domain := fs.String("domain", "", "domínio base (api.<domínio>, <serviço>-<ambiente>-<projeto>.<domínio>)")
+	portalPort := fs.Int("portal-port", 0, "porta do portal neste host")
+	adminEmail := fs.String("admin-email", "", "email da conta que fica super-admin")
+	acmeEmail := fs.String("acme-email", "", "email para certificados HTTPS (Let's Encrypt); vazio = só HTTP")
+	yes := fs.Bool("yes", false, "não perguntar: usa as flags e os valores por defeito")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if _, dir, err := loadSettings(); err == nil {
+		return fmt.Errorf("já existe uma instalação em %s -- para recomeçar: basestack uninstall", dir)
+	} else if !errors.Is(err, errNotInstalled) {
+		return err
+	}
+	dir, err := home()
+	if err != nil {
+		return err
+	}
+
+	s := def
+	in := bufio.NewReader(os.Stdin)
+	ask := func(question, current string) string {
+		if *yes {
+			return current
+		}
+		if current != "" {
+			fmt.Printf("%s [%s]: ", question, current)
+		} else {
+			fmt.Printf("%s: ", question)
+		}
+		line, _ := in.ReadString('\n')
+		if line = strings.TrimSpace(line); line != "" {
+			return line
+		}
+		return current
+	}
+	s.Domain = ask("Domínio base", firstNonEmpty(*domain, def.Domain))
+	port := ask("Porta do portal", strconv.Itoa(firstNonZero(*portalPort, def.PortalPort)))
+	if s.PortalPort, err = strconv.Atoi(port); err != nil || s.PortalPort <= 0 || s.PortalPort > 65535 {
+		return fmt.Errorf("porta inválida: %q", port)
+	}
+	s.AdminEmail = ask("Email do administrador (a conta que vais registar no portal)", *adminEmail)
+	if _, err := mail.ParseAddress(s.AdminEmail); err != nil {
+		return fmt.Errorf("email do administrador inválido: %q", s.AdminEmail)
+	}
+	s.ACMEEmail = ask("Email para HTTPS automático (vazio = só HTTP, ex: numa rede local)", *acmeEmail)
+	s.Secrets = generateSecrets()
+
+	if err := saveSettings(dir, s); err != nil {
+		return err
+	}
+	fmt.Printf("\nConfiguração e segredos guardados em %s.\n", filepath.Join(dir, "settings.json"))
+	fmt.Println("Guarda uma cópia desse ficheiro num sítio seguro: sem ele, os segredos cifrados não se recuperam.")
+	fmt.Println("\nA seguir: basestack up")
+	return nil
+}
+
+func cmdUp(args []string) error {
+	s, dir, err := loadSettings()
+	if err != nil {
+		return err
+	}
+	var missing []string
+	for _, img := range platformImages {
+		if !imageExists(s.image(img.name)) {
+			missing = append(missing, s.image(img.name))
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("faltam imagens: %s\n  em desenvolvimento, constrói-as com: basestack dev build", strings.Join(missing, ", "))
+	}
+	if busy, err := foreignPublishers(s.HTTPPort, s.HTTPSPort, s.PortalPort, s.GrafanaPort); err != nil {
+		return err
+	} else if len(busy) > 0 {
+		return fmt.Errorf("estas portas já estão ocupadas por outros containers: %s\n  pára-os primeiro (ex: a demo antiga: docker compose -f demo/docker-compose.yml stop)", strings.Join(busy, ", "))
+	}
+	if err := render(dir, s); err != nil {
+		return err
+	}
+	if err := compose(dir, append([]string{"up", "--detach", "--remove-orphans", "--wait"}, args...)...).Run(); err != nil {
+		return fmt.Errorf("a plataforma não arrancou toda -- vê \"basestack status\" e \"basestack logs <componente>\": %w", err)
+	}
+	printAddresses(s)
+	fmt.Printf(`
+Primeira vez?
+  1. Regista-te em %s/register com %s
+  2. basestack restart auth   (promove essa conta a super-admin)
+  3. Entra de novo no portal.
+`, s.PortalURL(), s.AdminEmail)
+	return nil
+}
+
+func printAddresses(s Settings) {
+	fmt.Printf("\nPortal:             %s\n", s.PortalURL())
+	fmt.Printf("Métricas e logs:    %s/grafana/ (pelo portal)\n", s.PortalURL())
+	fmt.Printf("API (CLI bs, CI):   %s\n", s.APIURL())
+	fmt.Printf("Grafana (emergência, admin): http://127.0.0.1:%d/grafana/\n", s.GrafanaPort)
+}
+
+func cmdStatus(args []string) error {
+	s, dir, err := loadSettings()
+	if err != nil {
+		return err
+	}
+	if err := compose(dir, "ps", "--all", "--format", "table {{.Service}}\t{{.State}}\t{{.Status}}").Run(); err != nil {
+		return err
+	}
+	printAddresses(s)
+	return nil
+}
+
+func cmdLogs(args []string) error {
+	_, dir, err := loadSettings()
+	if err != nil {
+		return err
+	}
+	return compose(dir, append([]string{"logs", "--tail", "200"}, args...)...).Run()
+}
+
+func cmdRestart(args []string) error {
+	_, dir, err := loadSettings()
+	if err != nil {
+		return err
+	}
+	return compose(dir, append([]string{"restart"}, args...)...).Run()
+}
+
+func cmdDown(args []string) error {
+	_, dir, err := loadSettings()
+	if err != nil {
+		return err
+	}
+	if err := compose(dir, "down").Run(); err != nil {
+		return err
+	}
+	fmt.Println("Plataforma parada. Os dados ficam, e as apps dos projetos continuam a correr; \"basestack up\" volta a arrancá-la.")
+	return nil
+}
+
+func cmdDoctor(args []string) error {
+	ok := true
+	check := func(name string, err error) {
+		if err != nil {
+			ok = false
+			fmt.Printf("  ✗ %s: %v\n", name, err)
+			return
+		}
+		fmt.Printf("  ✓ %s\n", name)
+	}
+	_, err := dockerOutput("info", "--format", "{{.ServerVersion}}")
+	check("Docker a correr", err)
+	_, err = dockerOutput("compose", "version")
+	check("docker compose", err)
+	if mem, err := dockerOutput("info", "--format", "{{.MemTotal}}"); err == nil {
+		n, _ := strconv.ParseInt(mem, 10, 64)
+		if n < 4<<30 {
+			check("memória", fmt.Errorf("%d MB disponíveis para o Docker; recomendado pelo menos 4096", n>>20))
+		} else {
+			check(fmt.Sprintf("memória (%d MB para o Docker)", n>>20), nil)
+		}
+	}
+	s, _, err := loadSettings()
+	if err != nil {
+		check("instalação", err)
+	} else {
+		check("instalação configurada", nil)
+		for _, img := range platformImages {
+			if !imageExists(s.image(img.name)) {
+				check("imagem "+s.image(img.name), errors.New("não existe -- basestack dev build"))
+			}
+		}
+		busy, err := foreignPublishers(s.HTTPPort, s.HTTPSPort, s.PortalPort, s.GrafanaPort)
+		if err == nil && len(busy) > 0 {
+			err = fmt.Errorf("ocupadas por %s", strings.Join(busy, ", "))
+		}
+		check("portas livres", err)
+	}
+	if !ok {
+		return errors.New("há problemas a resolver (acima)")
+	}
+	return nil
+}
+
+func cmdDev(args []string) error {
+	if len(args) == 0 || args[0] != "build" {
+		return errors.New("uso: basestack dev build [--source <repositório>] [imagem...]")
+	}
+	fs := flag.NewFlagSet("dev build", flag.ContinueOnError)
+	source := fs.String("source", "", "raiz do repositório base-stack (por defeito, procura a partir da pasta atual)")
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+	root := *source
+	if root == "" {
+		var err error
+		if root, err = findRepo(); err != nil {
+			return err
+		}
+	}
+	s, _, err := loadSettings()
+	if errors.Is(err, errNotInstalled) {
+		s = defaultSettings()
+	} else if err != nil {
+		return err
+	}
+	only := map[string]bool{}
+	for _, n := range fs.Args() {
+		only[n] = true
+	}
+	for _, img := range platformImages {
+		if len(only) > 0 && !only[img.name] {
+			continue
+		}
+		fmt.Printf("==> %s\n", s.image(img.name))
+		cmd := exec.Command("docker", "build", "--tag", s.image(img.name), filepath.Join(root, img.dir))
+		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("construindo %s: %w", img.name, err)
+		}
+	}
+	return nil
+}
+
+// findRepo sobe a partir da pasta atual até encontrar o repositório.
+func findRepo() (string, error) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "services", "launcher", "Dockerfile")); err == nil {
+			return dir, nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", errors.New("não encontrei o repositório base-stack a partir daqui -- usa --source <pasta>")
+		}
+		dir = parent
+	}
+}
+
+func cmdUninstall(args []string) error {
+	_, dir, err := loadSettings()
+	if err != nil {
+		return err
+	}
+	fmt.Printf(`Isto apaga a plataforma desta máquina: contas, projetos, segredos,
+métricas e logs (volumes basestack_*) e %s.
+As apps e bases de dados dos projetos (containers e volumes bs-*) NÃO são
+apagadas -- apaga os projetos no portal antes, se as quiseres remover.
+
+Escreve "basestack" para confirmar: `, dir)
+	line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+	if strings.TrimSpace(line) != "basestack" {
+		return errors.New("cancelado")
+	}
+	if err := compose(dir, "down", "--volumes", "--remove-orphans").Run(); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return err
+	}
+	fmt.Println("Plataforma removida.")
+	return nil
+}
+
+func firstNonEmpty(v ...string) string {
+	for _, s := range v {
+		if s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+func firstNonZero(v ...int) int {
+	for _, n := range v {
+		if n != 0 {
+			return n
+		}
+	}
+	return 0
+}

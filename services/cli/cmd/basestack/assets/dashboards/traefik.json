@@ -1,0 +1,120 @@
+{
+  "title": "Traefik (gateway)",
+  "uid": "traefik-gateway",
+  "timezone": "browser",
+  "refresh": "5s",
+  "time": { "from": "now-15m", "to": "now" },
+  "schemaVersion": 39,
+  "templating": {
+    "list": [
+      {
+        "name": "service",
+        "label": "Instância exposta",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values(traefik_service_requests_total, service)",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "current": { "selected": true, "text": "All", "value": "$__all" }
+      },
+      {
+        "name": "compose_service",
+        "label": "Container (logs)",
+        "type": "query",
+        "datasource": { "type": "loki", "uid": "loki" },
+        "query": "label_values(compose_service)",
+        "refresh": 2,
+        "multi": false,
+        "includeAll": false,
+        "current": { "selected": true, "text": "traefik", "value": "traefik" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Requisições por entrypoint (taxa/s)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "options": {
+        "legend": { "showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["last"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        { "expr": "sum(rate(traefik_entrypoint_requests_total[1m])) by (entrypoint)", "legendFormat": "{{entrypoint}}" }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Requisições por código HTTP (taxa/s)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "options": {
+        "legend": { "showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["last"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        { "expr": "sum(rate(traefik_entrypoint_requests_total[1m])) by (code)", "legendFormat": "{{code}}" }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Requisições por instância exposta (taxa/s) -- $service",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "options": {
+        "legend": { "showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["last"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        { "expr": "sum(rate(traefik_service_requests_total{service=~\"$service\"}[1m])) by (service)", "legendFormat": "{{service}}" }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Erros 5xx por instância exposta (taxa/s) -- $service",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "options": {
+        "legend": { "showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["last"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        { "expr": "sum(rate(traefik_service_requests_total{service=~\"$service\", code=~\"5..\"}[1m])) by (service)", "legendFormat": "{{service}}" }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Latência por instância exposta (p50/p95) -- $service",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
+      "options": {
+        "legend": { "showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["last"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum(rate(traefik_service_request_duration_seconds_bucket{service=~\"$service\"}[5m])) by (le, service))", "legendFormat": "p50 -- {{service}}" },
+        { "expr": "histogram_quantile(0.95, sum(rate(traefik_service_request_duration_seconds_bucket{service=~\"$service\"}[5m])) by (le, service))", "legendFormat": "p95 -- {{service}}" }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Logs -- container: $compose_service",
+      "type": "logs",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 24 },
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "expr": "{compose_service=\"$compose_service\"}"
+        }
+      ]
+    }
+  ]
+}

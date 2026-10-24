@@ -1,0 +1,13 @@
+-- Gerado pelo basestack: uma role por serviço da plataforma, cada uma com
+-- a sua password (gerada no "basestack init"). Só corre na primeira
+-- inicialização do Postgres (volume vazio).
+{{- range .DBRoles}}
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '{{.Name}}') THEN
+    CREATE ROLE {{.Name}} WITH LOGIN PASSWORD '{{.Password}}';
+  END IF;
+END
+$$;
+GRANT CREATE ON DATABASE app TO {{.Name}};
+{{- end}}

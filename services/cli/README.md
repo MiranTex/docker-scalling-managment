@@ -1,4 +1,48 @@
-# bs -- CLI da plataforma
+# CLIs da plataforma
+
+Dois binários do mesmo código, para públicos diferentes:
+
+- **`basestack`** -- para quem **opera** a plataforma: instala, arranca,
+  pára e mostra o estado (precisa do Docker desta máquina).
+- **`bs`** -- para quem **usa** os projetos: terminal e túneis, pela API
+  (precisa só de rede e de uma API key).
+
+## basestack
+
+```sh
+make install-basestack      # -> /usr/local/bin/basestack
+basestack doctor            # Docker, memória, portas
+basestack dev build         # constrói as imagens a partir do código (dentro do repositório)
+basestack init              # domínio, porta do portal, email do admin; gera os segredos
+basestack up                # arranca tudo: plataforma + métricas e logs
+```
+
+Na primeira vez: regista-te no portal com o email do admin e corre
+`basestack restart auth` -- essa conta passa a super-admin.
+
+| Comando | |
+|---|---|
+| `basestack status` | estado de cada componente e os endereços |
+| `basestack logs <componente> [-f]` | ex.: `launcher`, `auth`, `portal`, `grafana` |
+| `basestack restart [componente]` | |
+| `basestack up` | também aplica mudanças feitas em `settings.json` |
+| `basestack down` | pára a plataforma; os dados ficam e as apps dos projetos continuam a correr |
+| `basestack uninstall` | apaga a plataforma e os dados dela (pede confirmação) |
+
+Tudo vive em `~/.basestack` (Linux como root: `/var/lib/basestack`;
+`BASESTACK_HOME` muda-o): `settings.json` com as escolhas e os
+**segredos gerados** (guarda uma cópia -- sem ele os dados cifrados não se
+recuperam), e o `compose.yml` + `config/` gerados a cada `up`. A definição
+da stack vai embutida no binário (`cmd/basestack/assets`); as configurações
+de observabilidade são cópias de `services/monitoring`, e um teste falha se
+se afastarem.
+
+Tudo o que é da plataforma tem nomes próprios (`basestack-*`), por isso
+nunca partilha redes, volumes ou chaves com a demo antiga
+(`demo/docker-compose.yml`) -- mas usam as mesmas portas: só uma de cada
+vez (`basestack up` recusa se as portas estiverem ocupadas).
+
+# bs
 
 Terminal nos serviços e addons dos teus projetos, e túneis até às bases de
 dados, a partir da tua máquina. Fala com a mesma API do portal (o launcher,
