@@ -27,6 +27,7 @@ Na primeira vez: regista-te no portal com o email do admin e corre
 | `basestack restart [componente]` | |
 | `basestack up` | também aplica mudanças feitas em `settings.json` |
 | `basestack down` | pára a plataforma; os dados ficam e as apps dos projetos continuam a correr |
+| `basestack down --all` | pára também as apps e bases de dados dos projetos (os dados ficam); no `up` seguinte o launcher volta a ligá-las |
 | `basestack uninstall` | apaga a plataforma e os dados dela (pede confirmação) |
 
 Tudo vive em `~/.basestack` (Linux como root: `/var/lib/basestack`;

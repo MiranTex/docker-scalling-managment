@@ -142,7 +142,16 @@ func cmdRestart(args []string) error {
 	return compose(dir, append([]string{"restart"}, args...)...).Run()
 }
 
+// cmdDown pára a plataforma. As apps dos projetos continuam a correr (o
+// launcher é plano de controlo), a não ser com --all: aí param também,
+// depois da plataforma -- com o launcher ainda no ar, o reconciliador
+// voltava a criar as réplicas paradas.
 func cmdDown(args []string) error {
+	fs := flag.NewFlagSet("down", flag.ContinueOnError)
+	all := fs.Bool("all", false, "parar também as apps e bases de dados dos projetos")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 	_, dir, err := loadSettings()
 	if err != nil {
 		return err
@@ -150,7 +159,24 @@ func cmdDown(args []string) error {
 	if err := compose(dir, "down").Run(); err != nil {
 		return err
 	}
-	fmt.Println("Plataforma parada. Os dados ficam, e as apps dos projetos continuam a correr; \"basestack up\" volta a arrancá-la.")
+	if !*all {
+		fmt.Println("Plataforma parada. Os dados ficam, e as apps dos projetos continuam a correr; \"basestack up\" volta a arrancá-la.")
+		fmt.Println("Para parar também as apps: basestack down --all")
+		return nil
+	}
+	ids, err := dockerOutput("ps", "--quiet", "--filter", "label=base-stack.project-id")
+	if err != nil {
+		return err
+	}
+	if ids != "" {
+		list := strings.Fields(ids)
+		fmt.Printf("A parar %d container(s) dos projetos...\n", len(list))
+		// 30s como o launcher dá a cada réplica para terminar (SIGTERM).
+		if _, err := dockerOutput(append([]string{"stop", "--time", "30"}, list...)...); err != nil {
+			return err
+		}
+	}
+	fmt.Println("Plataforma e apps paradas. Os dados ficam; \"basestack up\" arranca a plataforma e o launcher volta a ligar as apps e bases de dados.")
 	return nil
 }
 
