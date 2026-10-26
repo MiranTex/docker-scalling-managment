@@ -25,10 +25,19 @@ Na primeira vez: regista-te no portal com o email do admin e corre
 | `basestack status` | estado de cada componente e os endereços |
 | `basestack logs <componente> [-f]` | ex.: `launcher`, `auth`, `portal`, `grafana` |
 | `basestack restart [componente]` | |
+| `basestack set <chave> <valor>` | muda `domain`, `portal-port`, `admin-email` ou `acme-email` (os segredos ficam); aplica com `up` |
 | `basestack up` | também aplica mudanças feitas em `settings.json` |
 | `basestack down` | pára a plataforma; os dados ficam e as apps dos projetos continuam a correr |
 | `basestack down --all` | pára também as apps e bases de dados dos projetos (os dados ficam); no `up` seguinte o launcher volta a ligá-las |
 | `basestack uninstall` | apaga a plataforma e os dados dela (pede confirmação) |
+
+O portal fica em `http://portal.<domínio>` (pelo Traefik, como a API em
+`api.<domínio>`), por isso funciona de qualquer máquina que resolva o
+domínio; `http://localhost:<porta do portal>` continua a servir nesta
+máquina. Por defeito o `init` propõe `<ip desta máquina>.nip.io`, que toda
+a rede local resolve -- precisa de acesso à internet (o nip.io é um DNS
+público) e de um IP fixo (reserva-o no router). Se o IP mudar:
+`basestack set domain <ip novo>.nip.io && basestack up`.
 
 Tudo vive em `~/.basestack` (Linux como root: `/var/lib/basestack`;
 `BASESTACK_HOME` muda-o): `settings.json` com as escolhas e os

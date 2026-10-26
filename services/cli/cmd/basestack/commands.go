@@ -51,7 +51,7 @@ func cmdInit(args []string) error {
 		}
 		return current
 	}
-	s.Domain = ask("Domínio base", firstNonEmpty(*domain, def.Domain))
+	s.Domain = ask("Domínio base (<ip>.nip.io funciona em toda a rede local)", firstNonEmpty(*domain, lanIP()+".nip.io"))
 	port := ask("Porta do portal", strconv.Itoa(firstNonZero(*portalPort, def.PortalPort)))
 	if s.PortalPort, err = strconv.Atoi(port); err != nil || s.PortalPort <= 0 || s.PortalPort > 65535 {
 		return fmt.Errorf("porta inválida: %q", port)
@@ -108,7 +108,7 @@ Primeira vez?
 }
 
 func printAddresses(s Settings) {
-	fmt.Printf("\nPortal:             %s\n", s.PortalURL())
+	fmt.Printf("\nPortal:             %s  (nesta máquina também %s)\n", s.PortalURL(), s.LocalPortalURL())
 	fmt.Printf("Métricas e logs:    %s/grafana/ (pelo portal)\n", s.PortalURL())
 	fmt.Printf("API (CLI bs, CI):   %s\n", s.APIURL())
 	fmt.Printf("Grafana (emergência, admin): http://127.0.0.1:%d/grafana/\n", s.GrafanaPort)
@@ -323,4 +323,51 @@ func firstNonZero(v ...int) int {
 		}
 	}
 	return 0
+}
+
+// cmdSet muda uma escolha do init sem mexer nos segredos.
+func cmdSet(args []string) error {
+	if len(args) != 2 {
+		return errors.New("uso: basestack set <domain|portal-port|admin-email|acme-email> <valor>")
+	}
+	s, dir, err := loadSettings()
+	if err != nil {
+		return err
+	}
+	key, value := args[0], strings.TrimSpace(args[1])
+	switch key {
+	case "domain":
+		if value == "" || strings.ContainsAny(value, "/: ") {
+			return fmt.Errorf("domínio inválido: %q (só o nome, ex: 192.168.1.50.nip.io)", value)
+		}
+		s.Domain = value
+	case "portal-port":
+		n, err := strconv.Atoi(value)
+		if err != nil || n <= 0 || n > 65535 {
+			return fmt.Errorf("porta inválida: %q", value)
+		}
+		s.PortalPort = n
+	case "admin-email":
+		if _, err := mail.ParseAddress(value); err != nil {
+			return fmt.Errorf("email inválido: %q", value)
+		}
+		s.AdminEmail = value
+	case "acme-email":
+		if value != "" {
+			if _, err := mail.ParseAddress(value); err != nil {
+				return fmt.Errorf("email inválido: %q", value)
+			}
+		}
+		s.ACMEEmail = value
+	default:
+		return fmt.Errorf("chave desconhecida %q -- domain, portal-port, admin-email ou acme-email", key)
+	}
+	if err := saveSettings(dir, s); err != nil {
+		return err
+	}
+	fmt.Printf("%s = %s. Aplica com: basestack up\n", key, value)
+	if key == "domain" {
+		fmt.Println("Os endereços dos serviços dos projetos passam a usar este domínio, e o bs login precisa do novo URL da API.")
+	}
+	return nil
 }

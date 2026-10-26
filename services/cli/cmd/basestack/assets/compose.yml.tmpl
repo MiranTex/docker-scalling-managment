@@ -261,6 +261,19 @@ services:
       HOSTNAME: "0.0.0.0"
     labels:
       base-stack.managed: "true"
+      # portal.<domínio> pelo Traefik, para entrar de outras máquinas (e
+      # com HTTPS quando há ACME); a porta publicada fica para esta máquina.
+      traefik.enable: "true"
+      traefik.docker.network: basestack-platform
+      traefik.http.routers.portal.rule: "Host(`portal.{{.Domain}}`)"
+      traefik.http.routers.portal.entrypoints: web
+      traefik.http.routers.portal.service: portal
+      traefik.http.routers.portal-tls.rule: "Host(`portal.{{.Domain}}`)"
+      traefik.http.routers.portal-tls.entrypoints: websecure
+      traefik.http.routers.portal-tls.service: portal
+      traefik.http.routers.portal-tls.tls: "true"
+      traefik.http.routers.portal-tls.tls.certresolver: "{{.TLSCertResolver}}"
+      traefik.http.services.portal.loadbalancer.server.port: "3000"
     ports:
       - "{{.PortalPort}}:3000"
     depends_on:
@@ -360,7 +373,7 @@ services:
       GF_USERS_AUTO_ASSIGN_ORG: "true"
       GF_USERS_AUTO_ASSIGN_ORG_ID: "1"
       GF_USERS_AUTO_ASSIGN_ORG_ROLE: Viewer
-      GF_SERVER_ROOT_URL: "http://localhost:{{.PortalPort}}/grafana/"
+      GF_SERVER_ROOT_URL: "{{.PortalURL}}/grafana/"
       GF_SERVER_SERVE_FROM_SUB_PATH: "true"
       GF_LIVE_MAX_CONNECTIONS: "0"
     ports:

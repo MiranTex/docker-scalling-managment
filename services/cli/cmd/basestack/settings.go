@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -47,6 +48,18 @@ type Secrets struct {
 	SecretsMasterKey     string `json:"secretsMasterKey"`
 	LauncherSecretsKey   string `json:"launcherSecretsKey"`
 	GrafanaAdminPassword string `json:"grafanaAdminPassword"`
+}
+
+// lanIP é o IP desta máquina na rede local (o da interface que sai para
+// fora) -- o domínio por defeito é <ip>.nip.io, que as outras máquinas da
+// rede também resolvem. UDP não envia nada: só escolhe a interface.
+func lanIP() string {
+	conn, err := net.Dial("udp", "192.0.2.1:9")
+	if err != nil {
+		return "127.0.0.1"
+	}
+	defer conn.Close()
+	return conn.LocalAddr().(*net.UDPAddr).IP.String()
 }
 
 func defaultSettings() Settings {
@@ -127,15 +140,21 @@ func saveSettings(dir string, s Settings) error {
 
 func (s Settings) image(name string) string { return s.ImagePrefix + name + ":" + s.Version }
 
-// PortalURL é por onde se entra na plataforma.
-func (s Settings) PortalURL() string { return "http://localhost:" + strconv.Itoa(s.PortalPort) }
+// PortalURL é por onde se entra na plataforma, desta ou de outra máquina:
+// portal.<domínio>, pelo Traefik.
+func (s Settings) PortalURL() string { return s.scheme() + "://portal." + s.Domain }
 
-func (s Settings) APIURL() string {
-	scheme := "http"
+// LocalPortalURL: a porta do portal publicada diretamente, só útil nesta
+// máquina (ou se o domínio não resolver).
+func (s Settings) LocalPortalURL() string { return "http://localhost:" + strconv.Itoa(s.PortalPort) }
+
+func (s Settings) APIURL() string { return s.scheme() + "://api." + s.Domain }
+
+func (s Settings) scheme() string {
 	if s.TLSCertResolver() != "" {
-		scheme = "https"
+		return "https"
 	}
-	return scheme + "://api." + s.Domain
+	return "http"
 }
 
 // TLSCertResolver liga HTTPS (Let's Encrypt) quando há email de ACME.
@@ -152,7 +171,7 @@ func (s Settings) ACMECAServer() string { return "https://acme-v02.api.letsencry
 // TerminalOrigins: de onde o browser pode abrir o terminal do portal.
 func (s Settings) TerminalOrigins() string {
 	p := strconv.Itoa(s.PortalPort)
-	return strings.Join(append([]string{"localhost:" + p, "127.0.0.1:" + p}, s.ExtraTerminalOrigins...), ",")
+	return strings.Join(append([]string{"portal." + s.Domain, "localhost:" + p, "127.0.0.1:" + p}, s.ExtraTerminalOrigins...), ",")
 }
 
 type dbRole struct{ Name, Password string }
