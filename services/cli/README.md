@@ -76,10 +76,15 @@ registry é assinado por uma CA própria (`~/.basestack/tls/ca.crt`), e cada
 máquina que usa o registry tem de confiar nela:
 
 - nesta máquina, o `basestack up` põe-na em `~/.docker/certs.d/` (Mac --
-  **reinicia o Docker Desktop uma vez**) ou `/etc/docker/certs.d/` (Linux,
-  vale logo);
-- noutra máquina Linux: `sudo mkdir -p /etc/docker/certs.d/registry.<domínio>`
-  e copia para lá o `ca.crt` (sem reiniciar o Docker).
+  **reinicia o Docker Desktop uma vez**) ou `/etc/docker/certs.d/` (Linux);
+- numa máquina Linux com Docker 29+ (image store do containerd, o padrão),
+  o pedido do token só confia nas CAs do sistema -- o `certs.d` não chega:
+  ```sh
+  sudo mkdir -p /etc/docker/certs.d/registry.<domínio>
+  sudo cp ca.crt /etc/docker/certs.d/registry.<domínio>/ca.crt
+  sudo cp ca.crt /usr/local/share/ca-certificates/basestack-ca.crt
+  sudo update-ca-certificates && sudo systemctl restart docker
+  ```
 
 Com `acme-email` (domínio público), o Let's Encrypt serve o registry e nada
 disto é preciso.

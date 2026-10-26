@@ -108,6 +108,10 @@ func cmdUp(args []string) error {
 			path, err, filepath.Join(dir, "tls", "ca.crt"))
 	} else if changed && runtime.GOOS == "darwin" {
 		fmt.Printf("\nCA do registry instalada em %s.\n  Reinicia o Docker Desktop uma vez para ele confiar no registry (só ele lê essa pasta ao arrancar).\n", path)
+	} else if changed {
+		fmt.Printf("\nCA do registry instalada em %s.\n  Com o image store do containerd (Docker 29+), junta-a também às CAs do sistema e reinicia o Docker:\n"+
+			"    sudo cp %s /usr/local/share/ca-certificates/basestack-ca.crt && sudo update-ca-certificates && sudo systemctl restart docker\n",
+			path, filepath.Join(dir, "tls", "ca.crt"))
 	}
 	printAddresses(s)
 	fmt.Printf(`
