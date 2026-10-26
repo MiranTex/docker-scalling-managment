@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 )
@@ -91,11 +92,22 @@ func cmdUp(args []string) error {
 	} else if len(busy) > 0 {
 		return fmt.Errorf("estas portas já estão ocupadas por outros containers: %s\n  pára-os primeiro (ex: a demo antiga: docker compose -f demo/docker-compose.yml stop)", strings.Join(busy, ", "))
 	}
+	if s.fillMissingSecrets() {
+		if err := saveSettings(dir, s); err != nil {
+			return err
+		}
+	}
 	if err := render(dir, s); err != nil {
 		return err
 	}
 	if err := compose(dir, append([]string{"up", "--detach", "--remove-orphans", "--wait"}, args...)...).Run(); err != nil {
 		return fmt.Errorf("a plataforma não arrancou toda -- vê \"basestack status\" e \"basestack logs <componente>\": %w", err)
+	}
+	if path, changed, err := trustCA(dir, s.RegistryHost()); err != nil {
+		fmt.Printf("\nAviso: não consegui pôr a CA em %s (%v).\n  O docker desta máquina não vai confiar no registry; copia %s para lá (com sudo).\n",
+			path, err, filepath.Join(dir, "tls", "ca.crt"))
+	} else if changed && runtime.GOOS == "darwin" {
+		fmt.Printf("\nCA do registry instalada em %s.\n  Reinicia o Docker Desktop uma vez para ele confiar no registry (só ele lê essa pasta ao arrancar).\n", path)
 	}
 	printAddresses(s)
 	fmt.Printf(`
@@ -111,6 +123,7 @@ func printAddresses(s Settings) {
 	fmt.Printf("\nPortal:             %s  (nesta máquina também %s)\n", s.PortalURL(), s.LocalPortalURL())
 	fmt.Printf("Métricas e logs:    %s/grafana/ (pelo portal)\n", s.PortalURL())
 	fmt.Printf("API (CLI bs, CI):   %s\n", s.APIURL())
+	fmt.Printf("Registry:           %s  (docker login com o teu email e uma API key)\n", s.RegistryHost())
 	fmt.Printf("Grafana (emergência, admin): http://127.0.0.1:%d/grafana/\n", s.GrafanaPort)
 }
 
@@ -230,6 +243,7 @@ func cmdDev(args []string) error {
 	}
 	fs := flag.NewFlagSet("dev build", flag.ContinueOnError)
 	source := fs.String("source", "", "raiz do repositório base-stack (por defeito, procura a partir da pasta atual)")
+	push := fs.Bool("push", false, "enviar também para o registry da plataforma (registry.<domínio>/basestack/...)")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -259,6 +273,46 @@ func cmdDev(args []string) error {
 		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("construindo %s: %w", img.name, err)
+		}
+	}
+	if *push {
+		return pushImages(s, only)
+	}
+	return nil
+}
+
+// pushImages envia as imagens da plataforma para o registry com a
+// credencial interna, numa configuração do docker temporária -- a tua
+// (~/.docker) não fica com ela.
+func pushImages(s Settings, only map[string]bool) error {
+	if s.Secrets.RegistryPullPassword == "" {
+		return errors.New("o registry ainda não está configurado -- corre \"basestack up\" primeiro")
+	}
+	tmp, err := os.MkdirTemp("", "basestack-docker-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmp)
+	docker := func(stdin string, args ...string) error {
+		cmd := exec.Command("docker", args...)
+		cmd.Env = append(os.Environ(), "DOCKER_CONFIG="+tmp)
+		cmd.Stdin, cmd.Stdout, cmd.Stderr = strings.NewReader(stdin), os.Stdout, os.Stderr
+		return cmd.Run()
+	}
+	if err := docker(s.Secrets.RegistryPullPassword, "login", s.RegistryHost(), "--username", "basestack-internal", "--password-stdin"); err != nil {
+		return fmt.Errorf("login no registry: %w", err)
+	}
+	for _, img := range platformImages {
+		if len(only) > 0 && !only[img.name] {
+			continue
+		}
+		remote := s.RegistryHost() + "/basestack/" + img.name + ":" + s.Version
+		fmt.Printf("==> %s\n", remote)
+		if err := docker("", "tag", s.image(img.name), remote); err != nil {
+			return err
+		}
+		if err := docker("", "push", remote); err != nil {
+			return fmt.Errorf("enviando %s: %w", img.name, err)
 		}
 	}
 	return nil

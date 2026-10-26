@@ -48,6 +48,10 @@ type Secrets struct {
 	SecretsMasterKey     string `json:"secretsMasterKey"`
 	LauncherSecretsKey   string `json:"launcherSecretsKey"`
 	GrafanaAdminPassword string `json:"grafanaAdminPassword"`
+	// Registry: a credencial interna do launcher (busca imagens) e o
+	// segredo HTTP do próprio registry.
+	RegistryPullPassword string `json:"registryPullPassword"`
+	RegistryHTTPSecret   string `json:"registryHttpSecret"`
 }
 
 // lanIP é o IP desta máquina na rede local (o da interface que sai para
@@ -84,7 +88,22 @@ func generateSecrets() Secrets {
 		DatabasePassword: password(), AuthDBPassword: password(), SecretsadminDBPassword: password(),
 		TemplatesadminDBPassword: password(), LauncherDBPassword: password(),
 		SecretsMasterKey: key(), LauncherSecretsKey: key(), GrafanaAdminPassword: password(),
+		RegistryPullPassword: password(), RegistryHTTPSecret: password(),
 	}
+}
+
+// fillMissingSecrets gera os segredos que uma versão mais nova acrescentou
+// e que uma instalação antiga ainda não tem. Nunca troca um que exista.
+func (s *Settings) fillMissingSecrets() bool {
+	fresh, changed := generateSecrets(), false
+	fill := func(cur *string, v string) {
+		if *cur == "" {
+			*cur, changed = v, true
+		}
+	}
+	fill(&s.Secrets.RegistryPullPassword, fresh.RegistryPullPassword)
+	fill(&s.Secrets.RegistryHTTPSecret, fresh.RegistryHTTPSecret)
+	return changed
 }
 
 func mustRead(b []byte) {
@@ -139,6 +158,9 @@ func saveSettings(dir string, s Settings) error {
 }
 
 func (s Settings) image(name string) string { return s.ImagePrefix + name + ":" + s.Version }
+
+// RegistryHost é o registry da plataforma.
+func (s Settings) RegistryHost() string { return "registry." + s.Domain }
 
 // PortalURL é por onde se entra na plataforma, desta ou de outra máquina:
 // portal.<domínio>, pelo Traefik.

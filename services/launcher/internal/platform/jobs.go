@@ -251,6 +251,9 @@ func (s *Service) ensureImage(ctx context.Context, image, projectID string) erro
 }
 
 func (s *Service) pullImage(ctx context.Context, image, projectID string) error {
+	if s.cfg.RegistryHost != "" && dockerclient.RegistryHost(image) == s.cfg.RegistryHost {
+		return s.pullFromPlatformRegistry(ctx, image, projectID)
+	}
 	auth, err := s.registryAuthFor(ctx, projectID, image)
 	if err != nil {
 		return err

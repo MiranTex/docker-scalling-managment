@@ -79,6 +79,15 @@ func main() {
 		go syncer.Run(ctx)
 		api.WithGrafana(syncer)
 	}
+	if cfg.registryHost != "" {
+		if err := api.WithRegistry(platformapi.RegistryConfig{
+			Service: cfg.registryHost, Issuer: "base-stack", KeyFile: cfg.registryTokenKey, CertFile: cfg.registryTokenCert,
+			PullPassword: cfg.registryPullPassword,
+		}); err != nil {
+			logger.Error("configuração inválida do registry", "err", err)
+			os.Exit(1)
+		}
+	}
 	api.Register(mux)
 
 	srv := &http.Server{

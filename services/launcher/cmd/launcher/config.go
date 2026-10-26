@@ -103,6 +103,14 @@ type config struct {
 	terminalOrigins []string
 	// debugImage: a do container do modo debug do terminal.
 	debugImage string
+
+	// registry da plataforma (ver platformapi/registry.go): o host
+	// (registry.<domínio>), a chave e o certificado que assinam os tokens,
+	// e a credencial interna com que o launcher busca imagens de lá.
+	registryHost, registryTokenKey, registryTokenCert, registryPullPassword string
+	// traefikCertificates: "cert:key" separados por vírgula, caminhos vistos
+	// pelo Traefik -- entram no routing (ex: o certificado do registry).
+	traefikCertificates []platform.TLSCertificate
 }
 
 func loadConfig() config {
@@ -155,6 +163,19 @@ func loadConfig() config {
 
 		terminalOrigins: envList("LAUNCHER_TERMINAL_ORIGINS"),
 		debugImage:      envString("LAUNCHER_DEBUG_IMAGE", "busybox:1.37"),
+
+		registryHost:         os.Getenv("LAUNCHER_REGISTRY_HOST"),
+		registryTokenKey:     os.Getenv("LAUNCHER_REGISTRY_TOKEN_KEY"),
+		registryTokenCert:    os.Getenv("LAUNCHER_REGISTRY_TOKEN_CERT"),
+		registryPullPassword: os.Getenv("LAUNCHER_REGISTRY_PULL_PASSWORD"),
+	}
+	for _, pair := range envList("LAUNCHER_TRAEFIK_CERTIFICATES") {
+		cert, key, ok := strings.Cut(pair, ":")
+		if !ok {
+			slog.Error("configuração inválida: LAUNCHER_TRAEFIK_CERTIFICATES quer cert:key separados por vírgula", "value", pair)
+			os.Exit(1)
+		}
+		cfg.traefikCertificates = append(cfg.traefikCertificates, platform.TLSCertificate{CertFile: cert, KeyFile: key})
 	}
 	if cfg.selfContainer == "" {
 		cfg.selfContainer, _ = os.Hostname()
@@ -191,6 +212,9 @@ func (c config) platformConfig() platform.Config {
 		PostgresImage:         c.postgresImage,
 		RedisImage:            c.redisImage,
 		DebugImage:            c.debugImage,
+		TraefikCertificates:   c.traefikCertificates,
+		RegistryHost:          c.registryHost,
+		RegistryPullPassword:  c.registryPullPassword,
 		HostMemoryMB:          c.hostMemoryMB,
 		MemoryOvercommitRatio: c.memoryOvercommitRatio,
 		TraefikDynamicDir:     c.traefikDynamicDir,

@@ -47,15 +47,16 @@ type Users interface {
 }
 
 type API struct {
-	svc     *platform.Service
-	tokens  TokenVerifier
-	apiKeys APIKeys
-	users   Users
-	grafana Grafana
-	term    *terminals
-	dial    dialer
-	audit   *audit.Logger
-	logger  *slog.Logger
+	svc      *platform.Service
+	tokens   TokenVerifier
+	apiKeys  APIKeys
+	users    Users
+	grafana  Grafana
+	term     *terminals
+	registry *registryTokens
+	dial     dialer
+	audit    *audit.Logger
+	logger   *slog.Logger
 }
 
 func New(svc *platform.Service, tokens TokenVerifier, apiKeys APIKeys, users Users, logger *slog.Logger) *API {
@@ -138,6 +139,9 @@ func (a *API) Register(mux *http.ServeMux) {
 	// e com ele abre-se o WebSocket -- ver terminal.go.
 	mux.HandleFunc("POST "+svc+"/terminal", developer(a.serviceTerminal))
 	mux.HandleFunc("GET /v1/projects/{project}/terminal/ws", a.terminalSocket)
+	// Servidor de tokens do registry da plataforma (Basic auth, ver
+	// registry.go); o Traefik serve-o em registry.<domínio>/token.
+	mux.HandleFunc("GET /v1/registry/token", a.registryToken)
 	mux.HandleFunc("GET "+svc+"/deployments", deployRead(a.listDeployments))
 	mux.HandleFunc("POST "+svc+"/deployments", deployWrite(a.createDeployment))
 	mux.HandleFunc("GET "+svc+"/deployments/{deployment}", deployRead(a.getDeployment))

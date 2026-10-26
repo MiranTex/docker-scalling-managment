@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/x509"
 	"net"
 	"os"
 	"os/exec"
@@ -36,6 +37,8 @@ func TestRenderUsesGeneratedSecretsAndOwnNames(t *testing.T) {
 		`AUTH_BOOTSTRAP_SUPERADMIN_EMAIL: "admin@example.test"`,
 		"Host(`portal.127.0.0.1.nip.io`)", `GF_SERVER_ROOT_URL: "http://portal.127.0.0.1.nip.io/grafana/"`,
 		`LAUNCHER_TERMINAL_ORIGINS: "portal.127.0.0.1.nip.io,localhost:3100,127.0.0.1:3100"`,
+		"image: registry:2.8.3", `REGISTRY_AUTH_TOKEN_REALM: "https://registry.127.0.0.1.nip.io/token"`,
+		`LAUNCHER_REGISTRY_HOST: "registry.127.0.0.1.nip.io"`, s.Secrets.RegistryPullPassword,
 	} {
 		if !strings.Contains(c, want) {
 			t.Errorf("compose.yml não tem %q", want)
@@ -118,5 +121,62 @@ func TestComposeIsValid(t *testing.T) {
 func TestLANIPIsUsable(t *testing.T) {
 	if ip := lanIP(); net.ParseIP(ip) == nil {
 		t.Errorf("lanIP() = %q", ip)
+	}
+}
+
+func TestTLSMaterial(t *testing.T) {
+	dir := t.TempDir()
+	s := testSettings()
+	first, err := ensureTLS(dir, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ca, _ := readPEM(filepath.Join(dir, "tls/ca.crt"))
+	caCert, _ := x509.ParseCertificate(ca)
+	leaf, _ := readPEM(filepath.Join(dir, "tls/traefik", first.RegistryCert))
+	cert, err := x509.ParseCertificate(leaf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := x509.NewCertPool()
+	pool.AddCert(caCert)
+	if _, err := cert.Verify(x509.VerifyOptions{Roots: pool, DNSName: "registry.127.0.0.1.nip.io"}); err != nil {
+		t.Errorf("o certificado do registry não é válido pela CA: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "tls/token.key")); err != nil {
+		t.Error("falta a chave dos tokens")
+	}
+
+	again, _ := ensureTLS(dir, s)
+	if again != first {
+		t.Errorf("certificado reemitido sem motivo: %v -> %v", first, again)
+	}
+	s.Domain = "192.168.1.50.nip.io"
+	moved, _ := ensureTLS(dir, s)
+	if moved == first {
+		t.Error("domínio novo sem certificado novo")
+	}
+	left, _ := filepath.Glob(filepath.Join(dir, "tls/traefik/registry-*"))
+	if len(left) != 2 {
+		t.Errorf("em tls/traefik ficaram %v, quero só o par atual", left)
+	}
+	ca2, _ := readPEM(filepath.Join(dir, "tls/ca.crt"))
+	if !bytes.Equal(ca, ca2) {
+		t.Error("a CA mudou -- as máquinas que confiavam nela deixavam de confiar")
+	}
+}
+
+func TestFillMissingSecretsKeepsExisting(t *testing.T) {
+	s := testSettings()
+	keep := s.Secrets.LauncherSecretsKey
+	s.Secrets.RegistryPullPassword = ""
+	if !s.fillMissingSecrets() || s.Secrets.RegistryPullPassword == "" {
+		t.Error("não gerou o segredo em falta")
+	}
+	if s.Secrets.LauncherSecretsKey != keep {
+		t.Error("trocou um segredo que já existia")
+	}
+	if s.fillMissingSecrets() {
+		t.Error("segunda vez sem nada em falta disse que mudou")
 	}
 }

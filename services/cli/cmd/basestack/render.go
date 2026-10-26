@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"embed"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -20,6 +21,11 @@ var assets embed.FS
 // compose.yml e config/ (montado nos containers). É reescrito a cada up,
 // por isso mudar settings.json e correr "basestack up" aplica a mudança.
 func render(dir string, s Settings) error {
+	tls, err := ensureTLS(dir, s)
+	if err != nil {
+		return fmt.Errorf("certificados: %w", err)
+	}
+	data := renderData{Settings: s, TLS: tls}
 	funcs := template.FuncMap{"image": s.image}
 	files := map[string]struct {
 		tmpl string
@@ -40,7 +46,7 @@ func render(dir string, s Settings) error {
 			return err
 		}
 		var buf bytes.Buffer
-		if err := t.Execute(&buf, s); err != nil {
+		if err := t.Execute(&buf, data); err != nil {
 			return err
 		}
 		if err := writeFile(filepath.Join(dir, out), buf.Bytes(), f.mode); err != nil {
@@ -70,6 +76,13 @@ func render(dir string, s Settings) error {
 		}
 	}
 	return nil
+}
+
+// renderData é o que os templates veem: a instalação e os nomes atuais
+// dos certificados.
+type renderData struct {
+	Settings
+	TLS tlsFiles
 }
 
 func writeFile(path string, data []byte, mode os.FileMode) error {
