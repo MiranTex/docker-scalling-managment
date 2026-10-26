@@ -20,6 +20,8 @@ Uso:
   basestack status      estado de cada componente e endereços
   basestack logs <componente> [-f]
   basestack restart [componente]
+  basestack set <chave> <valor>   muda a configuração (domain, portal-port,
+                        admin-email, acme-email); aplica-se no próximo up
   basestack down        pára a plataforma (as apps dos projetos continuam)
   basestack down --all  pára a plataforma e as apps e bases de dados dos projetos
   basestack doctor      verifica os requisitos desta máquina
@@ -47,6 +49,8 @@ func main() {
 		err = cmdLogs(args)
 	case "restart":
 		err = cmdRestart(args)
+	case "set":
+		err = cmdSet(args)
 	case "down", "stop":
 		err = cmdDown(args)
 	case "doctor":

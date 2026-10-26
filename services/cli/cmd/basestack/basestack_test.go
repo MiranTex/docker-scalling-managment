@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -33,6 +34,8 @@ func TestRenderUsesGeneratedSecretsAndOwnNames(t *testing.T) {
 		"postgres://launcher:" + s.Secrets.LauncherDBPassword + "@database",
 		"image: basestack/launcher:dev", `"3100:3000"`, `HOSTNAME: "0.0.0.0"`, "Host(`api.127.0.0.1.nip.io`)",
 		`AUTH_BOOTSTRAP_SUPERADMIN_EMAIL: "admin@example.test"`,
+		"Host(`portal.127.0.0.1.nip.io`)", `GF_SERVER_ROOT_URL: "http://portal.127.0.0.1.nip.io/grafana/"`,
+		`LAUNCHER_TERMINAL_ORIGINS: "portal.127.0.0.1.nip.io,localhost:3100,127.0.0.1:3100"`,
 	} {
 		if !strings.Contains(c, want) {
 			t.Errorf("compose.yml não tem %q", want)
@@ -109,5 +112,11 @@ func TestComposeIsValid(t *testing.T) {
 	out, err := exec.Command("docker", "compose", "--file", filepath.Join(dir, "compose.yml"), "config", "--quiet").CombinedOutput()
 	if err != nil {
 		t.Fatalf("docker compose config: %v\n%s", err, out)
+	}
+}
+
+func TestLANIPIsUsable(t *testing.T) {
+	if ip := lanIP(); net.ParseIP(ip) == nil {
+		t.Errorf("lanIP() = %q", ip)
 	}
 }
