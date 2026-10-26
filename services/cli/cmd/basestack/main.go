@@ -21,6 +21,7 @@ Uso:
   basestack logs <componente> [-f]
   basestack restart [componente]
   basestack down        pára a plataforma (as apps dos projetos continuam)
+  basestack down --all  pára a plataforma e as apps e bases de dados dos projetos
   basestack doctor      verifica os requisitos desta máquina
   basestack dev build   constrói as imagens a partir do código (desenvolvimento)
   basestack uninstall   remove a plataforma e os dados dela
