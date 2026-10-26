@@ -48,3 +48,26 @@ func TestPlatformRegistryPullsOnlyOwnProject(t *testing.T) {
 		t.Errorf("RegistryProject = %q", got)
 	}
 }
+
+// Uma imagem de outro projeto que já esteja no Docker local (o fake diz
+// que todas estão) não pode ser usada: a verificação vem antes da cópia
+// local, no pedido de deploy e em qualquer ensureImage.
+func TestPlatformImageOfAnotherProjectRefusedEvenIfLocal(t *testing.T) {
+	ctx := context.Background()
+	svc, _, _, _ := newDeployService(t)
+	svc.cfg.RegistryHost = "registry.example.test"
+	svc.cfg.RegistryPullPassword = "segredo"
+	if _, err := svc.CreateService(ctx, "loja", "prod", ServiceInput{Slug: "web", Kind: "web", Port: intp(80)}, "t"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Deploy(ctx, "loja", "prod", "web", DeployInput{Image: "registry.example.test/basestack/launcher:dev"}, "t"); !errors.Is(err, ErrInvalid) {
+		t.Errorf("deploy com imagem de outro projeto: err = %v, queria ErrInvalid", err)
+	}
+	p, _, _ := svc.Scope(ctx, "loja", "prod")
+	if err := svc.ensureImage(ctx, "registry.example.test/outro/app:1", p.ID); !errors.Is(err, ErrInvalid) {
+		t.Errorf("ensureImage com imagem local de outro projeto: err = %v", err)
+	}
+	if err := svc.ensureImage(ctx, "registry.example.test/loja/app:1", p.ID); err != nil {
+		t.Errorf("ensureImage do próprio projeto: %v", err)
+	}
+}

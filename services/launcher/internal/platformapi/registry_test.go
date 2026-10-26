@@ -150,6 +150,15 @@ func TestRegistryTokensFollowProjectRoles(t *testing.T) {
 	if got := grantedActions(t, cert, out["token"].(string), "basestack/launcher"); !reflect.DeepEqual(got, []string{"pull", "push"}) {
 		t.Errorf("interna em basestack/: %v", got)
 	}
+	// Um admin da plataforma não cria "projetos" fantasma no registry.
+	_, out = askToken(t, srv, "a@x.pt", "ak_admin", "repository:naoexiste/app:pull,push")
+	if got := grantedActions(t, cert, out["token"].(string), "naoexiste/app"); got != nil {
+		t.Errorf("admin num projeto que não existe: %v", got)
+	}
+	_, out = askToken(t, srv, "a@x.pt", "ak_admin", "repository:basestack/launcher:push")
+	if got := grantedActions(t, cert, out["token"].(string), "basestack/launcher"); !reflect.DeepEqual(got, []string{"push"}) {
+		t.Errorf("admin nas imagens da plataforma: %v", got)
+	}
 	// O catálogo (listar tudo) é só para admins da plataforma.
 	_, out = askToken(t, srv, "dev@x.pt", "ak_dev", "registry:catalog:*")
 	if got := grantedActions(t, cert, out["token"].(string), "catalog"); got != nil {

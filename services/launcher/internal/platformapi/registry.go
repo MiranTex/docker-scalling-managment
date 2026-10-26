@@ -200,7 +200,12 @@ func (a *API) registryAllowed(ctx context.Context, g registryGrantee, typ, name 
 			can = append(can, "push")
 		}
 	case g.platformAdmin:
-		can = []string{"pull", "push"}
+		// Tudo, mas só em projetos que existem (e nas imagens da própria
+		// plataforma) -- senão um engano no nome criava um "projeto"
+		// fantasma no registry.
+		if project == "basestack" || a.projectExists(ctx, project) {
+			can = []string{"pull", "push"}
+		}
 	case g.deployProject != "":
 		if project == g.deployProject {
 			can = []string{"pull", "push"}
@@ -222,6 +227,11 @@ func (a *API) registryAllowed(ctx context.Context, g registryGrantee, typ, name 
 		}
 	}
 	return out
+}
+
+func (a *API) projectExists(ctx context.Context, slug string) bool {
+	_, err := a.svc.GetProject(ctx, slug)
+	return err == nil
 }
 
 func (t *registryTokens) sign(subject string, access []registryAccess) (string, error) {

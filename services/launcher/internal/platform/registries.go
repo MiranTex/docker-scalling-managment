@@ -95,18 +95,37 @@ const RegistryInternalUser = "basestack-internal"
 // a credencial interna -- que lê tudo, por isso é aqui que se garante que
 // um projeto só faz deploy das suas imagens (<registry>/<projeto>/...).
 func (s *Service) pullFromPlatformRegistry(ctx context.Context, image, projectID string) error {
-	if projectID != "" {
-		p, err := s.db.GetProject(ctx, projectID)
-		if err != nil {
-			return err
-		}
-		if RegistryProject(image) != p.Slug {
-			return invalid("a imagem %s é de outro projeto no registry da plataforma -- usa %s/%s/...", image, s.cfg.RegistryHost, p.Slug)
-		}
+	if err := s.checkPlatformImage(ctx, image, projectID); err != nil {
+		return err
 	}
 	auth := &dockerclient.RegistryAuth{Username: RegistryInternalUser, Password: s.cfg.RegistryPullPassword, ServerAddress: s.cfg.RegistryHost}
 	if err := s.docker.PullImageWithAuth(ctx, image, auth); err != nil {
 		return fmt.Errorf("obtendo imagem %s: %w", image, err)
+	}
+	return nil
+}
+
+func (s *Service) isPlatformImage(image string) bool {
+	return s.cfg.RegistryHost != "" && dockerclient.RegistryHost(image) == s.cfg.RegistryHost
+}
+
+// checkPlatformImage recusa uma imagem do registry da plataforma que não
+// seja do projeto -- antes de olhar para o Docker local, onde ela pode já
+// estar (de outro projeto ou da própria plataforma).
+func (s *Service) checkPlatformImage(ctx context.Context, image, projectID string) error {
+	if !s.isPlatformImage(image) || projectID == "" {
+		return nil
+	}
+	p, err := s.db.GetProject(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	return s.checkPlatformImageSlug(image, p.Slug)
+}
+
+func (s *Service) checkPlatformImageSlug(image, projectSlug string) error {
+	if s.isPlatformImage(image) && RegistryProject(image) != projectSlug {
+		return invalid("a imagem %s é de outro projeto no registry da plataforma -- usa %s/%s/...", image, s.cfg.RegistryHost, projectSlug)
 	}
 	return nil
 }
