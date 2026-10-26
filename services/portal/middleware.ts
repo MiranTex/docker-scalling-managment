@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { refreshTokens, type TokenPair } from "./lib/authClient";
-import { ACCESS_COOKIE, REFRESH_COOKIE, setSessionCookies, clearSessionCookies } from "./lib/session";
+import { ACCESS_COOKIE, REFRESH_COOKIE, isHttps, setSessionCookies, clearSessionCookies } from "./lib/session";
 
 // Guarda as rotas protegidas: se o access token (curto, 15 min por
 // default) já expirou mas o refresh token ainda vale, renova a sessão
@@ -27,7 +27,7 @@ export async function middleware(req: NextRequest) {
         req.cookies.set(ACCESS_COOKIE, pair.access_token);
         req.cookies.set(REFRESH_COOKIE, pair.refresh_token);
         const next = NextResponse.next({ request: { headers: req.headers } });
-        setSessionCookies(next, pair);
+        setSessionCookies(next, pair, isHttps(req));
         return next;
       }
     } catch {

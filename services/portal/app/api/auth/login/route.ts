@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { login } from "@/lib/authClient";
-import { setSessionCookies } from "@/lib/session";
+import { isHttps, setSessionCookies } from "@/lib/session";
 
 export async function POST(req: Request) {
   const { email, password } = await req.json();
@@ -11,6 +11,6 @@ export async function POST(req: Request) {
   }
 
   const res = NextResponse.json({ ok: true });
-  setSessionCookies(res, data, email);
+  setSessionCookies(res, data, isHttps(req), email);
   return res;
 }
