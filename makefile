@@ -1,4 +1,4 @@
-.PHONY: cli install-cli basestack install-basestack build-images migrations-status migrations-check start-demo demo-down start-monitoring db-upgrade-pg17
+.PHONY: cli cli-linux install-cli basestack install-basestack build-images migrations-status migrations-check start-demo demo-down start-monitoring db-upgrade-pg17
 
 DEMO_COMPOSE ?= demo/docker-compose.yml
 PGUSER ?= app
@@ -8,6 +8,12 @@ PGDATABASE ?= app
 # ver services/cli/README.md.
 cli:
 	cd services/cli && go build -o ../../bin/bs ./cmd/bs
+
+# cli-linux compila o bs para servidores Linux (Intel/AMD e ARM), em bin/.
+# Copia o que servir (uname -m: x86_64 -> amd64, aarch64 -> arm64).
+cli-linux:
+	cd services/cli && GOOS=linux GOARCH=amd64 go build -o ../../bin/bs-linux-amd64 ./cmd/bs
+	cd services/cli && GOOS=linux GOARCH=arm64 go build -o ../../bin/bs-linux-arm64 ./cmd/bs
 
 # install-cli põe o bs no PATH (por defeito /usr/local/bin; usa sudo só se
 # não der para escrever lá). Outro sítio: make install-cli PREFIX=~/.local
