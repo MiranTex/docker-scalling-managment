@@ -234,6 +234,9 @@ func startAgent(n nodeFile, dir string) error {
 	_, _ = dockerOutput("rm", "--force", agentContainer)
 	if _, err := dockerOutput("run", "--detach", "--name", agentContainer, "--restart", "unless-stopped",
 		"--label", "base-stack.node-agent=true",
+		// A rede da máquina: o agente reporta o IP verdadeiro do nó (e não
+		// abre portas).
+		"--network", "host",
 		"--volume", "/var/run/docker.sock:/var/run/docker.sock",
 		"--volume", dir+":/etc/basestack:ro",
 		n.AgentImage); err != nil {

@@ -159,7 +159,7 @@ func (a *API) agentConnect(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	nc := websocket.NetConn(ctx, conn, websocket.MessageBinary)
 	defer nc.Close()
-	if err := a.svc.ServeAgent(ctx, node.Name, nc, r.Header.Get("X-Agent-Version"), clientIP(r)); err != nil && ctx.Err() == nil {
+	if err := a.svc.ServeAgent(ctx, node.Name, nc, r.Header.Get("X-Agent-Version"), nodeAddress(r)); err != nil && ctx.Err() == nil {
 		a.logger.Info("ligação do agente terminou", "node", node.Name, "err", err)
 	}
 }
@@ -179,6 +179,15 @@ func (a *API) agentLeave(w http.ResponseWriter, r *http.Request) {
 	}
 	a.audit.Log("node:"+node.Name, "node.leave", clientIP(r), "ok")
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// nodeAddress: o IP que o agente diz ter na rede (ver services/agent), ou
+// senão o de onde vem a ligação.
+func nodeAddress(r *http.Request) string {
+	if ip := net.ParseIP(r.Header.Get("X-Node-Address")); ip != nil && !ip.IsLoopback() && !ip.IsUnspecified() {
+		return ip.String()
+	}
+	return clientIP(r)
 }
 
 // clientIP: o IP de quem pede, através do Traefik.

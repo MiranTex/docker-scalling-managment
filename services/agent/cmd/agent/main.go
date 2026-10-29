@@ -28,7 +28,7 @@ import (
 	"github.com/hashicorp/yamux"
 )
 
-const version = "0.1.0"
+const version = "0.1.1"
 
 type nodeConfig struct {
 	APIURL    string `json:"apiUrl"`
@@ -112,7 +112,12 @@ func serve(ctx context.Context, logger *slog.Logger, cfg nodeConfig, client *htt
 	dialCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	conn, resp, err := websocket.Dial(dialCtx, url, &websocket.DialOptions{
 		HTTPClient: client,
-		HTTPHeader: http.Header{"Authorization": {"Bearer " + cfg.NodeToken}, "X-Agent-Version": {version}},
+		HTTPHeader: http.Header{
+			"Authorization": {"Bearer " + cfg.NodeToken}, "X-Agent-Version": {version},
+			// O IP desta máquina na rede: o launcher pode estar atrás de um
+			// NAT (ex: Docker Desktop) e não ver o verdadeiro.
+			"X-Node-Address": {localIP(url)},
+		},
 	})
 	cancel()
 	if err != nil {
@@ -162,6 +167,22 @@ func closeWrite(c net.Conn) {
 	if cw, ok := c.(interface{ CloseWrite() error }); ok {
 		_ = cw.CloseWrite()
 	}
+}
+
+// localIP é o IP da interface por onde se chega ao launcher (o agente
+// corre com a rede da máquina). UDP não envia nada: só escolhe a rota.
+func localIP(apiURL string) string {
+	host := strings.TrimPrefix(strings.TrimPrefix(apiURL, "wss://"), "ws://")
+	host, _, _ = strings.Cut(host, "/")
+	if _, _, err := net.SplitHostPort(host); err != nil {
+		host = net.JoinHostPort(host, "443")
+	}
+	conn, err := net.Dial("udp", host)
+	if err != nil {
+		return ""
+	}
+	defer conn.Close()
+	return conn.LocalAddr().(*net.UDPAddr).IP.String()
 }
 
 func envOr(k, def string) string {
