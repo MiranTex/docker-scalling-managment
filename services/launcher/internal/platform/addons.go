@@ -261,6 +261,8 @@ func (s *Service) startAddonContainer(ctx context.Context, p store.Project, e st
 		}
 	}
 
+	// Os addons ficam no nó local: os dados estão num volume dessa máquina.
+	req.Labels[LabelNode] = LocalNode
 	name := addonContainerName(p, e, a)
 	// Um container antigo com o mesmo nome (parado, ou de uma tentativa
 	// falhada) impediria a criação.

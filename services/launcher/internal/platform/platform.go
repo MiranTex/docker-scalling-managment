@@ -97,6 +97,7 @@ type Docker interface {
 	StartExecDetached(ctx context.Context, execID string) error
 	ResizeExec(ctx context.Context, execID string, rows, cols int) error
 	InspectExec(ctx context.Context, execID string) (*dockerclient.ExecInspect, error)
+	Info(ctx context.Context) (*dockerclient.SystemInfo, error)
 }
 
 type Config struct {

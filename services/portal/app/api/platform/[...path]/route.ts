@@ -4,11 +4,11 @@ import { LAUNCHER_SERVICE_URL } from "@/lib/launcherClient";
 import { ACCESS_COOKIE } from "@/lib/session";
 
 // Proxy fino para a API de plataforma do launcher (/v1/projects/... e
-// /v1/volumes). Só estes caminhos passam -- isto não é uma porta aberta
+// /v1/volumes, /v1/nodes). Só estes caminhos passam -- isto não é uma porta aberta
 // para o resto da API do launcher. A autorização de verdade é feita lá.
 async function proxy(req: NextRequest, { params }: { params: Promise<{ path: string[] }> }) {
   const { path } = await params;
-  if (path[0] !== "projects" && path[0] !== "volumes") {
+  if (!["projects", "volumes", "nodes"].includes(path[0])) {
     return NextResponse.json({ error: "not_found", message: "caminho desconhecido" }, { status: 404 });
   }
   const cookieStore = await cookies();

@@ -44,6 +44,7 @@ func (s *Service) runToCompletion(ctx context.Context, spec containerSpec) (int,
 	}
 	labels := environmentLabels(spec.project, spec.env)
 	labels[LabelRole] = RoleJob
+	labels[LabelNode] = LocalNode
 	for k, v := range spec.labels {
 		labels[k] = v
 	}

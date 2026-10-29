@@ -41,6 +41,11 @@ export default function ServiceClient({ project, env, svc }: { project: string; 
   const [open, setOpen] = useState<Deployment | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // O deploy lançado desta página, acompanhado até terminar -- o resultado
+  // fica à vista até ser fechado (as réplicas antigas continuam verdes
+  // quando um deploy falha, por isso o selo não chega).
+  const [tracking, setTracking] = useState<string | null>(null);
+  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [image, setImage] = useState("");
   const [command, setCommand] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -73,14 +78,34 @@ export default function ServiceClient({ project, env, svc }: { project: string; 
     }
   }
 
+  async function checkTracked(id: string) {
+    try {
+      const d = await api<Deployment>(path("deployments", id));
+      if (!d.finishedAt) return;
+      setTracking(null);
+      setNotice(null);
+      setResult(
+        d.status === "succeeded"
+          ? { ok: true, text: `Deploy da revisão #${d.revisionNumber} concluído.` }
+          : {
+              ok: false,
+              text: `O deploy da revisão #${d.revisionNumber} falhou: ${d.error || d.status}. As réplicas anteriores continuam a servir.`,
+            },
+      );
+    } catch {
+      // Tenta outra vez no próximo ciclo.
+    }
+  }
+
   useEffect(() => {
     load();
     const t = setInterval(() => {
       load();
       if (open && !open.finishedAt) showDeployment(open.id);
+      if (tracking) checkTracked(tracking);
     }, 3000);
     return () => clearInterval(t);
-  }, [project, env, svc, open?.id, open?.finishedAt]);
+  }, [project, env, svc, open?.id, open?.finishedAt, tracking]);
 
   async function deploy(body: object, what: string) {
     setError(null);
@@ -88,6 +113,8 @@ export default function ServiceClient({ project, env, svc }: { project: string; 
     try {
       const d = await api<Deployment>(path("deployments"), { method: "POST", body: JSON.stringify(body) });
       setNotice(`${what} iniciado.`);
+      setResult(null);
+      setTracking(d.id);
       setImage("");
       setOpen(d);
       await load();
@@ -162,6 +189,14 @@ export default function ServiceClient({ project, env, svc }: { project: string; 
         </h1>
         {error && <div className="error">{error}</div>}
         {notice && <div className="notice">{notice}</div>}
+        {result && (
+          <div className={result.ok ? "notice" : "error"} style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+            <span>{result.text}</span>
+            <button className="secondary" onClick={() => setResult(null)}>
+              Fechar
+            </button>
+          </div>
+        )}
         {service.problem && <div className="error">{service.problem}</div>}
         <p>
           {service.kind === "web" ? `Web na porta ${service.port}` : "Worker"} ·{" "}
@@ -254,6 +289,7 @@ export default function ServiceClient({ project, env, svc }: { project: string; 
               <tr>
                 <th>Container</th>
                 <th>Revisão</th>
+                <th>Nó</th>
                 <th>Estado</th>
                 <th>Tráfego</th>
               </tr>
@@ -265,6 +301,7 @@ export default function ServiceClient({ project, env, svc }: { project: string; 
                     <code>{r.name}</code>
                   </td>
                   <td>#{r.revisionNumber}</td>
+                  <td>{r.node}</td>
                   <td>{r.status}</td>
                   <td>
                     {r.draining ? (

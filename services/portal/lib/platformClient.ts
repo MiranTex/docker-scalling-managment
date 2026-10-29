@@ -181,6 +181,24 @@ export type Replica = {
   revisionNumber: number;
   ready: boolean;
   draining: boolean;
+  node: string;
+};
+
+export type NodeView = {
+  name: string;
+  address: string;
+  os: string;
+  arch: string;
+  cpus: number;
+  memoryMb: number;
+  dockerVersion: string;
+  schedulable: boolean;
+  lastSeenAt: string;
+  online: boolean;
+  allocated: Usage;
+  replicas: number;
+  addons: number;
+  capacityMemoryMb: number;
 };
 
 export type ImageTag = { tag: string; digest: string; platforms: string[]; size: number; created?: string };
