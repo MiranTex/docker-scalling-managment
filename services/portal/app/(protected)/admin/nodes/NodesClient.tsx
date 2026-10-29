@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import CopyCommand from "@/components/CopyCommand";
 import Modal from "@/components/Modal";
 import PageHeader from "@/components/PageHeader";
 import { api, type NodeCheck, type NodeJoinToken, type NodeView } from "@/lib/platformClient";
@@ -180,23 +179,7 @@ export default function NodesClient() {
         </p>
       </div>
 
-      {join && (
-        <Modal title="Adicionar nó" onClose={() => setJoin(null)}>
-          <p>
-            Numa máquina Linux com Docker e o <code>basestack</code> instalado, corre (o token serve uma vez e expira às{" "}
-            {new Date(join.expiresAt).toLocaleTimeString("pt-PT")}):
-          </p>
-          <CopyCommand command={join.command} />
-          <p className="muted">
-            O <code>--ca</code> é a impressão digital da CA desta plataforma: o nó só aceita ligar-se a quem a tem. O
-            join pede <code>sudo</code> para o Docker dessa máquina confiar no registry, e arranca o agente
-            (container <code>basestack-agent</code>), que se liga para cá -- o nó não abre portas.
-          </p>
-          <button className="secondary" onClick={() => { setJoin(null); load(); }}>
-            Fechar
-          </button>
-        </Modal>
-      )}
+      {join && <JoinModal join={join} onClose={() => { setJoin(null); load(); }} />}
 
       {check && (
         <Modal title={`Testar ${check.node}`} onClose={() => setCheck(null)}>
@@ -214,5 +197,51 @@ export default function NodesClient() {
         </Modal>
       )}
     </>
+  );
+}
+
+// O comando do join é comprido (URL, token e impressão digital da CA): vai
+// num bloco que parte a linha, com o botão de copiar por baixo.
+function JoinModal({ join, onClose }: { join: NodeJoinToken; onClose: () => void }) {
+  const [copied, setCopied] = useState(false);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(join.command);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Sem acesso ao clipboard: o comando continua visível para copiar à mão.
+    }
+  }
+
+  return (
+    <Modal title="Adicionar nó" onClose={onClose} width={680}>
+      <ol style={{ paddingLeft: "1.2rem", lineHeight: 1.6 }}>
+        <li>
+          Numa máquina Linux com Docker, instala o <code>basestack</code>.
+        </li>
+        <li>Corre lá este comando:</li>
+      </ol>
+      <pre className="generated" style={{ whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
+        {join.command}
+      </pre>
+      <div className="row" style={{ alignItems: "center", gap: 12 }}>
+        <button className="primary" onClick={copy}>
+          {copied ? "Copiado" : "Copiar comando"}
+        </button>
+        <span className="muted">
+          Serve uma vez e expira às {new Date(join.expiresAt).toLocaleTimeString("pt-PT", { hour: "2-digit", minute: "2-digit" })}.
+        </span>
+      </div>
+      <p className="muted" style={{ marginTop: 16 }}>
+        O <code>--ca</code> é a impressão digital da CA desta plataforma: o nó só se liga a quem a tem. O comando pede{" "}
+        <code>sudo</code> para o Docker dessa máquina confiar no registry e arranca o agente (container{" "}
+        <code>basestack-agent</code>), que se liga para cá -- o nó não abre portas. Quando terminar, o nó aparece aqui.
+      </p>
+      <button className="secondary" onClick={onClose}>
+        Fechar
+      </button>
+    </Modal>
   );
 }
