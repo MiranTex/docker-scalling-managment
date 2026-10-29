@@ -254,6 +254,7 @@ export default function ServiceClient({ project, env, svc }: { project: string; 
               <tr>
                 <th>Container</th>
                 <th>Revisão</th>
+                <th>Nó</th>
                 <th>Estado</th>
                 <th>Tráfego</th>
               </tr>
@@ -265,6 +266,7 @@ export default function ServiceClient({ project, env, svc }: { project: string; 
                     <code>{r.name}</code>
                   </td>
                   <td>#{r.revisionNumber}</td>
+                  <td>{r.node}</td>
                   <td>{r.status}</td>
                   <td>
                     {r.draining ? (

@@ -234,6 +234,11 @@ func (f *fakeDocker) InspectImage(context.Context, string) (*dockerclient.ImageI
 
 func (f *fakeDocker) PullImage(context.Context, string) error { return nil }
 
+// Info: a máquina do nó local nos testes.
+func (f *fakeDocker) Info(context.Context) (*dockerclient.SystemInfo, error) {
+	return &dockerclient.SystemInfo{Name: "teste", NCPU: 4, MemTotal: 16 << 30, Architecture: "x86_64", OSType: "linux", ServerVersion: "29.0.0"}, nil
+}
+
 func (f *fakeDocker) CreateLabeledNetwork(_ context.Context, name string, labels map[string]string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -117,3 +117,21 @@ func (c *Client) doRaw(ctx context.Context, method, path string) ([]byte, error)
 	}
 	return body, nil
 }
+
+// SystemInfo é o subconjunto de /info que descreve a máquina.
+type SystemInfo struct {
+	Name          string `json:"Name"`
+	NCPU          int    `json:"NCPU"`
+	MemTotal      int64  `json:"MemTotal"`
+	Architecture  string `json:"Architecture"` // do kernel: x86_64, aarch64
+	OSType        string `json:"OSType"`
+	ServerVersion string `json:"ServerVersion"`
+}
+
+func (c *Client) Info(ctx context.Context) (*SystemInfo, error) {
+	var info SystemInfo
+	if err := c.do(ctx, "GET", "/info", nil, &info); err != nil {
+		return nil, err
+	}
+	return &info, nil
+}

@@ -118,13 +118,23 @@ func (s *Service) createReplica(ctx context.Context, p store.Project, e store.En
 	if err := s.checkQuota(ctx, p, rev.VCPU, rev.MemoryMB); err != nil {
 		return "", err
 	}
+	node, err := s.placeReplica(ctx, rev)
+	if err != nil {
+		return "", err
+	}
+	docker, err := s.dockerOn(node)
+	if err != nil {
+		return "", err
+	}
+	labels := replicaLabels(p, e, svc, rev)
+	labels[LabelNode] = node
 	memory := rev.MemoryMB * 1024 * 1024
 	name := "bs-" + p.Slug + "-" + e.Slug + "-" + svc.Slug + "-" + newID()[:6]
-	id, err := s.docker.CreateContainer(ctx, name, dockerclient.CreateContainerRequest{
+	id, err := docker.CreateContainer(ctx, name, dockerclient.CreateContainerRequest{
 		Image:  rev.Image,
 		Cmd:    rev.Cmd,
 		Env:    envVars,
-		Labels: replicaLabels(p, e, svc, rev),
+		Labels: labels,
 		HostConfig: &dockerclient.CreateHostConfig{
 			NetworkMode:   e.Network,
 			RestartPolicy: dockerclient.UnlessStopped(),
@@ -142,8 +152,8 @@ func (s *Service) createReplica(ctx context.Context, p store.Project, e store.En
 	if err != nil {
 		return "", fmt.Errorf("criando réplica: %w", err)
 	}
-	if err := s.docker.StartContainer(ctx, id); err != nil {
-		_ = s.docker.RemoveContainer(ctx, id, true)
+	if err := docker.StartContainer(ctx, id); err != nil {
+		_ = docker.RemoveContainer(ctx, id, true)
 		return "", fmt.Errorf("arrancando réplica: %w", err)
 	}
 	return name, nil
@@ -281,6 +291,7 @@ type Replica struct {
 	RevisionNumber int    `json:"revisionNumber"`
 	Ready          bool   `json:"ready"`
 	Draining       bool   `json:"draining"`
+	Node           string `json:"node"`
 }
 
 func (s *Service) ListReplicas(ctx context.Context, projectSlug, envSlug, svcSlug string) ([]Replica, error) {
@@ -305,7 +316,7 @@ func (s *Service) ListReplicas(ctx context.Context, projectSlug, envSlug, svcSlu
 		_, draining := s.rt.drainDeadline(name)
 		out = append(out, Replica{
 			Name: name, State: c.State, Status: c.Status, RevisionID: revID, RevisionNumber: numbers[revID],
-			Ready: s.rt.isReady(name), Draining: draining,
+			Ready: s.rt.isReady(name), Draining: draining, Node: nodeOf(c),
 		})
 	}
 	return out, nil

@@ -11,10 +11,12 @@ import (
 	"strings"
 )
 
-// ImageInspect é o subconjunto de /images/{name}/json que precisamos: só
-// confirmar que a imagem já existe no daemon local.
+// ImageInspect é o subconjunto de /images/{name}/json que precisamos: se a
+// imagem existe no daemon local e para que plataforma é.
 type ImageInspect struct {
-	ID string `json:"Id"`
+	ID           string `json:"Id"`
+	Os           string `json:"Os"`
+	Architecture string `json:"Architecture"`
 }
 
 // InspectImage verifica se uma imagem já existe localmente no daemon.

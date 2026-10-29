@@ -23,6 +23,7 @@ const (
 // o que está na base (addons, serviços, domínios e routing). Bloqueia até
 // ctx terminar.
 func (s *Service) Run(ctx context.Context) {
+	s.registerLocalNode(ctx)
 	s.startupCleanup(ctx)
 	s.AttachPlatformToAll(ctx)
 
@@ -32,6 +33,8 @@ func (s *Service) Run(ctx context.Context) {
 	defer backups.Stop()
 	reattach := time.NewTicker(reattachEvery)
 	defer reattach.Stop()
+	heartbeat := time.NewTicker(nodeHeartbeat)
+	defer heartbeat.Stop()
 
 	s.reconcileOnce(ctx)
 	for {
@@ -44,6 +47,8 @@ func (s *Service) Run(ctx context.Context) {
 			s.reconcileOnce(ctx)
 		case <-reattach.C:
 			s.AttachPlatformToAll(ctx)
+		case <-heartbeat.C:
+			s.registerLocalNode(ctx)
 		case <-backups.C:
 			s.runDueBackups(ctx)
 		}

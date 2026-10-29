@@ -103,6 +103,9 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /v1/projects/{project}/environments/{env}/secrets/{name}", developer(a.putSecret))
 	mux.HandleFunc("DELETE /v1/projects/{project}/environments/{env}/secrets/{name}", developer(a.deleteSecret))
 
+	mux.HandleFunc("GET /v1/nodes", platformAdmin(a.listNodes))
+	mux.HandleFunc("PATCH /v1/nodes/{node}", platformAdmin(a.updateNode))
+
 	mux.HandleFunc("GET /v1/volumes", platformAdmin(a.listVolumes))
 	mux.HandleFunc("DELETE /v1/volumes/{name}", platformAdmin(a.deleteVolume))
 

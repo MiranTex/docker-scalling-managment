@@ -36,6 +36,11 @@ export default function Sidebar({ role }: { role?: string }) {
       ],
     },
     {
+      title: "Infraestrutura",
+      visible: infra,
+      items: [{ href: "/admin/nodes", label: "Nós" }],
+    },
+    {
       title: "Dados",
       visible: infra,
       items: [
