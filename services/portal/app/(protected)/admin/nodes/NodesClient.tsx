@@ -1,17 +1,21 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import CopyCommand from "@/components/CopyCommand";
+import Modal from "@/components/Modal";
 import PageHeader from "@/components/PageHeader";
-import { api, type NodeView } from "@/lib/platformClient";
+import { api, type NodeCheck, type NodeJoinToken, type NodeView } from "@/lib/platformClient";
 
 const gb = (mb: number) => `${(mb / 1024).toFixed(1)} GB`;
 
-// As máquinas onde correm as apps e os addons dos projetos. Para já só a
-// "local" (a do launcher); as outras entram com "basestack node join".
+// As máquinas onde correm as apps e os addons dos projetos: a "local" (a
+// do launcher) e as que entram com "basestack node join" (agente).
 export default function NodesClient() {
   const [nodes, setNodes] = useState<NodeView[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [join, setJoin] = useState<NodeJoinToken | null>(null);
+  const [check, setCheck] = useState<{ node: string; result: NodeCheck | null } | null>(null);
 
   async function load() {
     try {
@@ -41,9 +45,48 @@ export default function NodesClient() {
     }
   }
 
+  async function addNode() {
+    setError(null);
+    try {
+      setJoin(await api<NodeJoinToken>("nodes/join-tokens", { method: "POST" }));
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  async function runCheck(n: NodeView) {
+    setCheck({ node: n.name, result: null });
+    try {
+      setCheck({ node: n.name, result: await api<NodeCheck>(`nodes/${encodeURIComponent(n.name)}/check`, { method: "POST" }) });
+    } catch (e) {
+      setCheck({ node: n.name, result: { ok: false, output: "", error: (e as Error).message } });
+    }
+  }
+
+  async function remove(n: NodeView) {
+    if (!confirm(`Remover o nó ${n.name}? O agente deixa de conseguir ligar-se (na máquina: basestack node leave).`)) return;
+    setBusy(n.name);
+    try {
+      await api(`nodes/${encodeURIComponent(n.name)}`, { method: "DELETE" });
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
   return (
     <>
-      <PageHeader title="Nós" description="As máquinas onde correm as apps e os addons dos projetos." />
+      <PageHeader
+        title="Nós"
+        description="As máquinas onde correm as apps e os addons dos projetos."
+        actions={
+          <button className="primary" onClick={addNode}>
+            Adicionar nó
+          </button>
+        }
+      />
       {error && <div className="error">{error}</div>}
       <div className="card wide">
         {!nodes ? (
@@ -89,9 +132,12 @@ export default function NodesClient() {
                     </td>
                     <td>
                       <code>
-                        {n.os}/{n.arch}
+                        {n.os || "?"}/{n.arch || "?"}
                       </code>
-                      <div className="muted">Docker {n.dockerVersion}</div>
+                      <div className="muted">
+                        Docker {n.dockerVersion || "?"}
+                        {n.kind === "agent" && ` · agente ${n.agentVersion || "?"}`}
+                      </div>
                     </td>
                     <td>
                       {n.allocated.vcpu.toFixed(2)} / {n.cpus}
@@ -102,7 +148,10 @@ export default function NodesClient() {
                     <td>{n.replicas}</td>
                     <td>{n.addons}</td>
                     <td>{new Date(n.lastSeenAt).toLocaleString("pt-PT")}</td>
-                    <td>
+                    <td className="row" style={{ gap: 6, flexWrap: "nowrap" }}>
+                      <button className="secondary" disabled={!n.online} onClick={() => runCheck(n)} title="Corre um container pequeno no nó">
+                        Testar
+                      </button>
                       {n.schedulable ? (
                         <button className="secondary" disabled={busy === n.name} onClick={() => setSchedulable(n, false)}>
                           Manutenção
@@ -110,6 +159,11 @@ export default function NodesClient() {
                       ) : (
                         <button className="primary" disabled={busy === n.name} onClick={() => setSchedulable(n, true)}>
                           Reativar
+                        </button>
+                      )}
+                      {n.kind === "agent" && (
+                        <button className="danger" disabled={busy === n.name} onClick={() => remove(n)}>
+                          Remover
                         </button>
                       )}
                     </td>
@@ -121,9 +175,44 @@ export default function NodesClient() {
         )}
         <p className="muted" style={{ marginTop: 12 }}>
           A memória alocada é a soma dos limites dos containers (não o consumo real). Em manutenção, o nó não recebe
-          réplicas novas; as que lá estão continuam a correr.
+          réplicas novas; as que lá estão continuam a correr. Os nós remotos ainda não recebem apps: falta a rede entre
+          nós.
         </p>
       </div>
+
+      {join && (
+        <Modal title="Adicionar nó" onClose={() => setJoin(null)}>
+          <p>
+            Numa máquina Linux com Docker e o <code>basestack</code> instalado, corre (o token serve uma vez e expira às{" "}
+            {new Date(join.expiresAt).toLocaleTimeString("pt-PT")}):
+          </p>
+          <CopyCommand command={join.command} />
+          <p className="muted">
+            O <code>--ca</code> é a impressão digital da CA desta plataforma: o nó só aceita ligar-se a quem a tem. O
+            join pede <code>sudo</code> para o Docker dessa máquina confiar no registry, e arranca o agente
+            (container <code>basestack-agent</code>), que se liga para cá -- o nó não abre portas.
+          </p>
+          <button className="secondary" onClick={() => { setJoin(null); load(); }}>
+            Fechar
+          </button>
+        </Modal>
+      )}
+
+      {check && (
+        <Modal title={`Testar ${check.node}`} onClose={() => setCheck(null)}>
+          {!check.result ? (
+            <p className="muted">A correr um container de teste no nó...</p>
+          ) : (
+            <>
+              {check.result.ok ? <div className="notice">O nó está utilizável.</div> : <div className="error">{check.result.error}</div>}
+              {check.result.output && <pre className="generated">{check.result.output}</pre>}
+            </>
+          )}
+          <button className="secondary" onClick={() => setCheck(null)}>
+            Fechar
+          </button>
+        </Modal>
+      )}
     </>
   );
 }
