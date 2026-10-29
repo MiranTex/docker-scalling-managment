@@ -226,6 +226,7 @@ services:
       LAUNCHER_REGISTRY_TOKEN_KEY: /etc/base-stack/registry/token.key
       LAUNCHER_REGISTRY_TOKEN_CERT: /etc/base-stack/registry/token.crt
       LAUNCHER_REGISTRY_PULL_PASSWORD: "{{.Secrets.RegistryPullPassword}}"
+      LAUNCHER_REGISTRY_URL: http://registry:5000
       LAUNCHER_TRAEFIK_CERTIFICATES: "/etc/traefik/tls/{{.TLS.RegistryCert}}:/etc/traefik/tls/{{.TLS.RegistryKey}}"
     labels:
       base-stack.managed: "true"

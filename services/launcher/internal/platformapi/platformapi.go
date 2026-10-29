@@ -166,6 +166,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/projects/{project}/deploy-tokens", developer(a.createDeployToken))
 	mux.HandleFunc("DELETE /v1/projects/{project}/deploy-tokens/{token}", developer(a.revokeDeployToken))
 
+	mux.HandleFunc("GET /v1/projects/{project}/images", viewer(a.listImages))
 	mux.HandleFunc("GET /v1/projects/{project}/registries", viewer(a.listRegistries))
 	mux.HandleFunc("PUT /v1/projects/{project}/registries/{registry}", developer(a.putRegistry))
 	mux.HandleFunc("DELETE /v1/projects/{project}/registries/{registry}", developer(a.deleteRegistry))
