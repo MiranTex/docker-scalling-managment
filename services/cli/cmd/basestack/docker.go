@@ -35,6 +35,13 @@ func dockerOutput(args ...string) (string, error) {
 	return strings.TrimSpace(out.String()), nil
 }
 
+// containerdStore: o Docker guarda as imagens no containerd -- o que deixa
+// ter várias arquiteturas numa só imagem local (e enviá-las num push).
+func containerdStore() bool {
+	out, err := dockerOutput("info", "--format", "{{json .DriverStatus}}")
+	return err == nil && strings.Contains(out, "io.containerd.snapshotter")
+}
+
 func imageExists(ref string) bool {
 	_, err := dockerOutput("image", "inspect", "--format", "{{.Id}}", ref)
 	return err == nil

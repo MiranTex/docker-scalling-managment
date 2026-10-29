@@ -25,7 +25,8 @@ Na primeira vez: regista-te no portal com o email do admin e corre
 | `basestack status` | estado de cada componente e os endereços |
 | `basestack logs <componente> [-f]` | ex.: `launcher`, `auth`, `portal`, `grafana` |
 | `basestack restart [componente]` | |
-| `basestack set <chave> <valor>` | muda `domain`, `portal-port`, `admin-email` ou `acme-email` (os segredos ficam); aplica com `up` |
+| `basestack set <chave> <valor>` | muda `domain`, `portal-port`, `admin-email`, `acme-email` ou `images-from` (os segredos ficam); aplica com `up` |
+| `basestack pull` | volta a buscar as imagens da plataforma a `images-from` (o `up` só busca as que faltam) |
 | `basestack up` | também aplica mudanças feitas em `settings.json` |
 | `basestack down` | pára a plataforma; os dados ficam e as apps dos projetos continuam a correr |
 | `basestack down --all` | pára também as apps e bases de dados dos projetos (os dados ficam); no `up` seguinte o launcher volta a ligá-las |
@@ -52,6 +53,30 @@ nunca partilha redes, volumes ou chaves com a demo antiga
 (`demo/docker-compose.yml`) -- mas usam as mesmas portas: só uma de cada
 vez (`basestack up` recusa se as portas estiverem ocupadas).
 
+## Noutra máquina (sem o código)
+
+Os binários para Mac e Linux (Intel/AMD e ARM) saem de `make release`
+(`bin/release/basestack-<os>-<arch>`, idem `bs`). Numa máquina sem o
+repositório, as imagens da plataforma vêm do registry de uma instalação que
+as construiu -- com as duas arquiteturas, para servirem em qualquer uma:
+
+```sh
+# na máquina com o código
+basestack dev build --platform linux/amd64,linux/arm64 --push
+
+# na máquina nova (confia antes na CA dessa instalação -- ver abaixo)
+docker login registry.<domínio da outra>            # email + API key de um admin da plataforma
+basestack init --images-from registry.<domínio da outra>/basestack
+basestack up
+```
+
+Várias arquiteturas numa imagem precisam do image store do containerd
+(padrão no Docker Engine 29+; no Docker Desktop: Settings > General >
+"Use containerd for pulling and storing images"). As imagens de Go
+compilam já para o alvo, sem emulação; o portal (Node) corre emulado e é o
+mais lento. O mesmo serve para as apps:
+`docker build --platform linux/amd64,linux/arm64 -t registry.<domínio>/<projeto>/app:1.0 . && docker push ...`.
+
 ## Registry de imagens
 
 `basestack up` arranca também um registry em `registry.<domínio>` (HTTPS
@@ -75,14 +100,18 @@ interna do launcher), mas só imagens do próprio projeto.
 registry é assinado por uma CA própria (`~/.basestack/tls/ca.crt`), e cada
 máquina que usa o registry tem de confiar nela:
 
-- nesta máquina, o `basestack up` põe-na em `~/.docker/certs.d/` (Mac --
-  **reinicia o Docker Desktop uma vez**) ou `/etc/docker/certs.d/` (Linux);
-- numa máquina Linux com Docker 29+ (image store do containerd, o padrão),
-  o pedido do token só confia nas CAs do sistema -- o `certs.d` não chega:
+- no Mac, o `basestack up` põe-na em `~/.docker/certs.d/` --
+  **reinicia o Docker Desktop uma vez**;
+- no Linux, o `basestack up` mostra os comandos (abaixo) e, num terminal,
+  oferece-se para os correr com `sudo` antes de arrancar a plataforma. Com
+  Docker 29+ (image store do containerd) o pedido do token só confia nas
+  CAs do sistema -- o `certs.d` não chega;
+- noutra máquina Linux que use este registry, o mesmo à mão, com o
+  `ca.crt` copiado desta:
   ```sh
   sudo mkdir -p /etc/docker/certs.d/registry.<domínio>
   sudo cp ca.crt /etc/docker/certs.d/registry.<domínio>/ca.crt
-  sudo cp ca.crt /usr/local/share/ca-certificates/basestack-ca.crt
+  sudo cp ca.crt /usr/local/share/ca-certificates/basestack-registry.<domínio>.crt
   sudo update-ca-certificates && sudo systemctl restart docker
   ```
 

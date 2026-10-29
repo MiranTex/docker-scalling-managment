@@ -1,4 +1,4 @@
-.PHONY: cli cli-linux install-cli basestack install-basestack build-images migrations-status migrations-check start-demo demo-down start-monitoring db-upgrade-pg17
+.PHONY: cli cli-linux install-cli basestack install-basestack release build-images migrations-status migrations-check start-demo demo-down start-monitoring db-upgrade-pg17
 
 DEMO_COMPOSE ?= demo/docker-compose.yml
 PGUSER ?= app
@@ -33,6 +33,15 @@ install-basestack: basestack
 	@if [ -w "$(PREFIX)/bin" ]; then install -m 0755 bin/basestack "$(PREFIX)/bin/basestack"; \
 	else echo "A instalar em $(PREFIX)/bin com sudo"; sudo install -m 0755 bin/basestack "$(PREFIX)/bin/basestack"; fi
 	@echo "basestack instalado em $(PREFIX)/bin/basestack -- experimenta: basestack doctor"
+
+# release compila o basestack e o bs para Mac e Linux, Intel/AMD e ARM, em
+# bin/release/<nome>-<os>-<arch> (uname -m: x86_64 -> amd64, aarch64/arm64 -> arm64).
+release:
+	@for os in darwin linux; do for arch in amd64 arm64; do \
+		for cmd in basestack bs; do \
+			(cd services/cli && CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -o ../../bin/release/$$cmd-$$os-$$arch ./cmd/$$cmd) || exit 1; \
+		done; done; done
+	@ls -1 bin/release
 
 build-images:
 	docker build -t autoscaler-group:latest services/autoscaler

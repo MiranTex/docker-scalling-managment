@@ -21,6 +21,7 @@ func cmdInit(args []string) error {
 	portalPort := fs.Int("portal-port", 0, "porta do portal neste host")
 	adminEmail := fs.String("admin-email", "", "email da conta que fica super-admin")
 	acmeEmail := fs.String("acme-email", "", "email para certificados HTTPS (Let's Encrypt); vazio = só HTTP")
+	imagesFrom := fs.String("images-from", "", "registry de onde buscar as imagens da plataforma (ex: registry.<domínio>/basestack); vazio = construí-las aqui")
 	yes := fs.Bool("yes", false, "não perguntar: usa as flags e os valores por defeito")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -62,6 +63,7 @@ func cmdInit(args []string) error {
 		return fmt.Errorf("email do administrador inválido: %q", s.AdminEmail)
 	}
 	s.ACMEEmail = ask("Email para HTTPS automático (vazio = só HTTP, ex: numa rede local)", *acmeEmail)
+	s.ImageSource = strings.TrimRight(*imagesFrom, "/")
 	s.Secrets = generateSecrets()
 
 	if err := saveSettings(dir, s); err != nil {
@@ -78,6 +80,11 @@ func cmdUp(args []string) error {
 	if err != nil {
 		return err
 	}
+	if s.ImageSource != "" {
+		if err := pullImages(s, true); err != nil {
+			return err
+		}
+	}
 	var missing []string
 	for _, img := range platformImages {
 		if !imageExists(s.image(img.name)) {
@@ -85,7 +92,7 @@ func cmdUp(args []string) error {
 		}
 	}
 	if len(missing) > 0 {
-		return fmt.Errorf("faltam imagens: %s\n  em desenvolvimento, constrói-as com: basestack dev build", strings.Join(missing, ", "))
+		return fmt.Errorf("faltam imagens: %s\n  constrói-as (basestack dev build) ou diz de onde vêm: basestack set images-from <registry>/basestack", strings.Join(missing, ", "))
 	}
 	if busy, err := foreignPublishers(s.HTTPPort, s.HTTPSPort, s.PortalPort, s.GrafanaPort); err != nil {
 		return err
@@ -100,18 +107,21 @@ func cmdUp(args []string) error {
 	if err := render(dir, s); err != nil {
 		return err
 	}
+	if runtime.GOOS == "linux" {
+		if err := trustOnLinux(dir, s.RegistryHost()); err != nil {
+			return err
+		}
+	}
 	if err := compose(dir, append([]string{"up", "--detach", "--remove-orphans", "--wait"}, args...)...).Run(); err != nil {
 		return fmt.Errorf("a plataforma não arrancou toda -- vê \"basestack status\" e \"basestack logs <componente>\": %w", err)
 	}
-	if path, changed, err := trustCA(dir, s.RegistryHost()); err != nil {
-		fmt.Printf("\nAviso: não consegui pôr a CA em %s (%v).\n  O docker desta máquina não vai confiar no registry; copia %s para lá (com sudo).\n",
-			path, err, filepath.Join(dir, "tls", "ca.crt"))
-	} else if changed && runtime.GOOS == "darwin" {
-		fmt.Printf("\nCA do registry instalada em %s.\n  Reinicia o Docker Desktop uma vez para ele confiar no registry (só ele lê essa pasta ao arrancar).\n", path)
-	} else if changed {
-		fmt.Printf("\nCA do registry instalada em %s.\n  Com o image store do containerd (Docker 29+), junta-a também às CAs do sistema e reinicia o Docker:\n"+
-			"    sudo cp %s /usr/local/share/ca-certificates/basestack-ca.crt && sudo update-ca-certificates && sudo systemctl restart docker\n",
-			path, filepath.Join(dir, "tls", "ca.crt"))
+	if runtime.GOOS == "darwin" {
+		if path, changed, err := trustCA(dir, s.RegistryHost()); err != nil {
+			fmt.Printf("\nAviso: não consegui pôr a CA em %s (%v).\n  O docker desta máquina não vai confiar no registry; copia %s para lá.\n",
+				path, err, filepath.Join(dir, "tls", "ca.crt"))
+		} else if changed {
+			fmt.Printf("\nCA do registry instalada em %s.\n  Reinicia o Docker Desktop uma vez para ele confiar no registry (só ele lê essa pasta ao arrancar).\n", path)
+		}
 	}
 	printAddresses(s)
 	fmt.Printf(`
@@ -121,6 +131,48 @@ Primeira vez?
   3. Entra de novo no portal.
 `, s.PortalURL(), s.AdminEmail)
 	return nil
+}
+
+// trustOnLinux instala a CA do registry (ver linuxTrust). Pede root: como
+// root corre logo; num terminal pergunta antes de usar o sudo; sem
+// terminal só mostra os comandos. Reinicia o Docker -- por isso corre
+// antes de arrancar a plataforma.
+func trustOnLinux(dir, host string) error {
+	script, err := linuxTrust(dir, host)
+	if err != nil || script == "" {
+		return err
+	}
+	fmt.Printf("\nPara o docker desta máquina confiar no registry (%s), é preciso como root:\n\n%s\n", host, indent(script))
+	var cmd *exec.Cmd
+	switch {
+	case os.Geteuid() == 0:
+		cmd = exec.Command("sh", "-c", script)
+	case isTerminal(os.Stdin):
+		fmt.Print("Correr agora com sudo (reinicia o Docker)? [s/N] ")
+		line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+		if a := strings.ToLower(strings.TrimSpace(line)); a != "s" && a != "sim" && a != "y" && a != "yes" {
+			fmt.Println("Ficou por fazer: o docker vai recusar o registry até correres isto.")
+			return nil
+		}
+		cmd = exec.Command("sudo", "sh", "-c", script)
+	default:
+		fmt.Println("Ficou por fazer (sem terminal para pedir o sudo).")
+		return nil
+	}
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("instalando a CA: %w", err)
+	}
+	return nil
+}
+
+func indent(s string) string {
+	return "    " + strings.ReplaceAll(strings.TrimRight(s, "\n"), "\n", "\n    ")
+}
+
+func isTerminal(f *os.File) bool {
+	st, err := f.Stat()
+	return err == nil && st.Mode()&os.ModeCharDevice != 0
 }
 
 func printAddresses(s Settings) {
@@ -243,13 +295,17 @@ func cmdDoctor(args []string) error {
 
 func cmdDev(args []string) error {
 	if len(args) == 0 || args[0] != "build" {
-		return errors.New("uso: basestack dev build [--source <repositório>] [imagem...]")
+		return errors.New("uso: basestack dev build [--source <repositório>] [--platform linux/amd64,linux/arm64] [--push] [imagem...]")
 	}
 	fs := flag.NewFlagSet("dev build", flag.ContinueOnError)
 	source := fs.String("source", "", "raiz do repositório base-stack (por defeito, procura a partir da pasta atual)")
 	push := fs.Bool("push", false, "enviar também para o registry da plataforma (registry.<domínio>/basestack/...)")
+	platforms := fs.String("platform", "", "arquiteturas a construir, numa só tag (ex: linux/amd64,linux/arm64); por defeito a desta máquina")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
+	}
+	if strings.Contains(*platforms, ",") && !containerdStore() {
+		return errors.New("várias arquiteturas numa imagem precisam do image store do containerd no Docker (Docker Desktop: Settings > General > \"Use containerd for pulling and storing images\"; Docker Engine 29+ já o usa)")
 	}
 	root := *source
 	if root == "" {
@@ -268,12 +324,13 @@ func cmdDev(args []string) error {
 	for _, n := range fs.Args() {
 		only[n] = true
 	}
-	for _, img := range platformImages {
-		if len(only) > 0 && !only[img.name] {
-			continue
-		}
+	for _, img := range selected(only) {
 		fmt.Printf("==> %s\n", s.image(img.name))
-		cmd := exec.Command("docker", "build", "--tag", s.image(img.name), filepath.Join(root, img.dir))
+		build := []string{"build", "--tag", s.image(img.name)}
+		if *platforms != "" {
+			build = append(build, "--platform", *platforms)
+		}
+		cmd := exec.Command("docker", append(build, filepath.Join(root, img.dir))...)
 		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("construindo %s: %w", img.name, err)
@@ -281,43 +338,6 @@ func cmdDev(args []string) error {
 	}
 	if *push {
 		return pushImages(s, only)
-	}
-	return nil
-}
-
-// pushImages envia as imagens da plataforma para o registry com a
-// credencial interna, numa configuração do docker temporária -- a tua
-// (~/.docker) não fica com ela.
-func pushImages(s Settings, only map[string]bool) error {
-	if s.Secrets.RegistryPullPassword == "" {
-		return errors.New("o registry ainda não está configurado -- corre \"basestack up\" primeiro")
-	}
-	tmp, err := os.MkdirTemp("", "basestack-docker-")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(tmp)
-	docker := func(stdin string, args ...string) error {
-		cmd := exec.Command("docker", args...)
-		cmd.Env = append(os.Environ(), "DOCKER_CONFIG="+tmp)
-		cmd.Stdin, cmd.Stdout, cmd.Stderr = strings.NewReader(stdin), os.Stdout, os.Stderr
-		return cmd.Run()
-	}
-	if err := docker(s.Secrets.RegistryPullPassword, "login", s.RegistryHost(), "--username", "basestack-internal", "--password-stdin"); err != nil {
-		return fmt.Errorf("login no registry: %w", err)
-	}
-	for _, img := range platformImages {
-		if len(only) > 0 && !only[img.name] {
-			continue
-		}
-		remote := s.RegistryHost() + "/basestack/" + img.name + ":" + s.Version
-		fmt.Printf("==> %s\n", remote)
-		if err := docker("", "tag", s.image(img.name), remote); err != nil {
-			return err
-		}
-		if err := docker("", "push", remote); err != nil {
-			return fmt.Errorf("enviando %s: %w", img.name, err)
-		}
 	}
 	return nil
 }
@@ -338,6 +358,20 @@ func findRepo() (string, error) {
 		}
 		dir = parent
 	}
+}
+
+// cmdPull volta a buscar todas as imagens da plataforma à origem
+// (images-from) -- para atualizar; o up só busca as que faltam.
+func cmdPull(args []string) error {
+	s, _, err := loadSettings()
+	if err != nil {
+		return err
+	}
+	if err := pullImages(s, false); err != nil {
+		return err
+	}
+	fmt.Println("Imagens atualizadas. Aplica com: basestack up")
+	return nil
 }
 
 func cmdUninstall(args []string) error {
@@ -386,7 +420,7 @@ func firstNonZero(v ...int) int {
 // cmdSet muda uma escolha do init sem mexer nos segredos.
 func cmdSet(args []string) error {
 	if len(args) != 2 {
-		return errors.New("uso: basestack set <domain|portal-port|admin-email|acme-email> <valor>")
+		return errors.New("uso: basestack set <domain|portal-port|admin-email|acme-email|images-from> <valor>")
 	}
 	s, dir, err := loadSettings()
 	if err != nil {
@@ -417,8 +451,13 @@ func cmdSet(args []string) error {
 			}
 		}
 		s.ACMEEmail = value
+	case "images-from":
+		if strings.Contains(value, "://") || strings.ContainsAny(value, " :") {
+			return fmt.Errorf("origem inválida: %q (ex: registry.192.168.1.67.nip.io/basestack; vazio = construir localmente)", value)
+		}
+		s.ImageSource = strings.TrimRight(value, "/")
 	default:
-		return fmt.Errorf("chave desconhecida %q -- domain, portal-port, admin-email ou acme-email", key)
+		return fmt.Errorf("chave desconhecida %q -- domain, portal-port, admin-email, acme-email ou images-from", key)
 	}
 	if err := saveSettings(dir, s); err != nil {
 		return err

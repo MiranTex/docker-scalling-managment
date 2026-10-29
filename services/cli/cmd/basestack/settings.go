@@ -21,6 +21,10 @@ import (
 type Settings struct {
 	Version     string `json:"version"`
 	ImagePrefix string `json:"imagePrefix"`
+	// ImageSource: registry de onde o up busca as imagens da plataforma
+	// que faltam (ex: registry.<domínio>/basestack de outra instalação).
+	// Vazio = construídas aqui (basestack dev build).
+	ImageSource string `json:"imageSource,omitempty"`
 
 	Domain     string `json:"domain"`
 	HTTPPort   int    `json:"httpPort"`
