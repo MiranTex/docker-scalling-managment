@@ -113,3 +113,21 @@ func (s *Service) AuthorizeDeployToken(ctx context.Context, token, projectSlug, 
 
 // ErrForbidden: o token é válido mas não para este projeto/ambiente.
 var ErrForbidden = errors.New("este token de deploy não tem acesso a este projeto/ambiente")
+
+// DeployTokenProject é o projeto (slug) de um token de deploy ativo -- o
+// registry da plataforma aceita-o para enviar e buscar imagens desse
+// projeto (ex: o CI que faz build e push antes do deploy).
+func (s *Service) DeployTokenProject(ctx context.Context, token string) (string, error) {
+	t, err := s.db.FindActiveDeployToken(ctx, hashToken(token))
+	if errors.Is(err, store.ErrDeployTokenNotFound) {
+		return "", ErrUnauthorized
+	}
+	if err != nil {
+		return "", err
+	}
+	p, err := s.db.GetProject(ctx, t.ProjectID)
+	if err != nil {
+		return "", err
+	}
+	return p.Slug, nil
+}

@@ -52,6 +52,43 @@ nunca partilha redes, volumes ou chaves com a demo antiga
 (`demo/docker-compose.yml`) -- mas usam as mesmas portas: só uma de cada
 vez (`basestack up` recusa se as portas estiverem ocupadas).
 
+## Registry de imagens
+
+`basestack up` arranca também um registry em `registry.<domínio>` (HTTPS
+pelo Traefik). As imagens de um projeto vivem em
+`registry.<domínio>/<projeto>/<nome>:<tag>`:
+
+```sh
+docker login registry.<domínio>        # utilizador: o teu email; password: uma API key (ak_..., scope platform)
+docker tag app:1.0 registry.<domínio>/loja/app:1.0
+docker push registry.<domínio>/loja/app:1.0
+```
+
+Quem pode o quê segue o papel no projeto: viewer busca, developer e admin
+também enviam; no CI, um token de deploy (`bsd_...`) como password envia e
+busca as do seu projeto. Os deploys buscam de lá sozinhos (credencial
+interna do launcher), mas só imagens do próprio projeto.
+`basestack dev build --push` envia as imagens da plataforma
+(`registry.<domínio>/basestack/...`).
+
+**HTTPS com a CA da instalação.** Sem domínio público, o certificado do
+registry é assinado por uma CA própria (`~/.basestack/tls/ca.crt`), e cada
+máquina que usa o registry tem de confiar nela:
+
+- nesta máquina, o `basestack up` põe-na em `~/.docker/certs.d/` (Mac --
+  **reinicia o Docker Desktop uma vez**) ou `/etc/docker/certs.d/` (Linux);
+- numa máquina Linux com Docker 29+ (image store do containerd, o padrão),
+  o pedido do token só confia nas CAs do sistema -- o `certs.d` não chega:
+  ```sh
+  sudo mkdir -p /etc/docker/certs.d/registry.<domínio>
+  sudo cp ca.crt /etc/docker/certs.d/registry.<domínio>/ca.crt
+  sudo cp ca.crt /usr/local/share/ca-certificates/basestack-ca.crt
+  sudo update-ca-certificates && sudo systemctl restart docker
+  ```
+
+Com `acme-email` (domínio público), o Let's Encrypt serve o registry e nada
+disto é preciso.
+
 # bs
 
 Terminal nos serviços e addons dos teus projetos, e túneis até às bases de

@@ -21,7 +21,20 @@ const routingFile = "base-stack-projects.yml"
 // ("routers cannot be a standalone element") -- sem rotas o ficheiro fica
 // só "{}", que ele aceita.
 type traefikConfig struct {
-	HTTP *traefikHTTP `json:"http,omitempty"`
+	HTTP *traefikHTTP        `json:"http,omitempty"`
+	TLS  *traefikTLSSettings `json:"tls,omitempty"`
+}
+
+// traefikTLSSettings: certificados que o Traefik serve por SNI (ex: o do
+// registry da plataforma, assinado pela CA da instalação).
+type traefikTLSSettings struct {
+	Certificates []TLSCertificate `json:"certificates"`
+}
+
+// TLSCertificate são caminhos vistos pelo Traefik, não pelo launcher.
+type TLSCertificate struct {
+	CertFile string `json:"certFile"`
+	KeyFile  string `json:"keyFile"`
 }
 
 type traefikHTTP struct {
@@ -198,6 +211,9 @@ func (s *Service) buildRouting(ctx context.Context) (traefikConfig, error) {
 	}
 	if len(cfg.HTTP.Routers) == 0 {
 		cfg.HTTP = nil
+	}
+	if len(s.cfg.TraefikCertificates) > 0 {
+		cfg.TLS = &traefikTLSSettings{Certificates: s.cfg.TraefikCertificates}
 	}
 	return cfg, nil
 }

@@ -131,6 +131,15 @@ type Config struct {
 	PublicBaseDomain string
 	// TLSCertResolver (ex: "le") liga HTTPS com certificado automático.
 	TLSCertResolver string
+	// TraefikCertificates entram no routing do Traefik (ver routing.go).
+	TraefikCertificates []TLSCertificate
+
+	// RegistryHost é o registry da plataforma (registry.<domínio>): as
+	// imagens de lá buscam-se com RegistryPullPassword, a credencial
+	// interna do launcher, e só as do próprio projeto.
+	RegistryHost         string
+	RegistryPullPassword string
+
 	// PublicIPs são os IPs públicos deste servidor -- um domínio próprio só
 	// fica ativo quando o DNS dele resolve para um destes.
 	PublicIPs []string

@@ -36,6 +36,7 @@ volumes:
   traefik-dynamic:
   prometheus-data:
   loki-data:
+  registry-data:
 
 services:
   docker-api-ro:
@@ -81,6 +82,9 @@ services:
     volumes:
       - traefik-dynamic:/etc/traefik/dynamic:ro
       - traefik-acme:/letsencrypt
+      # Certificados servidos por SNI (o do registry); o launcher põe-nos
+      # no routing (LAUNCHER_TRAEFIK_CERTIFICATES).
+      - ./tls/traefik:/etc/traefik/tls:ro
     labels:
       base-stack.managed: "true"
       prometheus.scrape: "true"
@@ -216,6 +220,13 @@ services:
       GRAFANA_ADMIN_PASSWORD: "{{.Secrets.GrafanaAdminPassword}}"
       LAUNCHER_TERMINAL_ORIGINS: "{{.TerminalOrigins}}"
       LAUNCHER_SECRETS_KEY: "{{.Secrets.LauncherSecretsKey}}"
+      # Registry da plataforma: o launcher emite os tokens e busca as
+      # imagens de lá com a credencial interna.
+      LAUNCHER_REGISTRY_HOST: "{{.RegistryHost}}"
+      LAUNCHER_REGISTRY_TOKEN_KEY: /etc/base-stack/registry/token.key
+      LAUNCHER_REGISTRY_TOKEN_CERT: /etc/base-stack/registry/token.crt
+      LAUNCHER_REGISTRY_PULL_PASSWORD: "{{.Secrets.RegistryPullPassword}}"
+      LAUNCHER_TRAEFIK_CERTIFICATES: "/etc/traefik/tls/{{.TLS.RegistryCert}}:/etc/traefik/tls/{{.TLS.RegistryKey}}"
     labels:
       base-stack.managed: "true"
       # A API de plataforma (CLI bs, CI) em api.<domínio> -- só /v1/projects.
@@ -230,12 +241,22 @@ services:
       traefik.http.routers.platform-api-tls.tls: "true"
       traefik.http.routers.platform-api-tls.tls.certresolver: "{{.TLSCertResolver}}"
       traefik.http.services.platform-api.loadbalancer.server.port: "8094"
+      # registry.<domínio>/token -> o servidor de tokens do registry.
+      traefik.http.routers.registry-token.rule: "Host(`{{.RegistryHost}}`) && Path(`/token`)"
+      traefik.http.routers.registry-token.entrypoints: websecure
+      traefik.http.routers.registry-token.service: platform-api
+      traefik.http.routers.registry-token.middlewares: registry-token-path
+      traefik.http.routers.registry-token.tls: "true"
+      traefik.http.routers.registry-token.tls.certresolver: "{{.TLSCertResolver}}"
+      traefik.http.middlewares.registry-token-path.replacepath.path: /v1/registry/token
     volumes:
       # O único serviço com o socket do Docker direto: é quem cria os
       # containers dos projetos.
       - /var/run/docker.sock:/var/run/docker.sock
       - traefik-dynamic:/etc/traefik/dynamic
       - ./config/dashboards:/etc/base-stack/dashboards:ro
+      - ./tls/token.key:/etc/base-stack/registry/token.key:ro
+      - ./tls/token.crt:/etc/base-stack/registry/token.crt:ro
     depends_on:
       database:
         condition: service_healthy
@@ -287,6 +308,40 @@ services:
     networks:
       - platform
       - grafana
+
+  # Registry de imagens da plataforma em registry.<domínio> (HTTPS pelo
+  # Traefik). Quem pode enviar/buscar decide o launcher (tokens por
+  # projeto: <registry>/<projeto>/<imagem>).
+  registry:
+    restart: unless-stopped
+    image: registry:2.8.3
+    environment:
+      REGISTRY_AUTH: token
+      REGISTRY_AUTH_TOKEN_REALM: "https://{{.RegistryHost}}/token"
+      REGISTRY_AUTH_TOKEN_SERVICE: "{{.RegistryHost}}"
+      REGISTRY_AUTH_TOKEN_ISSUER: base-stack
+      REGISTRY_AUTH_TOKEN_ROOTCERTBUNDLE: /etc/base-stack/registry/token.crt
+      REGISTRY_HTTP_SECRET: "{{.Secrets.RegistryHTTPSecret}}"
+      # Atrás do Traefik: URLs relativas, para não anunciar http://.
+      REGISTRY_HTTP_RELATIVEURLS: "true"
+      REGISTRY_STORAGE_DELETE_ENABLED: "true"
+    labels:
+      base-stack.managed: "true"
+      traefik.enable: "true"
+      traefik.docker.network: basestack-platform
+      traefik.http.routers.registry.rule: "Host(`{{.RegistryHost}}`)"
+      traefik.http.routers.registry.entrypoints: websecure
+      traefik.http.routers.registry.service: registry
+      traefik.http.routers.registry.tls: "true"
+      traefik.http.routers.registry.tls.certresolver: "{{.TLSCertResolver}}"
+      traefik.http.services.registry.loadbalancer.server.port: "5000"
+    volumes:
+      - registry-data:/var/lib/registry
+      - ./tls/token.crt:/etc/base-stack/registry/token.crt:ro
+    mem_limit: 256m
+    cpus: 0.5
+    networks:
+      - platform
 
   # --- Observabilidade ---
 

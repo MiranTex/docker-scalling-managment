@@ -244,6 +244,9 @@ func (s *Service) GetJob(ctx context.Context, projectSlug, envSlug, id string) (
 // ensureImage garante a imagem no host: usa a local se existir, senão faz
 // pull com as credenciais de registry do projeto (se houver).
 func (s *Service) ensureImage(ctx context.Context, image, projectID string) error {
+	if err := s.checkPlatformImage(ctx, image, projectID); err != nil {
+		return err
+	}
 	if _, err := s.docker.InspectImage(ctx, image); err == nil {
 		return nil
 	}
@@ -251,6 +254,9 @@ func (s *Service) ensureImage(ctx context.Context, image, projectID string) erro
 }
 
 func (s *Service) pullImage(ctx context.Context, image, projectID string) error {
+	if s.isPlatformImage(image) {
+		return s.pullFromPlatformRegistry(ctx, image, projectID)
+	}
 	auth, err := s.registryAuthFor(ctx, projectID, image)
 	if err != nil {
 		return err

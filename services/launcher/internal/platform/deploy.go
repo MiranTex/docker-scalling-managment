@@ -69,6 +69,9 @@ func (s *Service) Deploy(ctx context.Context, projectSlug, envSlug, svcSlug stri
 		if strings.ContainsAny(image, " \t\n") {
 			return store.Deployment{}, invalid("imagem %q inválida", image)
 		}
+		if err := s.checkPlatformImageSlug(image, p.Slug); err != nil {
+			return store.Deployment{}, err
+		}
 		rev = store.Revision{
 			ID: newID(), ServiceID: svc.ID, Image: image, Cmd: svc.Cmd, Env: svc.Env, ReleaseCmd: svc.ReleaseCmd,
 			Port: svc.Port, HealthPath: svc.HealthPath, HealthTimeoutSeconds: svc.HealthTimeoutSeconds,
@@ -238,6 +241,11 @@ func (s *Service) runDeployment(ctx context.Context, p store.Project, e store.En
 // Se o pull falhar sem credenciais configuradas mas a imagem existir no
 // host (ex: construída localmente em dev), usa a local.
 func (s *Service) pullForDeploy(ctx context.Context, projectID, image string, step func(string, string)) error {
+	// Do registry da plataforma: credencial interna, só do próprio
+	// projeto, e nunca a cópia local (podia ser de outro projeto).
+	if s.isPlatformImage(image) {
+		return s.pullFromPlatformRegistry(ctx, image, projectID)
+	}
 	auth, err := s.registryAuthFor(ctx, projectID, image)
 	if err != nil {
 		return err
