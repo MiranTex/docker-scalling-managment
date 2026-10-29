@@ -88,6 +88,14 @@ func main() {
 			os.Exit(1)
 		}
 	}
+	if cfg.caCert != "" {
+		if err := api.WithAgents(platformapi.AgentConfig{
+			PublicURL: cfg.publicAPIURL, CACertFile: cfg.caCert, RegistryHost: cfg.registryHost, AgentImage: cfg.agentImage,
+		}); err != nil {
+			logger.Error("configuração inválida dos nós remotos", "err", err)
+			os.Exit(1)
+		}
+	}
 	api.Register(mux)
 
 	srv := &http.Server{

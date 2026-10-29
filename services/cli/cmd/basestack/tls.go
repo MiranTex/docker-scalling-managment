@@ -48,7 +48,7 @@ func ensureTLS(dir string, s Settings) (tlsFiles, error) {
 	if err := ensureTokenKey(tdir); err != nil {
 		return tlsFiles{}, err
 	}
-	return ensureRegistryCert(tdir, s.RegistryHost(), caCert, caKey)
+	return ensureRegistryCert(tdir, []string{s.RegistryHost(), "api." + s.Domain}, caCert, caKey)
 }
 
 func writePEM(path, typ string, der []byte, mode os.FileMode) error {
@@ -143,13 +143,13 @@ func ensureTokenKey(tdir string) error {
 	return writePEM(certPath, "CERTIFICATE", der, 0o644)
 }
 
-// ensureRegistryCert emite (ou reaproveita) o certificado de
-// registry.<domínio>. Renova-se 30 dias antes de expirar, ou se o domínio
-// mudou.
-func ensureRegistryCert(tdir, host string, ca *x509.Certificate, caKey *ecdsa.PrivateKey) (tlsFiles, error) {
+// ensureRegistryCert emite (ou reaproveita) o certificado HTTPS da
+// instalação: registry.<domínio> e api.<domínio> (por onde os agentes dos
+// nós se ligam). Renova-se 30 dias antes de expirar, ou se falta um nome.
+func ensureRegistryCert(tdir string, hosts []string, ca *x509.Certificate, caKey *ecdsa.PrivateKey) (tlsFiles, error) {
 	current := filepath.Join(tdir, "registry.crt")
 	if der, err := readPEM(current); err == nil {
-		if cert, err := x509.ParseCertificate(der); err == nil && cert.VerifyHostname(host) == nil && time.Until(cert.NotAfter) > 30*24*time.Hour {
+		if cert, err := x509.ParseCertificate(der); err == nil && coversAll(cert, hosts) && time.Until(cert.NotAfter) > 30*24*time.Hour {
 			return registryFiles(tdir, der)
 		}
 	}
@@ -158,7 +158,7 @@ func ensureRegistryCert(tdir, host string, ca *x509.Certificate, caKey *ecdsa.Pr
 		return tlsFiles{}, err
 	}
 	tmpl := &x509.Certificate{
-		SerialNumber: serial(), Subject: pkix.Name{CommonName: host}, DNSNames: []string{host},
+		SerialNumber: serial(), Subject: pkix.Name{CommonName: hosts[0]}, DNSNames: hosts,
 		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().AddDate(2, 0, 0),
 		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
@@ -174,6 +174,15 @@ func ensureRegistryCert(tdir, host string, ca *x509.Certificate, caKey *ecdsa.Pr
 		return tlsFiles{}, err
 	}
 	return registryFiles(tdir, der)
+}
+
+func coversAll(cert *x509.Certificate, hosts []string) bool {
+	for _, h := range hosts {
+		if cert.VerifyHostname(h) != nil {
+			return false
+		}
+	}
+	return true
 }
 
 // registryFiles copia o par atual para tls/traefik/ com o hash no nome e
@@ -203,8 +212,7 @@ func registryFiles(tdir string, der []byte) (tlsFiles, error) {
 // /etc/docker/certs.d/<host>/ca.crt e as CAs do sistema (com o image store
 // do containerd, o pedido do token usa as do sistema) -- e ambos pedem
 // root. Devolve o script que falta correr ("" se já está tudo).
-func linuxTrust(dir, host string) (string, error) {
-	caPath := filepath.Join(dir, "tls", "ca.crt")
+func linuxTrust(caPath, host string) (string, error) {
 	ca, err := os.ReadFile(caPath)
 	if err != nil {
 		return "", err

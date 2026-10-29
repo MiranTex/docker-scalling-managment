@@ -199,7 +199,12 @@ export type NodeView = {
   replicas: number;
   addons: number;
   capacityMemoryMb: number;
+  kind: "local" | "agent";
+  agentVersion?: string;
 };
+
+export type NodeJoinToken = { token: string; expiresAt: string; caHash: string; command: string };
+export type NodeCheck = { ok: boolean; output: string; error?: string };
 
 export type ImageTag = { tag: string; digest: string; platforms: string[]; size: number; created?: string };
 export type PlatformImage = { repository: string; reference: string; tags: ImageTag[] };

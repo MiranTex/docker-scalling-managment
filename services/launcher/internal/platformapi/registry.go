@@ -32,9 +32,10 @@ import (
 // assina um JWT que o registry verifica com o certificado da instalação.
 //
 // Password aceite: uma API key pessoal (ak_, scope platform), um token de
-// deploy (bsd_, só o seu projeto) ou a credencial interna do launcher
-// (utilizador basestack-internal: lê tudo, escreve só "basestack/...", as
-// imagens da própria plataforma).
+// deploy (bsd_, só o seu projeto), a credencial de um nó (bsn_, só lê
+// "basestack/...") ou a credencial interna do launcher (utilizador
+// basestack-internal: lê tudo, escreve só "basestack/...", as imagens da
+// própria plataforma).
 
 const registryTokenTTL = 5 * time.Minute
 
@@ -95,6 +96,7 @@ type registryGrantee struct {
 	internal      bool
 	platformAdmin bool
 	deployProject string // token de deploy: só este projeto
+	node          bool   // credencial de um nó: só as imagens da plataforma
 }
 
 type registryAccess struct {
@@ -183,6 +185,16 @@ func (a *API) registryAuthenticate(w http.ResponseWriter, r *http.Request) (regi
 			return registryGrantee{}, false
 		}
 		return registryGrantee{subject: "deploy-token:" + project, deployProject: project}, true
+	case strings.HasPrefix(pass, platform.NodeTokenPrefix):
+		n, err := a.svc.AuthenticateNode(r.Context(), pass)
+		if errors.Is(err, platform.ErrUnauthorizedNode) {
+			return deny("credencial do nó inválida ou revogada")
+		}
+		if err != nil {
+			a.fail(w, err)
+			return registryGrantee{}, false
+		}
+		return registryGrantee{subject: "node:" + n.Name, node: true}, true
 	default:
 		return deny("usa como password uma API key (ak_..., scope platform) ou um token de deploy (bsd_...)")
 	}
@@ -204,6 +216,11 @@ func (a *API) registryAllowed(ctx context.Context, g registryGrantee, typ, name 
 		can = []string{"pull"}
 		if project == "basestack" {
 			can = append(can, "push")
+		}
+	case g.node:
+		// O agente e as imagens da plataforma, para o join.
+		if project == "basestack" {
+			can = []string{"pull"}
 		}
 	case g.platformAdmin:
 		// Tudo, mas só em projetos que existem (e nas imagens da própria

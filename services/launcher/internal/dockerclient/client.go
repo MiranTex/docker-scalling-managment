@@ -47,6 +47,23 @@ func New(socketPath string) *Client {
 	}
 }
 
+// NewWithDialer cria um Client que chega ao Docker por outra via -- ex:
+// um canal do túnel até ao agente de um nó remoto. Cada ligação HTTP abre
+// a sua com dial.
+func NewWithDialer(dial func(ctx context.Context) (net.Conn, error)) *Client {
+	return &Client{
+		http: &http.Client{
+			Transport: &http.Transport{
+				DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) { return dial(ctx) },
+				// Os canais são baratos e o túnel pode cair: não vale a
+				// pena guardar ligações paradas.
+				DisableKeepAlives: true,
+			},
+		},
+		baseURL: "http://docker",
+	}
+}
+
 // apiError representa o corpo de erro que o Docker devolve em respostas 4xx/5xx.
 type apiError struct {
 	Message string `json:"message"`

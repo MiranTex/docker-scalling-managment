@@ -31,6 +31,11 @@ Uso:
                         constrói para várias arquiteturas e envia para o registry
   basestack uninstall   remove a plataforma e os dados dela
 
+Nós (esta máquina a correr apps de uma plataforma noutra):
+  basestack node join <url> --token bsj_... --ca sha256:...
+                        o comando vem do portal (Nós > Adicionar nó)
+  basestack node status | start | leave
+
 Os dados e a configuração ficam em ~/.basestack (Linux como root:
 /var/lib/basestack); BASESTACK_HOME muda o sítio.
 `
@@ -58,6 +63,8 @@ func main() {
 		err = cmdDown(args)
 	case "doctor":
 		err = cmdDoctor(args)
+	case "node":
+		err = cmdNode(args)
 	case "pull":
 		err = cmdPull(args)
 	case "dev":

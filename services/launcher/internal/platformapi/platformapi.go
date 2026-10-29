@@ -54,6 +54,7 @@ type API struct {
 	grafana  Grafana
 	term     *terminals
 	registry *registryTokens
+	agents   *agentSettings
 	dial     dialer
 	audit    *audit.Logger
 	logger   *slog.Logger
@@ -105,6 +106,14 @@ func (a *API) Register(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /v1/nodes", platformAdmin(a.listNodes))
 	mux.HandleFunc("PATCH /v1/nodes/{node}", platformAdmin(a.updateNode))
+	mux.HandleFunc("DELETE /v1/nodes/{node}", platformAdmin(a.deleteNode))
+	mux.HandleFunc("POST /v1/nodes/{node}/check", platformAdmin(a.checkNode))
+	mux.HandleFunc("POST /v1/nodes/join-tokens", platformAdmin(a.createJoinToken))
+	// Os agentes dos nós remotos (sem sessão de utilizador -- ver agents.go).
+	mux.HandleFunc("GET /v1/agent/ca", a.agentCA)
+	mux.HandleFunc("POST /v1/agent/join", a.agentJoin)
+	mux.HandleFunc("GET /v1/agent/connect", a.agentConnect)
+	mux.HandleFunc("POST /v1/agent/leave", a.agentLeave)
 
 	mux.HandleFunc("GET /v1/volumes", platformAdmin(a.listVolumes))
 	mux.HandleFunc("DELETE /v1/volumes/{name}", platformAdmin(a.deleteVolume))
@@ -351,6 +360,8 @@ func (a *API) fail(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "not_found", err.Error())
 	case errors.Is(err, platform.ErrConflict):
 		writeError(w, http.StatusConflict, "conflict", err.Error())
+	case errors.Is(err, platform.ErrUnauthorizedNode):
+		writeError(w, http.StatusUnauthorized, "unauthorized", err.Error())
 	case errors.Is(err, platform.ErrNoNode):
 		writeError(w, http.StatusConflict, "no_node", err.Error())
 	case errors.Is(err, platform.ErrQuotaExceeded):

@@ -158,6 +158,7 @@ type Service struct {
 	cfg    Config
 	logger *slog.Logger
 	rt     *runtime
+	agents *agents // ligações dos agentes dos nós remotos
 	// probe faz o health check HTTP/TCP a uma réplica -- substituível nos
 	// testes.
 	probe func(ctx context.Context, host string, port int, path string) error
@@ -173,7 +174,7 @@ func New(db *store.DB, docker Docker, box *secretbox.Box, cfg Config, logger *sl
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Service{db: db, docker: docker, box: box, cfg: cfg, logger: logger, rt: newRuntime(), probe: defaultProbe, lookupHost: net.DefaultResolver.LookupHost}
+	return &Service{db: db, docker: docker, box: box, cfg: cfg, logger: logger, rt: newRuntime(), agents: &agents{m: map[string]*agentConn{}}, probe: defaultProbe, lookupHost: net.DefaultResolver.LookupHost}
 }
 
 // isNotFound reconhece o 404 do Docker (container/imagem/volume que não existe).

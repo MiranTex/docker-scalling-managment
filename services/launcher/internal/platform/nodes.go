@@ -42,12 +42,16 @@ func nodeOf(c dockerclient.Container) string {
 	return LocalNode
 }
 
-// dockerOn é o Docker de um nó. Só o local tem um, por agora.
+// dockerOn é o Docker de um nó: o local, ou o de um nó remoto pelo túnel
+// do seu agente.
 func (s *Service) dockerOn(node string) (Docker, error) {
 	if node == LocalNode {
 		return s.docker, nil
 	}
-	return nil, fmt.Errorf("o nó %s ainda não aceita containers (falta o agente)", node)
+	if c := s.agents.get(node); c != nil {
+		return c.docker, nil
+	}
+	return nil, fmt.Errorf("o nó %s está offline (o agente não está ligado)", node)
 }
 
 // normalArch traduz a arquitetura do kernel (docker info) para a das
@@ -83,6 +87,7 @@ func (s *Service) registerLocalNode(ctx context.Context) {
 // alocado (somado das labels de recursos, como as quotas).
 type NodeView struct {
 	store.Node
+	// Online: o local dá sinal pelo launcher; um remoto, pelo agente ligado.
 	Online    bool    `json:"online"`
 	Allocated Usage   `json:"allocated"`
 	Replicas  int     `json:"replicas"`
@@ -102,7 +107,19 @@ func (s *Service) ListNodes(ctx context.Context) ([]NodeView, error) {
 	byNode := map[string]*NodeView{}
 	out := make([]NodeView, len(nodes))
 	for i, n := range nodes {
-		out[i] = NodeView{Node: n, Online: time.Since(n.LastSeenAt) < nodeOfflineAfter, Capacity: s.nodeCapacityMB(n)}
+		online := time.Since(n.LastSeenAt) < nodeOfflineAfter
+		if n.Kind == store.NodeAgent {
+			online = s.agents.get(n.Name) != nil
+			if online {
+				// O que corre no nó remoto, pelo túnel.
+				if d, err := s.dockerOn(n.Name); err == nil {
+					if remote, err := d.ListContainers(ctx, false, map[string][]string{"label": {dockerclient.PlatformLabel + "=" + dockerclient.PlatformLabelValue}}); err == nil {
+						containers = append(containers, remote...)
+					}
+				}
+			}
+		}
+		out[i] = NodeView{Node: n, Online: online, Capacity: s.nodeCapacityMB(n)}
 		byNode[n.Name] = &out[i]
 	}
 	for _, c := range containers {
@@ -198,6 +215,10 @@ func schedule(cands []candidate, p placement) (string, error) {
 			why = append(why, c.Node.Name+": offline")
 		case !c.Node.Schedulable:
 			why = append(why, c.Node.Name+": em manutenção")
+		case c.Node.Kind == store.NodeAgent:
+			// Sem rede entre nós, uma app num nó remoto não chegava aos
+			// addons nem o Traefik a ela.
+			why = append(why, c.Node.Name+": nó remoto, ainda sem rede entre nós para apps")
 		case len(p.Platforms) > 0 && !hasPlatform(p.Platforms, platform):
 			why = append(why, fmt.Sprintf("%s: a imagem não tem %s (tem %s)", c.Node.Name, platform, strings.Join(p.Platforms, ", ")))
 		case float64(c.Allocated.MemoryMB+p.MemoryMB) > c.Capacity:

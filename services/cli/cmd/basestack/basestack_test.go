@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"crypto/x509"
+	"flag"
 	"net"
 	"os"
 	"os/exec"
@@ -140,8 +141,10 @@ func TestTLSMaterial(t *testing.T) {
 	}
 	pool := x509.NewCertPool()
 	pool.AddCert(caCert)
-	if _, err := cert.Verify(x509.VerifyOptions{Roots: pool, DNSName: "registry.127.0.0.1.nip.io"}); err != nil {
-		t.Errorf("o certificado do registry não é válido pela CA: %v", err)
+	for _, host := range []string{"registry.127.0.0.1.nip.io", "api.127.0.0.1.nip.io"} {
+		if _, err := cert.Verify(x509.VerifyOptions{Roots: pool, DNSName: host}); err != nil {
+			t.Errorf("o certificado não é válido para %s pela CA: %v", host, err)
+		}
 	}
 	if _, err := os.Stat(filepath.Join(dir, "tls/token.key")); err != nil {
 		t.Error("falta a chave dos tokens")
@@ -173,7 +176,7 @@ func TestLinuxTrustScript(t *testing.T) {
 	if _, err := ensureTLS(dir, testSettings()); err != nil {
 		t.Fatal(err)
 	}
-	script, err := linuxTrust(dir, "registry.example.test")
+	script, err := linuxTrust(filepath.Join(dir, "tls", "ca.crt"), "registry.example.test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,5 +204,15 @@ func TestFillMissingSecretsKeepsExisting(t *testing.T) {
 	}
 	if s.fillMissingSecrets() {
 		t.Error("segunda vez sem nada em falta disse que mudou")
+	}
+}
+
+func TestFlagsAfterNames(t *testing.T) {
+	fs := flag.NewFlagSet("t", flag.ContinueOnError)
+	push := fs.Bool("push", false, "")
+	platform := fs.String("platform", "", "")
+	names, err := parseInterspersed(fs, []string{"agent", "--platform", "linux/amd64", "launcher", "--push"})
+	if err != nil || strings.Join(names, ",") != "agent,launcher" || !*push || *platform != "linux/amd64" {
+		t.Errorf("names=%v push=%v platform=%q err=%v", names, *push, *platform, err)
 	}
 }

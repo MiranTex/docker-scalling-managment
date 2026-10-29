@@ -110,6 +110,9 @@ type config struct {
 	registryHost, registryTokenKey, registryTokenCert, registryPullPassword string
 	// registryURL: o registry pela rede interna, para listar as imagens.
 	registryURL string
+	// Nós remotos: a CA da instalação, o URL público da API (por onde os
+	// agentes chegam) e a imagem do agente. Sem a CA, desligados.
+	caCert, publicAPIURL, agentImage string
 	// traefikCertificates: "cert:key" separados por vírgula, caminhos vistos
 	// pelo Traefik -- entram no routing (ex: o certificado do registry).
 	traefikCertificates []platform.TLSCertificate
@@ -171,6 +174,9 @@ func loadConfig() config {
 		registryTokenCert:    os.Getenv("LAUNCHER_REGISTRY_TOKEN_CERT"),
 		registryPullPassword: os.Getenv("LAUNCHER_REGISTRY_PULL_PASSWORD"),
 		registryURL:          os.Getenv("LAUNCHER_REGISTRY_URL"),
+		caCert:               os.Getenv("LAUNCHER_CA_CERT"),
+		publicAPIURL:         os.Getenv("LAUNCHER_PUBLIC_API_URL"),
+		agentImage:           os.Getenv("LAUNCHER_AGENT_IMAGE"),
 	}
 	for _, pair := range envList("LAUNCHER_TRAEFIK_CERTIFICATES") {
 		cert, key, ok := strings.Cut(pair, ":")

@@ -57,6 +57,8 @@ var platformImages = []struct{ name, dir string }{
 	{"launcher", "services/launcher"},
 	{"portal", "services/portal"},
 	{"autoscaler-group", "services/autoscaler"},
+	// Não corre aqui: é o que os nós remotos buscam ao registry.
+	{"agent", "services/agent"},
 }
 
 // foreignPublishers lista containers fora desta instalação que publicam

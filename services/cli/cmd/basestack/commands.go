@@ -108,7 +108,7 @@ func cmdUp(args []string) error {
 		return err
 	}
 	if runtime.GOOS == "linux" {
-		if err := trustOnLinux(dir, s.RegistryHost()); err != nil {
+		if err := trustOnLinux(filepath.Join(dir, "tls", "ca.crt"), s.RegistryHost()); err != nil {
 			return err
 		}
 	}
@@ -137,8 +137,8 @@ Primeira vez?
 // root corre logo; num terminal pergunta antes de usar o sudo; sem
 // terminal só mostra os comandos. Reinicia o Docker -- por isso corre
 // antes de arrancar a plataforma.
-func trustOnLinux(dir, host string) error {
-	script, err := linuxTrust(dir, host)
+func trustOnLinux(caPath, host string) error {
+	script, err := linuxTrust(caPath, host)
 	if err != nil || script == "" {
 		return err
 	}
@@ -301,7 +301,8 @@ func cmdDev(args []string) error {
 	source := fs.String("source", "", "raiz do repositório base-stack (por defeito, procura a partir da pasta atual)")
 	push := fs.Bool("push", false, "enviar também para o registry da plataforma (registry.<domínio>/basestack/...)")
 	platforms := fs.String("platform", "", "arquiteturas a construir, numa só tag (ex: linux/amd64,linux/arm64); por defeito a desta máquina")
-	if err := fs.Parse(args[1:]); err != nil {
+	names, err := parseInterspersed(fs, args[1:])
+	if err != nil {
 		return err
 	}
 	if strings.Contains(*platforms, ",") && !containerdStore() {
@@ -321,7 +322,7 @@ func cmdDev(args []string) error {
 		return err
 	}
 	only := map[string]bool{}
-	for _, n := range fs.Args() {
+	for _, n := range names {
 		only[n] = true
 	}
 	for _, img := range selected(only) {
@@ -340,6 +341,23 @@ func cmdDev(args []string) error {
 		return pushImages(s, only)
 	}
 	return nil
+}
+
+// parseInterspersed aceita flags antes e depois dos nomes ("dev build
+// agent --push"): o flag do Go pára no primeiro argumento que não é flag e
+// ignorava o resto em silêncio.
+func parseInterspersed(fs *flag.FlagSet, args []string) ([]string, error) {
+	var names []string
+	for {
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+		if fs.NArg() == 0 {
+			return names, nil
+		}
+		names = append(names, fs.Arg(0))
+		args = fs.Args()[1:]
+	}
 }
 
 // findRepo sobe a partir da pasta atual até encontrar o repositório.

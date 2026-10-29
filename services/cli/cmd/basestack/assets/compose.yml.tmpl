@@ -227,6 +227,10 @@ services:
       LAUNCHER_REGISTRY_TOKEN_CERT: /etc/base-stack/registry/token.crt
       LAUNCHER_REGISTRY_PULL_PASSWORD: "{{.Secrets.RegistryPullPassword}}"
       LAUNCHER_REGISTRY_URL: http://registry:5000
+      # Nós remotos: os agentes ligam-se por https://api.<domínio>/v1/agent.
+      LAUNCHER_CA_CERT: /etc/base-stack/ca.crt
+      LAUNCHER_PUBLIC_API_URL: "https://api.{{.Domain}}"
+      LAUNCHER_AGENT_IMAGE: "{{.RegistryHost}}/basestack/agent:{{.Version}}"
       LAUNCHER_TRAEFIK_CERTIFICATES: "/etc/traefik/tls/{{.TLS.RegistryCert}}:/etc/traefik/tls/{{.TLS.RegistryKey}}"
     labels:
       base-stack.managed: "true"
@@ -250,6 +254,13 @@ services:
       traefik.http.routers.registry-token.tls: "true"
       traefik.http.routers.registry-token.tls.certresolver: "{{.TLSCertResolver}}"
       traefik.http.middlewares.registry-token-path.replacepath.path: /v1/registry/token
+      # Os agentes dos nós remotos: só por HTTPS (o túnel leva o controlo
+      # do Docker do nó).
+      traefik.http.routers.platform-agent.rule: "Host(`api.{{.Domain}}`) && PathPrefix(`/v1/agent`)"
+      traefik.http.routers.platform-agent.entrypoints: websecure
+      traefik.http.routers.platform-agent.service: platform-api
+      traefik.http.routers.platform-agent.tls: "true"
+      traefik.http.routers.platform-agent.tls.certresolver: "{{.TLSCertResolver}}"
     volumes:
       # O único serviço com o socket do Docker direto: é quem cria os
       # containers dos projetos.
@@ -257,6 +268,7 @@ services:
       - traefik-dynamic:/etc/traefik/dynamic
       - ./config/dashboards:/etc/base-stack/dashboards:ro
       - ./tls/token.key:/etc/base-stack/registry/token.key:ro
+      - ./tls/ca.crt:/etc/base-stack/ca.crt:ro
       - ./tls/token.crt:/etc/base-stack/registry/token.crt:ro
     depends_on:
       database:
