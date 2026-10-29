@@ -14,15 +14,16 @@ import (
 	"fmt"
 	"math/big"
 	"os"
+	"os/exec"
 	"path/filepath"
-	"runtime"
 	"time"
 )
 
 // A instalação tem a sua própria CA (tls/ca.crt): assina o certificado
 // HTTPS do registry (o docker recusa registries sem HTTPS fora de
-// localhost). Cada máquina que usa o registry confia nela por um ficheiro
-// em certs.d -- sem reiniciar o Docker. Com um domínio público e ACME, o
+// localhost). Cada máquina que usa o registry tem de confiar nela: no Mac
+// em ~/.docker/certs.d (trustCA), no Linux em /etc/docker/certs.d e nas
+// CAs do sistema (linuxTrust). Com um domínio público e ACME, o
 // Let's Encrypt serve o registry e a CA deixa de ser precisa.
 //
 // tls/token.{key,crt} assinam os tokens do registry (o launcher assina, o
@@ -198,25 +199,49 @@ func registryFiles(tdir string, der []byte) (tlsFiles, error) {
 	return f, writePEM(filepath.Join(tdir, "traefik", f.RegistryKey), "EC PRIVATE KEY", keyDER, 0o644)
 }
 
-// trustCA põe a CA onde o Docker desta máquina a procura para o registry
-// (certs.d/<host>/ca.crt) -- sem isto, docker push/pull recusa o HTTPS.
-// No Linux é /etc/docker/certs.d (pede root) e vale logo. No Mac é
-// ~/.docker/certs.d, que o Docker Desktop só copia para a sua VM ao
-// arrancar: changed diz que é preciso reiniciá-lo uma vez.
+// linuxTrust: no Linux o docker confia no registry por dois sítios --
+// /etc/docker/certs.d/<host>/ca.crt e as CAs do sistema (com o image store
+// do containerd, o pedido do token usa as do sistema) -- e ambos pedem
+// root. Devolve o script que falta correr ("" se já está tudo).
+func linuxTrust(dir, host string) (string, error) {
+	caPath := filepath.Join(dir, "tls", "ca.crt")
+	ca, err := os.ReadFile(caPath)
+	if err != nil {
+		return "", err
+	}
+	same := func(path string) bool {
+		b, err := os.ReadFile(path)
+		return err == nil && string(b) == string(ca)
+	}
+	certsD := filepath.Join("/etc/docker/certs.d", host, "ca.crt")
+	// Debian/Ubuntu ou RHEL/Fedora.
+	system, update := "/usr/local/share/ca-certificates/basestack-"+host+".crt", "update-ca-certificates"
+	if _, err := exec.LookPath("update-ca-certificates"); err != nil {
+		if _, err := exec.LookPath("update-ca-trust"); err == nil {
+			system, update = "/etc/pki/ca-trust/source/anchors/basestack-"+host+".crt", "update-ca-trust"
+		}
+	}
+	if same(certsD) && same(system) {
+		return "", nil
+	}
+	return fmt.Sprintf("set -e\nmkdir -p %s\ncp %s %s\ncp %s %s\n%s\nsystemctl restart docker\n",
+		filepath.Dir(certsD), caPath, certsD, caPath, system, update), nil
+}
+
+// trustCA (Mac) põe a CA em ~/.docker/certs.d/<host>/ca.crt -- sem isto,
+// docker push/pull recusa o HTTPS do registry. O Docker Desktop só a copia
+// para a sua VM ao arrancar: changed diz que é preciso reiniciá-lo uma vez.
+// No Linux é o linuxTrust.
 func trustCA(dir, host string) (path string, changed bool, err error) {
 	ca, err := os.ReadFile(filepath.Join(dir, "tls", "ca.crt"))
 	if err != nil {
 		return "", false, err
 	}
-	base := "/etc/docker/certs.d"
-	if runtime.GOOS == "darwin" {
-		h, err := os.UserHomeDir()
-		if err != nil {
-			return "", false, err
-		}
-		base = filepath.Join(h, ".docker", "certs.d")
+	h, err := os.UserHomeDir()
+	if err != nil {
+		return "", false, err
 	}
-	path = filepath.Join(base, host, "ca.crt")
+	path = filepath.Join(h, ".docker", "certs.d", host, "ca.crt")
 	if current, err := os.ReadFile(path); err == nil && string(current) == string(ca) {
 		return path, false, nil
 	}

@@ -166,6 +166,29 @@ func TestTLSMaterial(t *testing.T) {
 	}
 }
 
+// Numa máquina sem a CA instalada, o script põe-na nos dois sítios que o
+// docker do Linux lê e reinicia-o.
+func TestLinuxTrustScript(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := ensureTLS(dir, testSettings()); err != nil {
+		t.Fatal(err)
+	}
+	script, err := linuxTrust(dir, "registry.example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"/etc/docker/certs.d/registry.example.test/ca.crt",
+		"basestack-registry.example.test.crt",
+		filepath.Join(dir, "tls", "ca.crt"),
+		"systemctl restart docker",
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("o script não tem %q:\n%s", want, script)
+		}
+	}
+}
+
 func TestFillMissingSecretsKeepsExisting(t *testing.T) {
 	s := testSettings()
 	keep := s.Secrets.LauncherSecretsKey

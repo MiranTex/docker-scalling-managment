@@ -8,12 +8,15 @@
 # administração -- estado, backups, e nas próximas fases PITR/manutenção,
 # ver dbadmin/README) -- assim o binário final não carrega toolchain Go
 # nenhuma, só o binário estático já compilado.
-FROM golang:1.22-bookworm AS dbadmin-build
+# Compila na arquitetura de quem constrói para a do alvo (sem emulação,
+# rápido num build multi-arquitetura).
+FROM --platform=$BUILDPLATFORM golang:1.22-bookworm AS dbadmin-build
+ARG TARGETOS TARGETARCH
 WORKDIR /src
 COPY dbadmin/go.mod dbadmin/go.sum ./
 RUN go mod download
 COPY dbadmin/ ./
-RUN CGO_ENABLED=0 go build -o /out/dbadmin ./cmd/dbadmin
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -o /out/dbadmin ./cmd/dbadmin
 
 # Base é `bookworm` (Debian), não `alpine`: o pacote `pgbackrest` oficial
 # do PGDG (apt.postgresql.org, já vem pré-configurado nesta imagem) só
