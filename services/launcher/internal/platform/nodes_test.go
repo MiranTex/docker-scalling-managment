@@ -38,10 +38,10 @@ func TestScheduleChoosesAFittingNode(t *testing.T) {
 
 	// Sem nenhum que sirva, o erro explica cada nó.
 	_, err := schedule(cands, placement{MemoryMB: 4000, Platforms: []string{"linux/amd64"}})
-	if !errors.Is(err, ErrQuotaExceeded) {
+	if !errors.Is(err, ErrNoNode) || strings.Contains(err.Error(), "quota") {
 		t.Fatalf("erro = %v", err)
 	}
-	for _, want := range []string{"intel-cheio: 3800 MB alocados", "arm-grande: a imagem não tem linux/arm64", "em-manutencao: não aceita", "desligado: offline"} {
+	for _, want := range []string{"intel-cheio: 3800 MB alocados", "arm-grande: a imagem não tem linux/arm64", "em-manutencao: em manutenção", "desligado: offline"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("o erro não explica %q: %v", want, err)
 		}
@@ -101,11 +101,20 @@ func TestReplicasArePlacedOnTheLocalNode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d := waitDeploy(t, svc, "web", dep.ID); d.Status != store.DeployFailed || !strings.Contains(d.Error, "local: não aceita réplicas novas") {
+	if d := waitDeploy(t, svc, "web", dep.ID); d.Status != store.DeployFailed || d.Error != "nenhum nó pode receber a réplica: local: em manutenção" {
 		t.Errorf("deploy com o nó em manutenção = %s: %s", d.Status, d.Error)
 	}
 	if got := appContainers(docker, "app:1"); len(got) != 2 {
 		t.Errorf("as réplicas que já lá estavam continuam: %v", got)
+	}
+	// Subir réplicas também não passa, e o serviço mostra porquê.
+	if _, err := svc.UpdateService(ctx, "loja", "prod", "web", ServiceInput{Replicas: intp(3)}); err != nil {
+		t.Fatal(err)
+	}
+	svc.reconcileOnce(ctx)
+	view, _ := svc.GetService(ctx, "loja", "prod", "web")
+	if !strings.Contains(view.Problem, "2 de 3") || !strings.Contains(view.Problem, "local: em manutenção") {
+		t.Errorf("problema reportado = %q", view.Problem)
 	}
 	if _, err := svc.SetNodeSchedulable(ctx, "nao-existe", true); !errors.Is(err, ErrNotFound) {
 		t.Errorf("nó inexistente: %v", err)

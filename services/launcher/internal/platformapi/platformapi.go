@@ -351,6 +351,8 @@ func (a *API) fail(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "not_found", err.Error())
 	case errors.Is(err, platform.ErrConflict):
 		writeError(w, http.StatusConflict, "conflict", err.Error())
+	case errors.Is(err, platform.ErrNoNode):
+		writeError(w, http.StatusConflict, "no_node", err.Error())
 	case errors.Is(err, platform.ErrQuotaExceeded):
 		writeError(w, http.StatusConflict, "quota_exceeded", err.Error())
 	case errors.Is(err, platform.ErrSecretsDisabled):

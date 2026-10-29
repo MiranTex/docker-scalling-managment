@@ -30,6 +30,10 @@ const (
 	nodeHeartbeat    = 30 * time.Second
 )
 
+// ErrNoNode: nenhum nó pode receber uma réplica (offline, em manutenção,
+// sem a arquitetura da imagem ou sem memória) -- a mensagem diz porquê.
+var ErrNoNode = errors.New("nenhum nó pode receber a réplica")
+
 // nodeOf diz em que nó corre um container.
 func nodeOf(c dockerclient.Container) string {
 	if n := c.Labels[LabelNode]; n != "" {
@@ -193,7 +197,7 @@ func schedule(cands []candidate, p placement) (string, error) {
 		case !c.Online:
 			why = append(why, c.Node.Name+": offline")
 		case !c.Node.Schedulable:
-			why = append(why, c.Node.Name+": não aceita réplicas novas")
+			why = append(why, c.Node.Name+": em manutenção")
 		case len(p.Platforms) > 0 && !hasPlatform(p.Platforms, platform):
 			why = append(why, fmt.Sprintf("%s: a imagem não tem %s (tem %s)", c.Node.Name, platform, strings.Join(p.Platforms, ", ")))
 		case float64(c.Allocated.MemoryMB+p.MemoryMB) > c.Capacity:
@@ -206,7 +210,7 @@ func schedule(cands []candidate, p placement) (string, error) {
 		if len(why) == 0 {
 			why = append(why, "não há nós registados")
 		}
-		return "", fmt.Errorf("%w: nenhum nó pode receber a réplica (%s)", ErrQuotaExceeded, strings.Join(why, "; "))
+		return "", fmt.Errorf("%w: %s", ErrNoNode, strings.Join(why, "; "))
 	}
 	free := func(c candidate) float64 { return c.Capacity - float64(c.Allocated.MemoryMB) }
 	sort.SliceStable(ok, func(i, j int) bool { return free(ok[i]) > free(ok[j]) })
