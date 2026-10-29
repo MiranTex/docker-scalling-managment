@@ -108,6 +108,8 @@ type config struct {
 	// (registry.<domínio>), a chave e o certificado que assinam os tokens,
 	// e a credencial interna com que o launcher busca imagens de lá.
 	registryHost, registryTokenKey, registryTokenCert, registryPullPassword string
+	// registryURL: o registry pela rede interna, para listar as imagens.
+	registryURL string
 	// traefikCertificates: "cert:key" separados por vírgula, caminhos vistos
 	// pelo Traefik -- entram no routing (ex: o certificado do registry).
 	traefikCertificates []platform.TLSCertificate
@@ -168,6 +170,7 @@ func loadConfig() config {
 		registryTokenKey:     os.Getenv("LAUNCHER_REGISTRY_TOKEN_KEY"),
 		registryTokenCert:    os.Getenv("LAUNCHER_REGISTRY_TOKEN_CERT"),
 		registryPullPassword: os.Getenv("LAUNCHER_REGISTRY_PULL_PASSWORD"),
+		registryURL:          os.Getenv("LAUNCHER_REGISTRY_URL"),
 	}
 	for _, pair := range envList("LAUNCHER_TRAEFIK_CERTIFICATES") {
 		cert, key, ok := strings.Cut(pair, ":")

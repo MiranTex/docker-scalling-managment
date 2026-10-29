@@ -82,7 +82,7 @@ func main() {
 	if cfg.registryHost != "" {
 		if err := api.WithRegistry(platformapi.RegistryConfig{
 			Service: cfg.registryHost, Issuer: "base-stack", KeyFile: cfg.registryTokenKey, CertFile: cfg.registryTokenCert,
-			PullPassword: cfg.registryPullPassword,
+			PullPassword: cfg.registryPullPassword, URL: cfg.registryURL,
 		}); err != nil {
 			logger.Error("configuração inválida do registry", "err", err)
 			os.Exit(1)

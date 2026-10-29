@@ -46,12 +46,17 @@ type RegistryConfig struct {
 	KeyFile      string
 	CertFile     string
 	PullPassword string
+	// URL: o registry visto do launcher (rede interna, ex:
+	// http://registry:5000), para listar as imagens no portal. Vazio
+	// desliga a listagem.
+	URL string
 }
 
 type registryTokens struct {
-	cfg   RegistryConfig
-	key   *rsa.PrivateKey
-	chain []string // x5c: o certificado em DER/base64
+	cfg    RegistryConfig
+	key    *rsa.PrivateKey
+	chain  []string // x5c: o certificado em DER/base64
+	client *http.Client
 }
 
 // WithRegistry carrega a chave e o certificado; sem isto a rota responde
@@ -79,7 +84,8 @@ func (a *API) WithRegistry(cfg RegistryConfig) error {
 	if key == nil {
 		return errors.New("registry: a chave de assinatura tem de ser RSA")
 	}
-	a.registry = &registryTokens{cfg: cfg, key: key, chain: []string{base64.StdEncoding.EncodeToString(cb.Bytes)}}
+	a.registry = &registryTokens{cfg: cfg, key: key, chain: []string{base64.StdEncoding.EncodeToString(cb.Bytes)},
+		client: &http.Client{Timeout: 15 * time.Second}}
 	return nil
 }
 

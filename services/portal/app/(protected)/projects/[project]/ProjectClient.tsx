@@ -11,6 +11,7 @@ import TabBar, { useActiveTab } from "@/components/TabBar";
 import { api, projectPath, type ProjectDetail } from "@/lib/platformClient";
 import ConfirmModal from "../../admin/database/ConfirmModal";
 import DeployTokensCard from "./DeployTokensCard";
+import ImagesTab from "./ImagesTab";
 import RegistriesCard from "./RegistriesCard";
 import SettingsCard from "./SettingsCard";
 import TemplatesTab from "./TemplatesTab";
@@ -21,6 +22,7 @@ const ALL_TABS = [
   { key: "environments", label: "Ambientes" },
   { key: "members", label: "Membros" },
   { key: "templates", label: "Modelos" },
+  { key: "images", label: "Imagens" },
   { key: "tokens", label: "Deploy tokens" },
   { key: "registries", label: "Registries" },
   { key: "settings", label: "Definições" },
@@ -172,6 +174,8 @@ export default function ProjectClient({ project }: { project: string }) {
       {tab === "templates" && <TemplatesTab project={project} />}
 
       {tab === "members" && <MembersTab project={project} />}
+
+      {tab === "images" && <ImagesTab project={project} />}
 
       {tab === "registries" && <RegistriesCard project={project} />}
 

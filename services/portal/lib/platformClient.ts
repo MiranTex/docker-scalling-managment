@@ -183,6 +183,10 @@ export type Replica = {
   draining: boolean;
 };
 
+export type ImageTag = { tag: string; digest: string; platforms: string[]; size: number; created?: string };
+export type PlatformImage = { repository: string; reference: string; tags: ImageTag[] };
+export type ProjectImages = { enabled: boolean; host?: string; images: PlatformImage[] };
+
 export type RegistryCredential = { registry: string; username: string; updatedAt: string; updatedBy: string };
 
 export function servicePath(project: string, env: string, svc: string, ...rest: string[]): string {
