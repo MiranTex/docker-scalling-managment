@@ -72,11 +72,19 @@ func loadNode() (nodeFile, string, error) {
 }
 
 func cmdNode(args []string) error {
-	usage := errors.New("uso: basestack node join <url> --token bsj_... --ca sha256:... [--name <nome>] | start | status | leave")
+	usage := errors.New("uso: basestack node token | join <url> --token bsj_... --ca sha256:... [--name <nome>] | start | status | leave")
 	if len(args) == 0 {
 		return usage
 	}
 	switch args[0] {
+	case "token":
+		// Na máquina da plataforma: um token de entrada sem passar pelo
+		// portal (o mesmo de Nós > Adicionar nó).
+		_, dir, err := loadSettings()
+		if err != nil {
+			return err
+		}
+		return compose(dir, "exec", "-T", "launcher", "/usr/local/bin/launcher", "join-token").Run()
 	case "join":
 		return nodeJoin(args[1:])
 	case "start":

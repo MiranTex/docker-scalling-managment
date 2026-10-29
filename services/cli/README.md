@@ -77,6 +77,47 @@ compilam já para o alvo, sem emulação; o portal (Node) corre emulado e é o
 mais lento. O mesmo serve para as apps:
 `docker build --platform linux/amd64,linux/arm64 -t registry.<domínio>/<projeto>/app:1.0 . && docker push ...`.
 
+## Nós e modo cluster
+
+Outras máquinas Linux entram como **nós**: no portal, Nós > Adicionar nó
+(ou `basestack node token` na máquina da plataforma) dá o comando a
+correr no nó novo:
+
+```sh
+basestack node join https://api.<domínio> --token bsj_... --ca sha256:...
+```
+
+O join confere a CA da plataforma pela impressão digital, põe o Docker do
+nó a confiar no registry (pede `sudo`) e arranca o agente
+(`basestack-agent`), que se liga à plataforma -- o nó não abre portas.
+`basestack node status|start|leave` gerem-no depois.
+
+Para os nós receberem apps, a plataforma corre em **modo cluster** (só
+Linux): `basestack init --cluster`, ou `basestack set cluster on && basestack up`.
+A máquina da plataforma passa a manager de um swarm (só para as redes:
+quem decide onde corre cada app continua a ser o launcher), cada nó entra
+sozinho, e a rede de cada ambiente passa a overlay cifrada -- as apps de
+um nó chegam aos addons e o Traefik chega a elas como se estivessem todas
+na mesma máquina. As redes dos ambientes que já existiam são migradas no
+`up` (um corte curto). Entre as máquinas têm de estar abertas as portas
+2377/tcp (só a da plataforma), 7946/tcp+udp e 4789/udp.
+
+Os addons ficam sempre na máquina da plataforma (os dados estão lá).
+
+### Cluster de bolso (desenvolvimento)
+
+`scripts/cluster-dind.sh` monta uma plataforma em modo cluster e dois nós,
+cada um num Docker-in-Docker, no Docker desta máquina (serve o Docker
+Desktop do Mac):
+
+```sh
+make release && basestack dev build      # binários e imagens
+scripts/cluster-dind.sh up               # plataforma + 2 nós ligados
+scripts/cluster-dind.sh test             # deploy nos nós, Traefik e Postgres pela overlay
+scripts/cluster-dind.sh reload launcher  # depois de reconstruir uma imagem
+scripts/cluster-dind.sh down
+```
+
 ## Registry de imagens
 
 `basestack up` arranca também um registry em `registry.<domínio>` (HTTPS

@@ -25,6 +25,9 @@ type Settings struct {
 	// que faltam (ex: registry.<domínio>/basestack de outra instalação).
 	// Vazio = construídas aqui (basestack dev build).
 	ImageSource string `json:"imageSource,omitempty"`
+	// Cluster: esta máquina é manager de um swarm e as redes dos ambientes
+	// são overlay -- os nós remotos recebem apps. Só Linux.
+	Cluster bool `json:"cluster,omitempty"`
 
 	Domain     string `json:"domain"`
 	HTTPPort   int    `json:"httpPort"`
@@ -69,6 +72,9 @@ func lanIP() string {
 	defer conn.Close()
 	return conn.LocalAddr().(*net.UDPAddr).IP.String()
 }
+
+// AdvertiseAddr: o IP pelo qual os nós chegam a esta máquina (swarm).
+func (s Settings) AdvertiseAddr() string { return lanIP() }
 
 func defaultSettings() Settings {
 	return Settings{

@@ -21,7 +21,8 @@ Uso:
   basestack logs <componente> [-f]
   basestack restart [componente]
   basestack set <chave> <valor>   muda a configuração (domain, portal-port,
-                        admin-email, acme-email, images-from); aplica-se no próximo up
+                        admin-email, acme-email, images-from, cluster on|off);
+                        aplica-se no próximo up
   basestack pull        volta a buscar as imagens da plataforma (images-from)
   basestack down        pára a plataforma (as apps dos projetos continuam)
   basestack down --all  pára a plataforma e as apps e bases de dados dos projetos
@@ -35,6 +36,7 @@ Nós (esta máquina a correr apps de uma plataforma noutra):
   basestack node join <url> --token bsj_... --ca sha256:...
                         o comando vem do portal (Nós > Adicionar nó)
   basestack node status | start | leave
+  basestack node token  (na máquina da plataforma) um token de entrada e o comando
 
 Os dados e a configuração ficam em ~/.basestack (Linux como root:
 /var/lib/basestack); BASESTACK_HOME muda o sítio.

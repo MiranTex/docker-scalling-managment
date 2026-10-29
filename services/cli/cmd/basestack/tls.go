@@ -232,7 +232,10 @@ func linuxTrust(caPath, host string) (string, error) {
 	if same(certsD) && same(system) {
 		return "", nil
 	}
-	return fmt.Sprintf("set -e\nmkdir -p %s\ncp %s %s\ncp %s %s\n%s\nsystemctl restart docker\n",
+	// Sem systemd (ex: Docker-in-Docker), reiniciar o Docker é com quem o
+	// gere.
+	return fmt.Sprintf("set -e\nmkdir -p %s\ncp %s %s\ncp %s %s\n%s\n"+
+		"if command -v systemctl >/dev/null 2>&1; then systemctl restart docker; else echo 'Reinicia o Docker para ele ler a CA nova.'; fi\n",
 		filepath.Dir(certsD), caPath, certsD, caPath, system, update), nil
 }
 

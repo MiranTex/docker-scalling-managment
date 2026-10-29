@@ -34,8 +34,11 @@ func withRegistryLogin(s Settings, fn func(docker func(args ...string) error) er
 		cmd.Stdin, cmd.Stdout, cmd.Stderr = strings.NewReader(stdin), os.Stdout, os.Stderr
 		return cmd.Run()
 	}
-	if err := run(s.Secrets.RegistryPullPassword, "login", s.RegistryHost(), "--username", "basestack-internal", "--password-stdin"); err != nil {
-		return fmt.Errorf("login no registry: %w", err)
+	login := exec.Command("docker", "login", s.RegistryHost(), "--username", "basestack-internal", "--password-stdin")
+	login.Env = append(os.Environ(), "DOCKER_CONFIG="+tmp, "DOCKER_HOST="+host)
+	login.Stdin = strings.NewReader(s.Secrets.RegistryPullPassword)
+	if out, err := login.CombinedOutput(); err != nil {
+		return fmt.Errorf("login no registry: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return fn(func(args ...string) error { return run("", args...) })
 }
@@ -67,6 +70,23 @@ func pushImages(s Settings, only map[string]bool) error {
 			}
 			if err := docker("push", remote); err != nil {
 				return fmt.Errorf("enviando %s: %w", img.name, err)
+			}
+		}
+		return nil
+	})
+}
+
+// pushQuiet envia imagens já construídas para o registry desta
+// instalação sem o progresso do push (é um passo do up).
+func pushQuiet(s Settings, names ...string) error {
+	return withRegistryLogin(s, func(docker func(args ...string) error) error {
+		for _, name := range names {
+			remote := remoteImage(s, name)
+			if _, err := dockerOutput("tag", s.image(name), remote); err != nil {
+				return err
+			}
+			if err := docker("push", "--quiet", remote); err != nil {
+				return err
 			}
 		}
 		return nil

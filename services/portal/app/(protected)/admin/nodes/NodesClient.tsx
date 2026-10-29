@@ -99,6 +99,7 @@ export default function NodesClient() {
                 <th>Nó</th>
                 <th>Estado</th>
                 <th>Plataforma</th>
+                <th>Rede das apps</th>
                 <th>CPUs</th>
                 <th>Memória alocada</th>
                 <th>Réplicas</th>
@@ -139,6 +140,15 @@ export default function NodesClient() {
                       </div>
                     </td>
                     <td>
+                      {n.network === "local" ? (
+                        <span className="muted">local</span>
+                      ) : n.network === "cluster" ? (
+                        <span className="badge active">cluster</span>
+                      ) : (
+                        <span className="muted">{n.network}</span>
+                      )}
+                    </td>
+                    <td>
                       {n.allocated.vcpu.toFixed(2)} / {n.cpus}
                     </td>
                     <td>
@@ -174,8 +184,8 @@ export default function NodesClient() {
         )}
         <p className="muted" style={{ marginTop: 12 }}>
           A memória alocada é a soma dos limites dos containers (não o consumo real). Em manutenção, o nó não recebe
-          réplicas novas; as que lá estão continuam a correr. Os nós remotos ainda não recebem apps: falta a rede entre
-          nós.
+          réplicas novas; as que lá estão continuam a correr. Um nó remoto só recebe apps com a plataforma em modo cluster
+          (rede overlay entre os nós).
         </p>
       </div>
 

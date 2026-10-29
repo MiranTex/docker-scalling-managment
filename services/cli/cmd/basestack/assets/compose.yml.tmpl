@@ -231,6 +231,9 @@ services:
       LAUNCHER_CA_CERT: /etc/base-stack/ca.crt
       LAUNCHER_PUBLIC_API_URL: "https://api.{{.Domain}}"
       LAUNCHER_AGENT_IMAGE: "{{.RegistryHost}}/basestack/agent:{{.Version}}"
+      # Cluster: swarm + redes overlay entre os nós (basestack set cluster on).
+      LAUNCHER_CLUSTER: "{{.Cluster}}"
+      LAUNCHER_ADVERTISE_ADDR: "{{.AdvertiseAddr}}"
       LAUNCHER_TRAEFIK_CERTIFICATES: "/etc/traefik/tls/{{.TLS.RegistryCert}}:/etc/traefik/tls/{{.TLS.RegistryKey}}"
     labels:
       base-stack.managed: "true"

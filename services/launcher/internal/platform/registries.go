@@ -95,11 +95,15 @@ const RegistryInternalUser = "basestack-internal"
 // a credencial interna -- que lê tudo, por isso é aqui que se garante que
 // um projeto só faz deploy das suas imagens (<registry>/<projeto>/...).
 func (s *Service) pullFromPlatformRegistry(ctx context.Context, image, projectID string) error {
+	return s.pullFromPlatformRegistryWith(ctx, s.docker, image, projectID)
+}
+
+func (s *Service) pullFromPlatformRegistryWith(ctx context.Context, d Docker, image, projectID string) error {
 	if err := s.checkPlatformImage(ctx, image, projectID); err != nil {
 		return err
 	}
 	auth := &dockerclient.RegistryAuth{Username: RegistryInternalUser, Password: s.cfg.RegistryPullPassword, ServerAddress: s.cfg.RegistryHost}
-	if err := s.docker.PullImageWithAuth(ctx, image, auth); err != nil {
+	if err := d.PullImageWithAuth(ctx, image, auth); err != nil {
 		return fmt.Errorf("obtendo imagem %s: %w", image, err)
 	}
 	return nil

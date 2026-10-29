@@ -255,14 +255,20 @@ func (s *Service) ensureImage(ctx context.Context, image, projectID string) erro
 }
 
 func (s *Service) pullImage(ctx context.Context, image, projectID string) error {
+	return s.pullWith(ctx, s.docker, image, projectID)
+}
+
+// pullWith busca uma imagem com o Docker de um nó, com as credenciais do
+// projeto (ou a interna, do registry da plataforma).
+func (s *Service) pullWith(ctx context.Context, d Docker, image, projectID string) error {
 	if s.isPlatformImage(image) {
-		return s.pullFromPlatformRegistry(ctx, image, projectID)
+		return s.pullFromPlatformRegistryWith(ctx, d, image, projectID)
 	}
 	auth, err := s.registryAuthFor(ctx, projectID, image)
 	if err != nil {
 		return err
 	}
-	if err := s.docker.PullImageWithAuth(ctx, image, auth); err != nil {
+	if err := d.PullImageWithAuth(ctx, image, auth); err != nil {
 		return fmt.Errorf("obtendo imagem %s: %w", image, err)
 	}
 	return nil

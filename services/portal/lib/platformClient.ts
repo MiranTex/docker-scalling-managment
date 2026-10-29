@@ -201,6 +201,8 @@ export type NodeView = {
   capacityMemoryMb: number;
   kind: "local" | "agent";
   agentVersion?: string;
+  // "local", "cluster" (recebe apps) ou o motivo por que ainda não tem rede.
+  network: string;
 };
 
 export type NodeJoinToken = { token: string; expiresAt: string; caHash: string; command: string };

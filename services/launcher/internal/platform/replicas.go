@@ -126,6 +126,14 @@ func (s *Service) createReplica(ctx context.Context, p store.Project, e store.En
 	if err != nil {
 		return "", err
 	}
+	// O deploy buscou a imagem para esta máquina; outro nó tem de a ter.
+	if node != LocalNode {
+		if _, err := docker.InspectImage(ctx, rev.Image); err != nil {
+			if err := s.pullWith(ctx, docker, rev.Image, p.ID); err != nil {
+				return "", fmt.Errorf("no nó %s: %w", node, err)
+			}
+		}
+	}
 	labels := replicaLabels(p, e, svc, rev)
 	labels[LabelNode] = node
 	memory := rev.MemoryMB * 1024 * 1024
