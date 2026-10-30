@@ -48,6 +48,13 @@ func TestConnectionURL(t *testing.T) {
 	if got := redis.connectionURL(6379); got != "redis://default:pw@127.0.0.1:6379/0" {
 		t.Errorf("redis = %s", got)
 	}
+	storage := credentials{Kind: "storage", User: "AKEY", Password: "sk", Database: "app", Port: 8333, Region: "us-east-1"}
+	settings := storage.clientSettings(18333)
+	for _, want := range []string{"Endpoint:   http://127.0.0.1:18333", "Bucket:     app", "Access key: AKEY", "Secret key: sk", "Região:     us-east-1"} {
+		if !strings.Contains(settings, want) {
+			t.Errorf("storage sem %q:\n%s", want, settings)
+		}
+	}
 }
 
 // fakeLauncher dá bilhetes de túnel e faz eco no WebSocket.

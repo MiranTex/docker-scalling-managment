@@ -83,8 +83,10 @@ func (s *Service) containerEnv(ctx context.Context, e store.Environment, rev sto
 		return nil, err
 	}
 	for _, a := range addons {
-		if v, ok := values[a.EnvVar]; ok {
-			base = append(base, a.EnvVar+"="+v)
+		for _, name := range addonEnvNames(a) {
+			if v, ok := values[name]; ok {
+				base = append(base, name+"="+v)
+			}
 		}
 	}
 	resolved, err := resolveWith(values, rev.Env)

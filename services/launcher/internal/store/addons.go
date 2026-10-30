@@ -13,6 +13,8 @@ var ErrAddonNotFound = errors.New("store: addon não encontrado")
 const (
 	AddonPostgres = "postgres"
 	AddonRedis    = "redis"
+	// AddonStorage: armazenamento de ficheiros com a API do S3 (SeaweedFS).
+	AddonStorage = "storage"
 )
 
 type Addon struct {

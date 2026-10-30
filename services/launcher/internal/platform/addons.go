@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"launcher/internal/dockerclient"
@@ -24,6 +25,13 @@ const (
 	defaultPostgresMemoryMB = 512
 	defaultRedisVCPU        = 0.25
 	defaultRedisMemoryMB    = 256
+	defaultStorageVCPU      = 0.25
+	defaultStorageMemoryMB  = 256
+
+	// Um addon storage = um bucket, criado no arranque. A região não conta
+	// para o SeaweedFS, mas os SDKs da AWS exigem uma.
+	storageBucket = "app"
+	storageRegion = "us-east-1"
 
 	backupKeep = 7
 )
@@ -48,6 +56,12 @@ type AddonView struct {
 	Status string `json:"status"`
 	// Host é como os serviços do ambiente lhe chegam (alias DNS + porta).
 	Host string `json:"host"`
+	// EnvVars: as variáveis que o addon injeta nos serviços do ambiente.
+	EnvVars []string `json:"envVars"`
+}
+
+func newAddonView(a store.Addon, status string) AddonView {
+	return AddonView{Addon: a, Status: status, Host: fmt.Sprintf("%s:%d", a.Slug, addonPort(a.Kind)), EnvVars: addonEnvNames(a)}
 }
 
 func addonContainerName(p store.Project, e store.Environment, a store.Addon) string {
@@ -59,8 +73,11 @@ func addonVolume(p store.Project, e store.Environment, a store.Addon, suffix str
 }
 
 func addonPort(kind string) int {
-	if kind == store.AddonRedis {
+	switch kind {
+	case store.AddonRedis:
 		return 6379
+	case store.AddonStorage:
+		return 8333
 	}
 	return 5432
 }
@@ -73,14 +90,60 @@ func randomPassword() string {
 	return hex.EncodeToString(buf)
 }
 
-func addonURL(a store.Addon, password string) string {
-	if a.Kind == store.AddonRedis {
+// randomAccessKey: o "utilizador" do storage, no formato das chaves da
+// AWS (20 caracteres maiúsculos).
+func randomAccessKey() string {
+	buf := make([]byte, 10)
+	if _, err := rand.Read(buf); err != nil {
+		panic(fmt.Sprintf("platform: sem entropia: %v", err))
+	}
+	return strings.ToUpper(hex.EncodeToString(buf))
+}
+
+func addonURL(a store.Addon, user, password string) string {
+	switch a.Kind {
+	case store.AddonRedis:
 		// "default" explícito: com o utilizador vazio ("redis://:pw@..."),
 		// redis-cli e vários clientes mandam AUTH "" <pw>, que o Redis 6+
 		// recusa (WRONGPASS).
 		return fmt.Sprintf("redis://default:%s@%s:6379/0", password, a.Slug)
+	case store.AddonStorage:
+		return fmt.Sprintf("http://%s:%s@%s:8333/%s", user, password, a.Slug, storageBucket)
 	}
 	return fmt.Sprintf("postgres://%s:%s@%s:5432/%s?sslmode=disable", addonPGUser, password, a.Slug, addonPGDatabase)
+}
+
+// addonURLVar é o segredo com a URL (e a password) do addon. No storage,
+// EnvVar é o prefixo de todas as variáveis.
+func addonURLVar(a store.Addon) string {
+	if a.Kind == store.AddonStorage {
+		return a.EnvVar + "_URL"
+	}
+	return a.EnvVar
+}
+
+// addonEnv são os segredos geridos que o addon põe no ambiente: a URL e,
+// no storage, também cada valor à parte -- os SDKs do S3 pedem-nos assim.
+func addonEnv(a store.Addon, user, password string) [][2]string {
+	env := [][2]string{{addonURLVar(a), addonURL(a, user, password)}}
+	if a.Kind == store.AddonStorage {
+		env = append(env,
+			[2]string{a.EnvVar + "_ENDPOINT", fmt.Sprintf("http://%s:8333", a.Slug)},
+			[2]string{a.EnvVar + "_BUCKET", storageBucket},
+			[2]string{a.EnvVar + "_REGION", storageRegion},
+			[2]string{a.EnvVar + "_ACCESS_KEY_ID", user},
+			[2]string{a.EnvVar + "_SECRET_ACCESS_KEY", password},
+		)
+	}
+	return env
+}
+
+func addonEnvNames(a store.Addon) []string {
+	var names []string
+	for _, kv := range addonEnv(a, "", "") {
+		names = append(names, kv[0])
+	}
+	return names
 }
 
 func (s *Service) ListAddons(ctx context.Context, projectSlug, envSlug string) ([]AddonView, error) {
@@ -94,7 +157,7 @@ func (s *Service) ListAddons(ctx context.Context, projectSlug, envSlug string) (
 	}
 	out := make([]AddonView, 0, len(addons))
 	for _, a := range addons {
-		out = append(out, AddonView{Addon: a, Status: s.addonStatus(ctx, p, e, a), Host: fmt.Sprintf("%s:%d", a.Slug, addonPort(a.Kind))})
+		out = append(out, newAddonView(a, s.addonStatus(ctx, p, e, a)))
 	}
 	return out, nil
 }
@@ -157,17 +220,31 @@ func (s *Service) CreateAddon(ctx context.Context, projectSlug, envSlug string, 
 		if a.MemoryMB == 0 {
 			a.MemoryMB = defaultRedisMemoryMB
 		}
+	case store.AddonStorage:
+		a.Image = s.cfg.StorageImage
+		a.BackupEnabled = false
+		if a.EnvVar == "" {
+			a.EnvVar = "STORAGE"
+		}
+		if a.VCPU == 0 {
+			a.VCPU = defaultStorageVCPU
+		}
+		if a.MemoryMB == 0 {
+			a.MemoryMB = defaultStorageMemoryMB
+		}
 	default:
-		return AddonView{}, invalid("tipo de addon %q desconhecido -- use \"postgres\" ou \"redis\"", in.Kind)
+		return AddonView{}, invalid("tipo de addon %q desconhecido -- use \"postgres\", \"redis\" ou \"storage\"", in.Kind)
 	}
-	if !envVarRe.MatchString(a.EnvVar) {
+	if !envVarRe.MatchString(a.EnvVar) || len(a.EnvVar) > 100 {
 		return AddonView{}, invalid("nome de variável %q inválido", a.EnvVar)
 	}
 	if a.VCPU < 0 || a.MemoryMB < 64 {
 		return AddonView{}, invalid("recursos inválidos: vCPU >= 0 e pelo menos 64 MB de memória")
 	}
-	if existing, err := s.db.GetSecret(ctx, e.ID, a.EnvVar); err == nil {
-		return AddonView{}, fmt.Errorf("%w: já existe o segredo %s neste ambiente (gerido por %q) -- escolhe outra variável", ErrConflict, a.EnvVar, existing.ManagedBy)
+	for _, name := range addonEnvNames(a) {
+		if existing, err := s.db.GetSecret(ctx, e.ID, name); err == nil {
+			return AddonView{}, fmt.Errorf("%w: já existe o segredo %s neste ambiente (gerido por %q) -- escolhe outra variável", ErrConflict, name, existing.ManagedBy)
+		}
 	}
 	if err := s.checkQuota(ctx, p, a.VCPU, a.MemoryMB); err != nil {
 		return AddonView{}, err
@@ -176,18 +253,32 @@ func (s *Service) CreateAddon(ctx context.Context, projectSlug, envSlug string, 
 	if err := s.db.CreateAddon(ctx, a); err != nil {
 		return AddonView{}, mapStoreErr(err)
 	}
-	password := randomPassword()
-	if err := s.putSecret(ctx, e.ID, a.EnvVar, addonURL(a, password), "addon:"+a.Slug, by); err != nil {
-		_ = s.db.DeleteAddon(ctx, a.ID)
-		return AddonView{}, err
+	user, password := "", randomPassword()
+	if a.Kind == store.AddonStorage {
+		user = randomAccessKey()
 	}
-	if err := s.startAddonContainer(ctx, p, e, a, password); err != nil {
-		_ = s.db.DeleteSecret(ctx, e.ID, a.EnvVar)
+	undo := func() {
+		s.deleteAddonSecrets(ctx, e.ID, a)
 		_ = s.db.DeleteAddon(ctx, a.ID)
+	}
+	for _, kv := range addonEnv(a, user, password) {
+		if err := s.putSecret(ctx, e.ID, kv[0], kv[1], "addon:"+a.Slug, by); err != nil {
+			undo()
+			return AddonView{}, err
+		}
+	}
+	if err := s.startAddonContainer(ctx, p, e, a, user, password); err != nil {
+		undo()
 		return AddonView{}, err
 	}
 	s.logger.Info("addon criado", "project", p.Slug, "env", e.Slug, "addon", a.Slug, "kind", a.Kind)
-	return AddonView{Addon: a, Status: "starting", Host: fmt.Sprintf("%s:%d", a.Slug, addonPort(a.Kind))}, nil
+	return newAddonView(a, "starting"), nil
+}
+
+func (s *Service) deleteAddonSecrets(ctx context.Context, envID string, a store.Addon) {
+	for _, name := range addonEnvNames(a) {
+		_ = s.db.DeleteSecret(ctx, envID, name)
+	}
 }
 
 func addonLabels(p store.Project, e store.Environment, a store.Addon) map[string]string {
@@ -206,7 +297,7 @@ func addonLabels(p store.Project, e store.Environment, a store.Addon) map[string
 // startAddonContainer cria os volumes (idempotente) e o container do addon.
 // É também o caminho de recriação do reconciliador: o volume de dados
 // sobrevive, só o container é novo.
-func (s *Service) startAddonContainer(ctx context.Context, p store.Project, e store.Environment, a store.Addon, password string) error {
+func (s *Service) startAddonContainer(ctx context.Context, p store.Project, e store.Environment, a store.Addon, user, password string) error {
 	labels := addonLabels(p, e, a)
 	volLabels := environmentLabels(p, e)
 	volLabels[LabelAddon] = a.ID
@@ -259,6 +350,30 @@ func (s *Service) startAddonContainer(ctx context.Context, p store.Project, e st
 			Test:     []string{"CMD-SHELL", "redis-cli ping | grep -q PONG"},
 			Interval: 5 * second, Timeout: 3 * second, Retries: 5, StartPeriod: 5 * second,
 		}
+	case store.AddonStorage:
+		// "weed mini": master, volume, filer e a API do S3 num só processo.
+		// As credenciais vêm do env; as portas internas (filer, volumes)
+		// ficam fechadas com chaves JWT novas a cada arranque. -ip fixo:
+		// os volumes registam-se no master por endereço, e o do container
+		// muda quando é recriado. GOMEMLIMIT: o Go só devolve memória
+		// quando sente o limite, e sem ele um envio grande chega ao do
+		// container.
+		req.Env = []string{
+			fmt.Sprintf("GOMEMLIMIT=%dMiB", a.MemoryMB*8/10),
+			"AWS_ACCESS_KEY_ID=" + user,
+			"AWS_SECRET_ACCESS_KEY=" + password,
+			"S3_BUCKET=" + storageBucket,
+			"WEED_JWT_SIGNING_KEY=" + randomPassword(),
+			"WEED_JWT_SIGNING_READ_KEY=" + randomPassword(),
+			"WEED_JWT_FILER_SIGNING_KEY=" + randomPassword(),
+			"WEED_JWT_FILER_SIGNING_READ_KEY=" + randomPassword(),
+		}
+		req.Cmd = []string{"mini", "-dir=/data", "-ip=127.0.0.1", "-ip.bind=0.0.0.0", "-admin.ui=false", "-master.telemetry=false"}
+		req.HostConfig.Binds = []string{dataVol + ":/data"}
+		req.Healthcheck = &dockerclient.Healthcheck{
+			Test:     []string{"CMD-SHELL", "wget -qO- http://127.0.0.1:8333/healthz >/dev/null"},
+			Interval: 5 * second, Timeout: 3 * second, Retries: 5, StartPeriod: 20 * second,
+		}
 	}
 
 	// Os addons ficam no nó local: os dados estão num volume dessa máquina.
@@ -277,23 +392,24 @@ func (s *Service) startAddonContainer(ctx context.Context, p store.Project, e st
 	return nil
 }
 
-// addonPassword recupera a password a partir da URL guardada no segredo
-// gerido -- não há segunda cópia em lado nenhum.
-func (s *Service) addonPassword(ctx context.Context, envID string, a store.Addon) (string, error) {
+// addonLogin recupera o utilizador e a password a partir da URL guardada
+// no segredo gerido -- não há segunda cópia em lado nenhum.
+func (s *Service) addonLogin(ctx context.Context, envID string, a store.Addon) (user, password string, err error) {
 	values, err := s.secretValues(ctx, envID)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	raw, ok := values[a.EnvVar]
+	name := addonURLVar(a)
+	raw, ok := values[name]
 	if !ok {
-		return "", fmt.Errorf("segredo %s do addon %s desapareceu", a.EnvVar, a.Slug)
+		return "", "", fmt.Errorf("segredo %s do addon %s desapareceu", name, a.Slug)
 	}
 	u, err := url.Parse(raw)
 	if err != nil || u.User == nil {
-		return "", fmt.Errorf("URL do addon %s ilegível", a.Slug)
+		return "", "", fmt.Errorf("URL do addon %s ilegível", a.Slug)
 	}
-	pw, _ := u.User.Password()
-	return pw, nil
+	password, _ = u.User.Password()
+	return u.User.Username(), password, nil
 }
 
 func (s *Service) addonScope(ctx context.Context, projectSlug, envSlug, addonSlug string) (store.Project, store.Environment, store.Addon, error) {
@@ -330,7 +446,7 @@ func (s *Service) DeleteAddon(ctx context.Context, projectSlug, envSlug, addonSl
 			}
 		}
 	}
-	_ = s.db.DeleteSecret(ctx, e.ID, a.EnvVar)
+	s.deleteAddonSecrets(ctx, e.ID, a)
 	return s.db.DeleteAddon(ctx, a.ID)
 }
 
@@ -353,7 +469,7 @@ func (s *Service) backupJob(ctx context.Context, p store.Project, e store.Enviro
 	if a.Kind != store.AddonPostgres {
 		return jobRequest{}, invalid("backups só existem para addons postgres")
 	}
-	pw, err := s.addonPassword(ctx, e.ID, a)
+	_, pw, err := s.addonLogin(ctx, e.ID, a)
 	if err != nil {
 		return jobRequest{}, err
 	}
@@ -449,7 +565,7 @@ func (s *Service) RestoreAddon(ctx context.Context, projectSlug, envSlug, addonS
 	if !backupFileRe.MatchString(file) {
 		return store.Job{}, invalid("ficheiro de backup %q inválido", file)
 	}
-	pw, err := s.addonPassword(ctx, e.ID, a)
+	_, pw, err := s.addonLogin(ctx, e.ID, a)
 	if err != nil {
 		return store.Job{}, err
 	}

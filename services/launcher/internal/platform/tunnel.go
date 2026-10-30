@@ -31,9 +31,11 @@ type AddonCredentials struct {
 	Kind     string `json:"kind"`
 	User     string `json:"user"`
 	Password string `json:"password"`
-	// Database: o nome da base (Postgres) ou o número (Redis).
+	// Database: o nome da base (Postgres), o número (Redis) ou o bucket
+	// (storage).
 	Database string `json:"database"`
 	Port     int    `json:"port"`
+	Region   string `json:"region,omitempty"`
 }
 
 func (s *Service) AddonCredentials(ctx context.Context, projectSlug, envSlug, addonSlug string) (AddonCredentials, error) {
@@ -41,14 +43,17 @@ func (s *Service) AddonCredentials(ctx context.Context, projectSlug, envSlug, ad
 	if err != nil {
 		return AddonCredentials{}, err
 	}
-	password, err := s.addonPassword(ctx, e.ID, a)
+	user, password, err := s.addonLogin(ctx, e.ID, a)
 	if err != nil {
 		return AddonCredentials{}, err
 	}
 	c := AddonCredentials{Kind: a.Kind, Password: password, Port: addonPort(a.Kind)}
-	if a.Kind == store.AddonRedis {
+	switch a.Kind {
+	case store.AddonRedis:
 		c.User, c.Database = "default", "0"
-	} else {
+	case store.AddonStorage:
+		c.User, c.Database, c.Region = user, storageBucket, storageRegion
+	default:
 		c.User, c.Database = addonPGUser, addonPGDatabase
 	}
 	return c, nil

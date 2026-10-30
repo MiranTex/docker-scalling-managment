@@ -119,10 +119,11 @@ type Config struct {
 	// métricas das apps -- as apps nunca saem da sua rede. Vazio desliga.
 	PrometheusContainer string
 
-	// Imagens dos addons -- Postgres 17 e Redis por defeito, trocáveis por
-	// env (ex: para fixar uma minor version).
+	// Imagens dos addons -- Postgres 17, Redis e SeaweedFS (storage) por
+	// defeito, trocáveis por env (ex: para fixar uma minor version).
 	PostgresImage string
 	RedisImage    string
+	StorageImage  string
 	// DebugImage é a do container do modo debug do terminal (vazio =
 	// busybox).
 	DebugImage string

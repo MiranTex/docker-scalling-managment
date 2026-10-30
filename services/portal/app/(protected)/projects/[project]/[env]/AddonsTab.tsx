@@ -11,6 +11,13 @@ import { useCan } from "@/lib/projectRole";
 
 const EMPTY = { slug: "", kind: "postgres", envVar: "", vcpu: "", memoryMb: "" };
 
+// O que cada tipo sugere no formulário e o que o terminal tem à mão.
+const KINDS: Record<string, { slug: string; envVar: string; shell: string }> = {
+  postgres: { slug: "db", envVar: "DATABASE_URL", shell: "psql disponível" },
+  redis: { slug: "cache", envVar: "REDIS_URL", shell: "redis-cli disponível" },
+  storage: { slug: "files", envVar: "STORAGE", shell: "weed shell disponível" },
+};
+
 export default function AddonsTab({ project, env }: { project: string; env: string }) {
   const canEdit = useCan("developer");
   const [addons, setAddons] = useState<Addon[] | null>(null);
@@ -126,8 +133,8 @@ export default function AddonsTab({ project, env }: { project: string; env: stri
     <>
       <div className="page-header">
       <p className="muted" style={{ margin: 0 }}>
-        Cada addon é um container próprio deste ambiente, com volume próprio. A URL de ligação fica como segredo gerido
-        (ex: <code>DATABASE_URL</code>) e é injetada em todos os serviços do ambiente.
+        Cada addon é um container próprio deste ambiente, com volume próprio. A ligação fica em segredos geridos (ex:{" "}
+        <code>DATABASE_URL</code>) injetados em todos os serviços do ambiente.
       </p>
         {canEdit && (
         <button className="primary" onClick={() => setOpen(true)}>
@@ -166,7 +173,11 @@ export default function AddonsTab({ project, env }: { project: string; env: stri
                   <span className={statusBadge(a.status)}>{a.status}</span>
                 </td>
                 <td>
-                  <code>{a.envVar}</code>
+                  {(a.envVars ?? [a.envVar]).map((v) => (
+                    <div key={v}>
+                      <code>{v}</code>
+                    </div>
+                  ))}
                 </td>
                 <td>
                   {a.vcpu} vCPU / {a.memoryMb} MB
@@ -206,14 +217,16 @@ export default function AddonsTab({ project, env }: { project: string; env: stri
                         </ul>
                       )}
                     </>
-                  ) : (
+                  ) : a.kind === "redis" ? (
                     <span className="muted">AOF no volume</span>
+                  ) : (
+                    <span className="muted">ficheiros no volume</span>
                   )}
                 </td>
                 <td>
                   {canEdit && (
                   <div className="actions">
-                    <button className="secondary" onClick={() => setTerminal(a)} title={a.kind === "postgres" ? "Shell no container (psql disponível)" : "Shell no container (redis-cli disponível)"}>
+                    <button className="secondary" onClick={() => setTerminal(a)} title={`Shell no container (${KINDS[a.kind]?.shell ?? "sh"})`}>
                       Terminal
                     </button>
                     <button className="danger" onClick={() => setDeleteTarget(a)}>
@@ -222,7 +235,13 @@ export default function AddonsTab({ project, env }: { project: string; env: stri
                   </div>
                   )}
                   {canEdit && (
-                    <div title="Abre a base de dados na tua máquina (DBeaver, psql...) com a CLI bs -- ver services/cli/README.md">
+                    <div
+                      title={
+                        a.kind === "storage"
+                          ? "Abre o armazenamento na tua máquina (aws cli, rclone, Cyberduck...) com a CLI bs -- ver services/cli/README.md"
+                          : "Abre a base de dados na tua máquina (DBeaver, psql...) com a CLI bs -- ver services/cli/README.md"
+                      }
+                    >
                       <p className="muted" style={{ margin: "8px 0 4px" }}>
                         Da tua máquina:
                       </p>
@@ -245,6 +264,7 @@ export default function AddonsTab({ project, env }: { project: string; env: stri
           <select id="addon-kind" value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })}>
             <option value="postgres">PostgreSQL 17</option>
             <option value="redis">Redis</option>
+            <option value="storage">Armazenamento de ficheiros (API do S3)</option>
           </select>
         </div>
         <div>
@@ -253,16 +273,16 @@ export default function AddonsTab({ project, env }: { project: string; env: stri
             id="addon-slug"
             value={form.slug}
             onChange={(e) => setForm({ ...form, slug: e.target.value })}
-            placeholder={form.kind === "postgres" ? "db" : "cache"}
+            placeholder={KINDS[form.kind].slug}
           />
         </div>
         <div>
-          <label htmlFor="addon-envvar">Variável (opcional)</label>
+          <label htmlFor="addon-envvar">{form.kind === "storage" ? "Prefixo das variáveis (opcional)" : "Variável (opcional)"}</label>
           <input
             id="addon-envvar"
             value={form.envVar}
             onChange={(e) => setForm({ ...form, envVar: e.target.value })}
-            placeholder={form.kind === "postgres" ? "DATABASE_URL" : "REDIS_URL"}
+            placeholder={KINDS[form.kind].envVar}
           />
         </div>
         <div>
@@ -274,6 +294,14 @@ export default function AddonsTab({ project, env }: { project: string; env: stri
           <input id="addon-mem" value={form.memoryMb} onChange={(e) => setForm({ ...form, memoryMb: e.target.value })} />
         </div>
       </div>
+      {form.kind === "storage" && (
+        <p className="muted">
+          Um bucket (<code>app</code>) compatível com os SDKs do S3. Os serviços recebem{" "}
+          <code>{(form.envVar.trim() || "STORAGE") + "_ENDPOINT"}</code>, <code>_BUCKET</code>, <code>_REGION</code>,{" "}
+          <code>_ACCESS_KEY_ID</code>, <code>_SECRET_ACCESS_KEY</code> e <code>_URL</code>. Só é acessível dentro do
+          ambiente.
+        </p>
+      )}
       <button className="primary" disabled={saving || !form.slug.trim()} onClick={create}>
         {saving ? "A criar..." : "Criar addon"}
       </button>
@@ -294,7 +322,7 @@ export default function AddonsTab({ project, env }: { project: string; env: stri
       {deleteTarget && (
         <ConfirmModal
           title="Apagar addon"
-          message={`Remove o container de ${deleteTarget.slug} e o segredo ${deleteTarget.envVar}. Os dados ficam no volume, a não ser que marques "apagar dados" antes de confirmar.`}
+          message={`Remove o container de ${deleteTarget.slug} e ${(deleteTarget.envVars ?? []).length > 1 ? `os segredos ${deleteTarget.envVar}_*` : `o segredo ${deleteTarget.envVar}`}. Os dados ficam no volume, a não ser que marques "apagar dados" antes de confirmar.`}
           expectedText={deleteTarget.slug}
           confirmLabel={purge ? "Apagar com dados" : "Apagar"}
           onConfirm={remove}

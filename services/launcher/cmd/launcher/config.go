@@ -86,6 +86,7 @@ type config struct {
 
 	postgresImage string
 	redisImage    string
+	storageImage  string
 
 	// traefikDynamicDir é onde o launcher escreve o routing dos serviços
 	// de projeto (file provider do Traefik). Vazio desliga o routing.
@@ -163,6 +164,7 @@ func loadConfig() config {
 
 		postgresImage: envString("LAUNCHER_ADDON_POSTGRES_IMAGE", "postgres:17-alpine"),
 		redisImage:    envString("LAUNCHER_ADDON_REDIS_IMAGE", "redis:7-alpine"),
+		storageImage:  envString("LAUNCHER_ADDON_STORAGE_IMAGE", "chrislusf/seaweedfs:4.50"),
 
 		traefikDynamicDir: os.Getenv("LAUNCHER_TRAEFIK_DYNAMIC_DIR"),
 		publicIPs:         envList("LAUNCHER_PUBLIC_IPS"),
@@ -229,6 +231,7 @@ func (c config) platformConfig() platform.Config {
 		PrometheusContainer:   c.prometheusContainer,
 		PostgresImage:         c.postgresImage,
 		RedisImage:            c.redisImage,
+		StorageImage:          c.storageImage,
 		DebugImage:            c.debugImage,
 		TraefikCertificates:   c.traefikCertificates,
 		RegistryHost:          c.registryHost,
