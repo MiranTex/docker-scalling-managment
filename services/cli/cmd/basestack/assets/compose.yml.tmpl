@@ -158,6 +158,10 @@ services:
       # Promove esta conta a super-admin num arranque do auth, se ela já
       # existir e ainda não houver nenhum -- ver "basestack restart auth".
       AUTH_BOOTSTRAP_SUPERADMIN_EMAIL: "{{.AdminEmail}}"
+      # 2FA (obrigatório para os administradores da plataforma): a chave
+      # que cifra os segredos, e o nome que aparece na app autenticadora.
+      AUTH_MFA_KEY: "{{.Secrets.MFAKey}}"
+      AUTH_MFA_ISSUER: "base-stack ({{.Domain}})"
     labels:
       base-stack.managed: "true"
     volumes:

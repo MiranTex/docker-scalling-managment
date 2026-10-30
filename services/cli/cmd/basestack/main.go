@@ -32,6 +32,8 @@ Uso:
   basestack doctor      verifica os requisitos desta máquina
   basestack reset-password <email>
                         password temporária para uma conta (ex: o admin esqueceu a dele)
+  basestack reset-2fa <email>
+                        desliga o 2FA de uma conta (perdeu o telemóvel e os códigos)
   basestack firewall    abre na ufw a rede do cluster (só para a rede local)
   basestack dev build   constrói as imagens a partir do código (desenvolvimento)
   basestack dev build --platform linux/amd64,linux/arm64 --push
@@ -80,6 +82,8 @@ func main() {
 		err = cmdDown(args)
 	case "doctor":
 		err = cmdDoctor(args)
+	case "reset-2fa":
+		err = cmdReset2FA(args)
 	case "reset-password":
 		err = cmdResetPassword(args)
 	case "firewall":

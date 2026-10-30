@@ -23,6 +23,7 @@ import (
 	"auth/internal/apikey"
 	"auth/internal/httpapi"
 	"auth/internal/keystore"
+	"auth/internal/mfa"
 	"auth/internal/oauth"
 	"auth/internal/password"
 	"auth/internal/refresh"
@@ -53,6 +54,9 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "reset-password" {
 		os.Exit(resetPassword(ctx, db, os.Args[2:]))
 	}
+	if len(os.Args) > 1 && os.Args[1] == "reset-2fa" {
+		os.Exit(reset2FA(ctx, db, os.Args[2:]))
+	}
 
 	promoteBootstrapSuperAdmin(ctx, db, cfg, logger)
 
@@ -66,6 +70,16 @@ func main() {
 	emailVerifier := verification.NewManager(db.EmailVerificationStore(), cfg.emailVerificationTTL)
 	handler := httpapi.NewHandler(db, db, tokens, refreshTokens, apiKeys, oauthLogin, emailVerifier, db, cfg.accessTokenTTL, logger).
 		WithRegistration(cfg.openRegistration, cfg.bootstrapSuperAdminEmail)
+	if cfg.mfaKey != "" {
+		box, err := mfa.NewBox(cfg.mfaKey)
+		if err != nil {
+			logger.Error("configuração inválida: AUTH_MFA_KEY", "err", err)
+			os.Exit(1)
+		}
+		handler.WithMFA(db, box, cfg.mfaIssuer)
+	} else {
+		logger.Warn("AUTH_MFA_KEY não definida: 2FA desligado (e não obrigatório para os admins)")
+	}
 
 	srv := &http.Server{
 		Addr:    cfg.listenAddr,
@@ -212,5 +226,27 @@ func resetPassword(ctx context.Context, db *store.DB, args []string) int {
 		return 1
 	}
 	fmt.Printf("Password temporária de %s: %s\nEntra no portal com ela e troca-a (menu da conta > Alterar password).\n", user.Email, temp)
+	return 0
+}
+
+// reset2FA desliga o 2FA de uma conta (perdeu o telemóvel e os códigos de
+// recuperação) e termina as sessões dela. Se for obrigatório (admins), a
+// pessoa volta a ativá-lo no próximo login.
+func reset2FA(ctx context.Context, db *store.DB, args []string) int {
+	if len(args) != 1 {
+		fmt.Fprintln(os.Stderr, "uso: authd reset-2fa <email>")
+		return 2
+	}
+	user, found, err := db.FindUserByEmail(ctx, args[0])
+	if err != nil || !found {
+		fmt.Fprintf(os.Stderr, "não há conta com o e-mail %s\n", args[0])
+		return 1
+	}
+	if err := db.DisableTOTP(ctx, user.ID); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	_ = db.RevokeUserSessions(ctx, user.ID, time.Now())
+	fmt.Printf("2FA de %s desligado. No próximo login volta a configurá-lo (se for administrador, é obrigatório).\n", user.Email)
 	return 0
 }
