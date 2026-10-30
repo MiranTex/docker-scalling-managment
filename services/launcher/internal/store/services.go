@@ -66,6 +66,9 @@ type Service struct {
 	// antes de chegar à app (ver SetServiceBasicAuth). O hash não sai daqui.
 	BasicAuthUser string `json:"basicAuthUser,omitempty"`
 	BasicAuthHash string `json:"-"`
+	// NodeSelector: as etiquetas que um nó tem de ter para receber réplicas
+	// (entra no próximo deploy, como a memória).
+	NodeSelector map[string]string `json:"nodeSelector"`
 	CreatedAt       time.Time `json:"createdAt"`
 	UpdatedAt       time.Time `json:"updatedAt"`
 	CreatedBy       string    `json:"createdBy"`
@@ -74,19 +77,22 @@ type Service struct {
 const serviceColumns = `id, environment_id, slug, kind, port, health_path, health_timeout_seconds, cmd, env, release_cmd,
 	vcpu::float8, memory_mb, scaling_mode, replicas, min_replicas, max_replicas, cpu_scale_up_percent, cpu_scale_down_percent,
 	desired_state, current_revision_id, metrics_port, metrics_path, template_id, template_version, created_at, updated_at, created_by,
-	basic_auth_user, basic_auth_hash`
+	basic_auth_user, basic_auth_hash, node_selector`
 
 func scanService(row interface{ Scan(...any) error }) (Service, error) {
 	var s Service
-	var cmd, env, release []byte
+	var cmd, env, release, selector []byte
 	err := row.Scan(&s.ID, &s.EnvironmentID, &s.Slug, &s.Kind, &s.Port, &s.HealthPath, &s.HealthTimeoutSeconds, &cmd, &env, &release,
 		&s.VCPU, &s.MemoryMB, &s.ScalingMode, &s.Replicas, &s.MinReplicas, &s.MaxReplicas, &s.CPUScaleUpPercent, &s.CPUScaleDownPercent,
 		&s.DesiredState, &s.CurrentRevisionID, &s.MetricsPort, &s.MetricsPath, &s.TemplateID, &s.TemplateVersion, &s.CreatedAt, &s.UpdatedAt, &s.CreatedBy,
-		&s.BasicAuthUser, &s.BasicAuthHash)
+		&s.BasicAuthUser, &s.BasicAuthHash, &selector)
 	if err != nil {
 		return Service{}, err
 	}
 	if err := unmarshalLists(map[*[]string][]byte{&s.Cmd: cmd, &s.Env: env, &s.ReleaseCmd: release}); err != nil {
+		return Service{}, fmt.Errorf("store: serviço %s: %w", s.ID, err)
+	}
+	if err := unmarshalLabels(map[*map[string]string][]byte{&s.NodeSelector: selector}); err != nil {
 		return Service{}, fmt.Errorf("store: serviço %s: %w", s.ID, err)
 	}
 	return s, nil
@@ -163,12 +169,12 @@ func (db *DB) CreateService(ctx context.Context, s Service) error {
 	_, err := db.sql.ExecContext(ctx, `
 		INSERT INTO launcher.services (id, environment_id, slug, kind, port, health_path, health_timeout_seconds, cmd, env, release_cmd,
 			vcpu, memory_mb, scaling_mode, replicas, min_replicas, max_replicas, cpu_scale_up_percent, cpu_scale_down_percent,
-			desired_state, created_by, metrics_port, metrics_path)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)`,
+			desired_state, created_by, metrics_port, metrics_path, node_selector)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)`,
 		s.ID, s.EnvironmentID, s.Slug, s.Kind, s.Port, s.HealthPath, s.HealthTimeoutSeconds,
 		marshalList(s.Cmd), marshalList(s.Env), marshalList(s.ReleaseCmd),
 		s.VCPU, s.MemoryMB, s.ScalingMode, s.Replicas, s.MinReplicas, s.MaxReplicas, s.CPUScaleUpPercent, s.CPUScaleDownPercent,
-		s.DesiredState, s.CreatedBy, s.MetricsPort, s.MetricsPath)
+		s.DesiredState, s.CreatedBy, s.MetricsPort, s.MetricsPath, marshalLabels(s.NodeSelector))
 	if isUniqueViolation(err) {
 		return ErrConflict
 	}
@@ -184,11 +190,11 @@ func (db *DB) UpdateService(ctx context.Context, s Service) error {
 		UPDATE launcher.services SET port = $2, health_path = $3, health_timeout_seconds = $4, cmd = $5, env = $6, release_cmd = $7,
 			vcpu = $8, memory_mb = $9, scaling_mode = $10, replicas = $11, min_replicas = $12, max_replicas = $13,
 			cpu_scale_up_percent = $14, cpu_scale_down_percent = $15, desired_state = $16,
-			metrics_port = $17, metrics_path = $18, updated_at = now()
+			metrics_port = $17, metrics_path = $18, node_selector = $19, updated_at = now()
 		WHERE id = $1`,
 		s.ID, s.Port, s.HealthPath, s.HealthTimeoutSeconds, marshalList(s.Cmd), marshalList(s.Env), marshalList(s.ReleaseCmd),
 		s.VCPU, s.MemoryMB, s.ScalingMode, s.Replicas, s.MinReplicas, s.MaxReplicas,
-		s.CPUScaleUpPercent, s.CPUScaleDownPercent, s.DesiredState, s.MetricsPort, s.MetricsPath)
+		s.CPUScaleUpPercent, s.CPUScaleDownPercent, s.DesiredState, s.MetricsPort, s.MetricsPath, marshalLabels(s.NodeSelector))
 	if err != nil {
 		return fmt.Errorf("store: atualizando serviço %q: %w", s.Slug, err)
 	}
@@ -230,20 +236,26 @@ type Revision struct {
 	MetricsPath          string    `json:"metricsPath"`
 	CreatedAt            time.Time `json:"createdAt"`
 	CreatedBy            string    `json:"createdBy"`
+	// NodeSelector: as etiquetas que um nó tem de ter para receber
+	// réplicas desta revisão.
+	NodeSelector map[string]string `json:"nodeSelector"`
 }
 
 const revisionColumns = `id, service_id, number, image, cmd, env, release_cmd, port, health_path, health_timeout_seconds,
-	vcpu::float8, memory_mb, metrics_port, metrics_path, created_at, created_by`
+	vcpu::float8, memory_mb, metrics_port, metrics_path, created_at, created_by, node_selector`
 
 func scanRevision(row interface{ Scan(...any) error }) (Revision, error) {
 	var r Revision
-	var cmd, env, release []byte
+	var cmd, env, release, selector []byte
 	err := row.Scan(&r.ID, &r.ServiceID, &r.Number, &r.Image, &cmd, &env, &release, &r.Port, &r.HealthPath, &r.HealthTimeoutSeconds,
-		&r.VCPU, &r.MemoryMB, &r.MetricsPort, &r.MetricsPath, &r.CreatedAt, &r.CreatedBy)
+		&r.VCPU, &r.MemoryMB, &r.MetricsPort, &r.MetricsPath, &r.CreatedAt, &r.CreatedBy, &selector)
 	if err != nil {
 		return Revision{}, err
 	}
 	if err := unmarshalLists(map[*[]string][]byte{&r.Cmd: cmd, &r.Env: env, &r.ReleaseCmd: release}); err != nil {
+		return Revision{}, fmt.Errorf("store: revisão %s: %w", r.ID, err)
+	}
+	if err := unmarshalLabels(map[*map[string]string][]byte{&r.NodeSelector: selector}); err != nil {
 		return Revision{}, fmt.Errorf("store: revisão %s: %w", r.ID, err)
 	}
 	return r, nil
@@ -254,12 +266,12 @@ func scanRevision(row interface{ Scan(...any) error }) (Revision, error) {
 func (db *DB) CreateRevision(ctx context.Context, r Revision) (Revision, error) {
 	row := db.sql.QueryRowContext(ctx, `
 		INSERT INTO launcher.revisions (id, service_id, number, image, cmd, env, release_cmd, port, health_path, health_timeout_seconds,
-			vcpu, memory_mb, created_by, metrics_port, metrics_path)
+			vcpu, memory_mb, created_by, metrics_port, metrics_path, node_selector)
 		VALUES ($1, $2, (SELECT COALESCE(MAX(number), 0) + 1 FROM launcher.revisions WHERE service_id = $2),
-			$3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+			$3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 		RETURNING `+revisionColumns,
 		r.ID, r.ServiceID, r.Image, marshalList(r.Cmd), marshalList(r.Env), marshalList(r.ReleaseCmd),
-		r.Port, r.HealthPath, r.HealthTimeoutSeconds, r.VCPU, r.MemoryMB, r.CreatedBy, r.MetricsPort, r.MetricsPath)
+		r.Port, r.HealthPath, r.HealthTimeoutSeconds, r.VCPU, r.MemoryMB, r.CreatedBy, r.MetricsPort, r.MetricsPath, marshalLabels(r.NodeSelector))
 	out, err := scanRevision(row)
 	if isUniqueViolation(err) {
 		return Revision{}, ErrConflict

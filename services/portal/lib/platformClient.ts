@@ -161,6 +161,8 @@ export type Service = {
   updatedAt: string;
   // Com utilizador, o serviço está protegido com password (basic auth).
   basicAuthUser?: string;
+  // As etiquetas que um nó tem de ter para receber réplicas.
+  nodeSelector?: Record<string, string>;
 };
 
 export type Deployment = {
@@ -211,6 +213,9 @@ export type NodeView = {
   drain?: string;
   agentOutdated?: boolean;
   agentLatest?: string;
+  // As etiquetas que um admin pôs e as detetadas (ex: gpu=nvidia).
+  labels: Record<string, string>;
+  autoLabels: Record<string, string>;
 };
 
 export type NodeJoinToken = { token: string; expiresAt: string; caHash: string; command: string };

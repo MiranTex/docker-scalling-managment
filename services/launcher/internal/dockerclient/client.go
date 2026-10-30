@@ -143,6 +143,8 @@ type SystemInfo struct {
 	Architecture  string `json:"Architecture"` // do kernel: x86_64, aarch64
 	OSType        string `json:"OSType"`
 	ServerVersion string `json:"ServerVersion"`
+	// Runtimes: os runtimes de containers que o Docker tem (ex: "nvidia").
+	Runtimes map[string]json.RawMessage `json:"Runtimes"`
 	Swarm         struct {
 		LocalNodeState   string `json:"LocalNodeState"` // inactive, active, pending, error
 		NodeID           string `json:"NodeID"`

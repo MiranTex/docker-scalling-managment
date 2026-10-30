@@ -35,6 +35,9 @@ type ServiceInput struct {
 	CPUScaleDownPercent  *float64  `json:"cpuScaleDownPercent"`
 	MetricsPort          *int      `json:"metricsPort"`
 	MetricsPath          *string   `json:"metricsPath"`
+	// NodeSelector: as etiquetas que um nó tem de ter (entra no próximo
+	// deploy).
+	NodeSelector *map[string]string `json:"nodeSelector"`
 
 	// Só na criação: copiar a configuração de um modelo do projeto (versão
 	// 0 = a mais recente) e fazer logo o primeiro deploy, com Image se
@@ -46,6 +49,9 @@ type ServiceInput struct {
 
 // apply copia os campos preenchidos para svc.
 func (in ServiceInput) apply(svc *store.Service) {
+	if in.NodeSelector != nil {
+		svc.NodeSelector = *in.NodeSelector
+	}
 	if in.Port != nil {
 		svc.Port = *in.Port
 	}
@@ -97,6 +103,9 @@ func (in ServiceInput) apply(svc *store.Service) {
 }
 
 func validateService(svc store.Service) error {
+	if err := validateLabels("etiquetas exigidas", svc.NodeSelector); err != nil {
+		return err
+	}
 	switch svc.Kind {
 	case store.ServiceWeb:
 		if svc.Port < 1 || svc.Port > 65535 {

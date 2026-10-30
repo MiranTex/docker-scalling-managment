@@ -496,6 +496,14 @@ td {
   color: #15803d;
 }
 
+/* Etiquetas (ex: gpu=nvidia) -- neutras, não são um estado. */
+.badge.label {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: inherit;
+  font-weight: 500;
+}
+
 .badge.revoked,
 .badge.expired {
   background: #fef2f2;

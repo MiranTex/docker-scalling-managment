@@ -76,7 +76,7 @@ func (s *Service) registerLocalNode(ctx context.Context) {
 	}
 	n := store.Node{
 		Name: LocalNode, OS: info.OSType, Arch: normalArch(info.Architecture), CPUs: info.NCPU,
-		MemoryMB: info.MemTotal >> 20, DockerVersion: info.ServerVersion,
+		MemoryMB: info.MemTotal >> 20, DockerVersion: info.ServerVersion, AutoLabels: detectLabels(info),
 	}
 	if err := s.db.PutNodeFacts(ctx, n); err != nil {
 		s.logger.Error("registando o nó local", "err", err)
@@ -168,16 +168,7 @@ func (s *Service) SetNodeSchedulable(ctx context.Context, name string, schedulab
 		}
 		return NodeView{}, err
 	}
-	nodes, err := s.ListNodes(ctx)
-	if err != nil {
-		return NodeView{}, err
-	}
-	for _, n := range nodes {
-		if n.Name == name {
-			return n, nil
-		}
-	}
-	return NodeView{}, fmt.Errorf("%w: nó %s", ErrNotFound, name)
+	return s.nodeView(ctx, name)
 }
 
 // agentImageVersion: a versão da imagem do agente nesta plataforma (a
@@ -235,6 +226,8 @@ type placement struct {
 	// Platforms em que a imagem existe (ex: "linux/arm64"); vazio = não se
 	// sabe, serve qualquer nó.
 	Platforms []string
+	// Selector: as etiquetas que o nó tem de ter.
+	Selector map[string]string
 }
 
 type candidate struct {
@@ -249,7 +242,7 @@ type candidate struct {
 }
 
 // schedule escolhe o nó para uma réplica: online, a aceitar réplicas, com
-// a arquitetura da imagem e memória livre; entre esses, o com menos
+// as etiquetas exigidas, a arquitetura da imagem e memória livre; entre esses, o com menos
 // réplicas do mesmo serviço (espalhar: a morte de uma máquina não leva
 // todas) e, a seguir, o com mais memória livre. Sem nenhum, o erro diz
 // porque cada um ficou de fora.
@@ -267,6 +260,8 @@ func schedule(cands []candidate, p placement) (string, error) {
 			// Sem a rede do ambiente, uma app neste nó não chegava aos
 			// addons nem o Traefik a ela.
 			why = append(why, c.Node.Name+": sem rede para apps ("+c.Network+")")
+		case len(missingLabels(c.Node.EffectiveLabels(), p.Selector)) > 0:
+			why = append(why, c.Node.Name+": sem "+strings.Join(missingLabels(c.Node.EffectiveLabels(), p.Selector), ", "))
 		case len(p.Platforms) > 0 && !hasPlatform(p.Platforms, platform):
 			why = append(why, fmt.Sprintf("%s: a imagem não tem %s (tem %s)", c.Node.Name, platform, strings.Join(p.Platforms, ", ")))
 		case float64(c.Allocated.MemoryMB+p.MemoryMB) > c.Capacity:
@@ -324,7 +319,7 @@ func (s *Service) placeReplica(ctx context.Context, rev store.Revision) (string,
 	for i, n := range nodes {
 		cands[i] = candidate{Node: n.Node, Online: n.Online, Network: n.Network, Allocated: n.Allocated, Capacity: n.Capacity, Siblings: siblings[n.Name]}
 	}
-	return schedule(cands, placement{VCPU: rev.VCPU, MemoryMB: rev.MemoryMB, Platforms: s.imagePlatforms(ctx, rev.Image)})
+	return schedule(cands, placement{VCPU: rev.VCPU, MemoryMB: rev.MemoryMB, Platforms: s.imagePlatforms(ctx, rev.Image), Selector: rev.NodeSelector})
 }
 
 // imagePlatforms: a plataforma da imagem como está no Docker local (onde

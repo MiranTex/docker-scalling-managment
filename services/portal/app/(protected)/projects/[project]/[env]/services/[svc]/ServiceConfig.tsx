@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { api, servicePath, splitArgs, type Service } from "@/lib/platformClient";
 import { useCan } from "@/lib/projectRole";
+import { formatLabels, parseLabels } from "@/lib/labels";
 
 function toForm(s: Service, joinArgs: (a: string[]) => string) {
   return {
@@ -22,6 +23,7 @@ function toForm(s: Service, joinArgs: (a: string[]) => string) {
     cpuScaleDownPercent: String(s.cpuScaleDownPercent),
     metricsPort: String(s.metricsPort || ""),
     metricsPath: s.metricsPath,
+    nodeSelector: formatLabels(s.nodeSelector),
   };
 }
 
@@ -62,6 +64,7 @@ export default function ServiceConfig({
     setSaving(true);
     const web = service.kind === "web";
     try {
+      const nodeSelector = parseLabels(form.nodeSelector);
       await api(servicePath(project, env, service.slug), {
         method: "PATCH",
         body: JSON.stringify({
@@ -84,6 +87,7 @@ export default function ServiceConfig({
           cpuScaleDownPercent: Number(form.cpuScaleDownPercent),
           metricsPort: Number(form.metricsPort) || 0,
           metricsPath: form.metricsPath.trim(),
+          nodeSelector,
         }),
       });
       setDirty(false);
@@ -127,6 +131,16 @@ export default function ServiceConfig({
         <div>
           <label htmlFor="cfg-mem">Memória por réplica (MB)</label>
           <input id="cfg-mem" value={form.memoryMb} onChange={(e) => set("memoryMb", e.target.value)} />
+        </div>
+        <div>
+          <label htmlFor="cfg-node-selector">Só em nós com as etiquetas (vazio = qualquer nó)</label>
+          <input
+            id="cfg-node-selector"
+            value={form.nodeSelector}
+            onChange={(e) => set("nodeSelector", e.target.value)}
+            placeholder="gpu=nvidia, disco=ssd"
+            title="As etiquetas dos nós vêem-se e mudam-se em Administração > Nós"
+          />
         </div>
         <div>
           <label htmlFor="cfg-metrics-port">Porta de métricas (vazio = sem métricas)</label>

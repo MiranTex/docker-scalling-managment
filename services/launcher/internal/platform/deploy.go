@@ -76,7 +76,7 @@ func (s *Service) Deploy(ctx context.Context, projectSlug, envSlug, svcSlug stri
 			ID: newID(), ServiceID: svc.ID, Image: image, Cmd: svc.Cmd, Env: svc.Env, ReleaseCmd: svc.ReleaseCmd,
 			Port: svc.Port, HealthPath: svc.HealthPath, HealthTimeoutSeconds: svc.HealthTimeoutSeconds,
 			VCPU: svc.VCPU, MemoryMB: svc.MemoryMB, MetricsPort: svc.MetricsPort, MetricsPath: svc.MetricsPath,
-			CreatedBy: by,
+			NodeSelector: svc.NodeSelector, CreatedBy: by,
 		}
 	}
 
