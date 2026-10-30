@@ -25,7 +25,10 @@ type runtime struct {
 	problem map[string]string
 	// jobs: cancelamento de cada job a correr neste processo.
 	jobs map[string]context.CancelCauseFunc
-	kick chan struct{}
+	// nodeDrain: nó -> a ser esvaziado (true) ou o resultado do último.
+	nodeDrain    map[string]bool
+	nodeDrainMsg map[string]string
+	kick         chan struct{}
 }
 
 func newRuntime() *runtime {
@@ -39,7 +42,8 @@ func newRuntime() *runtime {
 		lastEval:  map[string]time.Time{},
 		problem:   map[string]string{},
 		jobs:      map[string]context.CancelCauseFunc{},
-		kick:      make(chan struct{}, 1),
+		nodeDrain: map[string]bool{}, nodeDrainMsg: map[string]string{},
+		kick: make(chan struct{}, 1),
 	}
 }
 
@@ -86,6 +90,17 @@ func (r *runtime) observe(container string, ok bool) {
 	r.fails[container]++
 	if r.fails[container] >= 3 || !r.ready[container] {
 		r.ready[container] = false
+	}
+}
+
+// observeSuspect é o observe de uma réplica de um nó sem sinal: uma falha
+// basta para sair do routing (o nó provavelmente morreu).
+func (r *runtime) observeSuspect(container string, ok bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.ready[container] = ok
+	if ok {
+		r.fails[container] = 0
 	}
 }
 
@@ -155,4 +170,29 @@ func (r *runtime) cancelJob(id string, cause error) bool {
 		cancel(cause)
 	}
 	return ok
+}
+
+func (r *runtime) startNodeDrain(node string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.nodeDrain[node] {
+		return false
+	}
+	r.nodeDrain[node] = true
+	r.nodeDrainMsg[node] = "a esvaziar..."
+	return true
+}
+
+func (r *runtime) endNodeDrain(node, msg string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.nodeDrain, node)
+	r.nodeDrainMsg[node] = msg
+}
+
+// nodeDrainState: a esvaziar agora, e a mensagem do último (ou do atual).
+func (r *runtime) nodeDrainState(node string) (bool, string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.nodeDrain[node], r.nodeDrainMsg[node]
 }

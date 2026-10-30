@@ -27,7 +27,7 @@ export default function NodesClient() {
 
   useEffect(() => {
     load();
-    const t = setInterval(load, 15000);
+    const t = setInterval(load, 5000);
     return () => clearInterval(t);
   }, []);
 
@@ -59,6 +59,16 @@ export default function NodesClient() {
       setCheck({ node: n.name, result: await api<NodeCheck>(`nodes/${encodeURIComponent(n.name)}/check`, { method: "POST" }) });
     } catch (e) {
       setCheck({ node: n.name, result: { ok: false, output: "", error: (e as Error).message } });
+    }
+  }
+
+  async function drain(n: NodeView) {
+    if (!confirm(`Esvaziar ${n.name}? Fica em manutenção e as ${n.replicas} réplica(s) dele mudam-se para outros nós, uma a uma. Os addons ficam.`)) return;
+    try {
+      await api(`nodes/${encodeURIComponent(n.name)}/drain`, { method: "POST" });
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
     }
   }
 
@@ -115,6 +125,7 @@ export default function NodesClient() {
                   <tr key={n.name}>
                     <td>
                       <strong>{n.name}</strong>
+                      {n.drain && !n.draining && <div className="muted">{n.drain}</div>}
                       {n.address && (
                         <div className="muted">
                           <code>{n.address}</code>
@@ -122,8 +133,14 @@ export default function NodesClient() {
                       )}
                     </td>
                     <td>
-                      {!n.online ? (
-                        <span className="badge failed">offline</span>
+                      {n.status === "perdido" ? (
+                        <span className="badge failed">perdido</span>
+                      ) : !n.online ? (
+                        <span className="badge pending" title="As réplicas dele continuam a contar até 60s sem sinal">
+                          {n.status}
+                        </span>
+                      ) : n.draining ? (
+                        <span className="badge pending">a esvaziar</span>
                       ) : n.schedulable ? (
                         <span className="badge active">ativo</span>
                       ) : (
@@ -170,6 +187,14 @@ export default function NodesClient() {
                           Reativar
                         </button>
                       )}
+                      <button
+                        className="secondary"
+                        disabled={!n.online || n.draining || n.replicas === 0}
+                        onClick={() => drain(n)}
+                        title="Muda as réplicas deste nó para outros, uma a uma, sem cortar o serviço"
+                      >
+                        Esvaziar
+                      </button>
                       {n.kind === "agent" && (
                         <button className="danger" disabled={busy === n.name} onClick={() => remove(n)}>
                           Remover

@@ -30,6 +30,7 @@ const (
 	JoinTokenPrefix = "bsj_"
 	NodeTokenPrefix = "bsn_"
 	joinTokenTTL    = time.Hour
+	agentKeepAlive  = 5 * time.Second
 )
 
 var ErrUnauthorizedNode = errors.New("credencial do nó inválida ou revogada")
@@ -59,8 +60,9 @@ func (c *agentConn) networked() (bool, string) {
 }
 
 type agents struct {
-	mu sync.Mutex
-	m  map[string]*agentConn
+	mu    sync.Mutex
+	m     map[string]*agentConn
+	watch *nodeWatch // o que se sabe dos nós entre ligações (ver liveness.go)
 }
 
 func (a *agents) get(node string) *agentConn {
@@ -84,6 +86,8 @@ func (a *agents) put(node string, c *agentConn) {
 	a.mu.Lock()
 	old := a.m[node]
 	a.m[node] = c
+	delete(a.watch.down, node)
+	delete(a.watch.lost, node)
 	a.mu.Unlock()
 	if old != nil {
 		old.close()
@@ -98,6 +102,7 @@ func (a *agents) drop(node string, c *agentConn) {
 			cur.close()
 		}
 		delete(a.m, node)
+		a.watch.down[node] = time.Now()
 	}
 }
 
@@ -161,6 +166,11 @@ func (s *Service) AuthenticateNode(ctx context.Context, nodeToken string) (store
 func (s *Service) ServeAgent(ctx context.Context, node string, conn net.Conn, version, address string) error {
 	cfg := yamux.DefaultConfig()
 	cfg.LogOutput = discard{} // os erros chegam-nos pelas chamadas
+	// Uma máquina que morre de repente não fecha a ligação: o keepalive é
+	// que dá pela falta (por defeito só ao fim de ~30s, com as chamadas a
+	// esse nó penduradas até lá).
+	cfg.KeepAliveInterval = agentKeepAlive
+	cfg.ConnectionWriteTimeout = agentKeepAlive
 	session, err := yamux.Client(conn, cfg)
 	if err != nil {
 		return err
@@ -168,6 +178,7 @@ func (s *Service) ServeAgent(ctx context.Context, node string, conn net.Conn, ve
 	c := &agentConn{session: session, version: version}
 	c.docker = dockerclient.NewWithDialer(func(context.Context) (net.Conn, error) { return session.Open() })
 	s.agents.put(node, c)
+	defer s.Kick() // o reconciliador vê já que o nó ficou sem sinal
 	defer s.agents.drop(node, c)
 	s.logger.Info("agente ligado", "node", node, "address", address, "version", version)
 	defer s.logger.Info("agente desligado", "node", node)

@@ -113,7 +113,7 @@ api() { # método caminho [json]
 
 test() {
   docker rm -f bs-client >/dev/null 2>&1 || true
-  docker run -d --name bs-client --network $NET alpine:3.20 sleep 3600 >/dev/null
+  docker run -d --name bs-client --network $NET alpine:3.20 sleep infinity >/dev/null
   client apk add -q curl jq >/dev/null
 
   log "conta de admin"

@@ -123,7 +123,9 @@ func (s *Service) averageCPU(ctx context.Context, names []string, vcpu float64) 
 func (s *Service) reconcileService(ctx context.Context, p store.Project, e store.Environment, svc store.Service, containers []dockerclient.Container) {
 	if svc.DesiredState == store.DesiredStopped || svc.CurrentRevisionID == nil {
 		for _, c := range containers {
-			s.stopAndRemove(ctx, containerName(c))
+			if !isPhantom(c) {
+				s.stopAndRemove(ctx, containerName(c))
+			}
 		}
 		return
 	}
@@ -136,6 +138,13 @@ func (s *Service) reconcileService(ctx context.Context, p store.Project, e store
 	var current []dockerclient.Container
 	for _, c := range containers {
 		name := containerName(c)
+		if isPhantom(c) {
+			// Nó sem sinal: conta, mas não se lhe mexe (ver liveness.go).
+			if c.Labels[LabelRevision] == rev.ID {
+				current = append(current, c)
+			}
+			continue
+		}
 		if deadline, draining := s.rt.drainDeadline(name); draining {
 			if time.Now().After(deadline) {
 				s.stopAndRemove(ctx, name)
@@ -150,6 +159,9 @@ func (s *Service) reconcileService(ctx context.Context, p store.Project, e store
 		case c.State != "running" && c.State != "restarting":
 			// Parada por fora (docker stop) ou morta: substitui-se.
 			s.stopAndRemove(ctx, name)
+		case c.State == "running" && detached(c):
+			s.logger.Warn("reconciliador: réplica sem rede, a substituir", "container", name)
+			s.stopAndRemove(ctx, name)
 		default:
 			current = append(current, c)
 		}
@@ -158,8 +170,12 @@ func (s *Service) reconcileService(ctx context.Context, p store.Project, e store
 	var ready []string
 	for _, c := range current {
 		name := containerName(c)
-		err := s.probeReplica(ctx, name, rev, false)
-		s.rt.observe(name, err == nil)
+		if isPhantom(c) {
+			s.probePhantom(ctx, c, rev)
+		} else {
+			err := s.probeReplica(ctx, name, rev, false)
+			s.rt.observe(name, err == nil)
+		}
 		if s.rt.isReady(name) {
 			ready = append(ready, name)
 		}
@@ -187,12 +203,23 @@ func (s *Service) reconcileService(ctx context.Context, p store.Project, e store
 			s.logger.Info("reconciliador: réplica criada", "service", svc.Slug, "container", name)
 		}
 	case len(current) > want:
-		// Sai primeiro quem não está pronto, depois as mais recentes.
-		sort.SliceStable(current, func(i, j int) bool {
-			ri, rj := s.rt.isReady(containerName(current[i])), s.rt.isReady(containerName(current[j]))
-			return !ri && rj
+		// Sai primeiro quem não está pronto, depois as mais antigas (ex:
+		// as de um nó que voltou depois de as réplicas dele terem sido
+		// substituídas). As de um nó sem sinal não se alcançam: ficam.
+		var reachable []dockerclient.Container
+		for _, c := range current {
+			if !isPhantom(c) {
+				reachable = append(reachable, c)
+			}
+		}
+		sort.SliceStable(reachable, func(i, j int) bool {
+			ri, rj := s.rt.isReady(containerName(reachable[i])), s.rt.isReady(containerName(reachable[j]))
+			if ri != rj {
+				return !ri
+			}
+			return reachable[i].Created < reachable[j].Created
 		})
-		for _, c := range current[:len(current)-want] {
+		for _, c := range reachable[:min(len(current)-want, len(reachable))] {
 			s.drainReplica(containerName(c))
 		}
 	}

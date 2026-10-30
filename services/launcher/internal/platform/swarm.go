@@ -81,7 +81,10 @@ func (s *Service) joinSwarm(ctx context.Context, node string, d Docker, address 
 		return "", err
 	}
 	switch {
-	case info.Swarm.LocalNodeState == "active" && info.Swarm.Cluster != nil && info.Swarm.Cluster.ID == cluster:
+	// Já é deste swarm: quem sabe é o manager (o docker info de um worker
+	// não diz de que cluster é). Sair e voltar a entrar desligava as
+	// réplicas do nó da overlay.
+	case info.Swarm.LocalNodeState == "active" && info.Swarm.NodeID != "" && s.local.InspectSwarmNode(ctx, info.Swarm.NodeID) == nil:
 		return info.Swarm.NodeID, nil
 	case info.Swarm.LocalNodeState == "active" && info.Swarm.ControlAvailable:
 		return "", errors.New("o Docker deste nó é manager de outro swarm -- não o tiro de lá sozinho")

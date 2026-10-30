@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
+	"launcher/internal/dockerclient"
 	"launcher/internal/store"
 )
 
@@ -56,6 +58,18 @@ type traefikMiddleware struct {
 		Scheme    string `json:"scheme"`
 		Permanent bool   `json:"permanent"`
 	} `json:"redirectScheme,omitempty"`
+	Retry *traefikRetry `json:"retry,omitempty"`
+}
+
+// retryMiddleware: um pedido que não consegue ligar a uma réplica (ex: o
+// nó dela morreu e ainda não saiu do routing) tenta noutra. Só volta a
+// tentar quando a réplica não chegou a responder -- nunca repete um pedido
+// que ela já processou.
+const retryMiddleware = "bs-retry"
+
+type traefikRetry struct {
+	Attempts        int    `json:"attempts"`
+	InitialInterval string `json:"initialInterval"`
 }
 
 // redirectMiddleware manda HTTP para HTTPS quando há certificados. O
@@ -151,17 +165,20 @@ func (s *Service) buildRouting(ctx context.Context) (traefikConfig, error) {
 	if err != nil {
 		return cfg, err
 	}
-	containers, err := s.docker.ListContainers(ctx, false, map[string][]string{"label": {LabelRole + "=" + RoleApp}})
+	containers, unknown, err := s.appReplicas(ctx, false)
 	if err != nil {
 		return cfg, err
 	}
-	byService := map[string][]string{}
+	if unknown {
+		return cfg, errNodesPending
+	}
+	byService := map[string][]dockerclient.Container{}
 	for _, c := range containers {
 		if c.Labels[LabelRevision] == "" {
 			continue
 		}
 		key := c.Labels[LabelService] + "/" + c.Labels[LabelRevision]
-		byService[key] = append(byService[key], containerName(c))
+		byService[key] = append(byService[key], c)
 	}
 
 	scopes := s.newScopeCache()
@@ -174,9 +191,10 @@ func (s *Service) buildRouting(ctx context.Context) (traefikConfig, error) {
 			continue
 		}
 		var servers []traefikServer
-		for _, name := range byService[svc.ID+"/"+rev.ID] {
-			if s.rt.isReady(name) {
-				servers = append(servers, traefikServer{URL: fmt.Sprintf("http://%s:%d", name, rev.Port)})
+		for _, c := range byService[svc.ID+"/"+rev.ID] {
+			if s.rt.isReady(containerName(c)) {
+				// Pelo IP na rede do ambiente (ver replicaAddr).
+				servers = append(servers, traefikServer{URL: fmt.Sprintf("http://%s:%d", replicaAddr(c), rev.Port)})
 			}
 		}
 		if len(servers) == 0 {
@@ -194,12 +212,15 @@ func (s *Service) buildRouting(ctx context.Context) (traefikConfig, error) {
 		name := routerName(p, e, svc)
 		rule := hostRule(hosts)
 		cfg.HTTP.Services[name] = traefikService{LoadBalancer: traefikLB{Servers: servers, PassHostHeader: true}}
-		httpRouter := traefikRouter{Rule: rule, EntryPoints: []string{"web"}, Service: name}
+		httpRouter := traefikRouter{Rule: rule, EntryPoints: []string{"web"}, Service: name, Middlewares: []string{retryMiddleware}}
 		if s.cfg.TLSCertResolver != "" {
 			httpRouter.Middlewares = []string{redirectMiddleware}
-			cfg.HTTP.Routers[name+"-tls"] = traefikRouter{Rule: rule, EntryPoints: []string{"websecure"}, Service: name, TLS: &traefikTLS{CertResolver: s.cfg.TLSCertResolver}}
+			cfg.HTTP.Routers[name+"-tls"] = traefikRouter{Rule: rule, EntryPoints: []string{"websecure"}, Service: name, Middlewares: []string{retryMiddleware}, TLS: &traefikTLS{CertResolver: s.cfg.TLSCertResolver}}
 		}
 		cfg.HTTP.Routers[name] = httpRouter
+	}
+	if len(cfg.HTTP.Routers) > 0 {
+		cfg.HTTP.Middlewares = map[string]traefikMiddleware{retryMiddleware: {Retry: &traefikRetry{Attempts: 3, InitialInterval: "100ms"}}}
 	}
 	if s.cfg.TLSCertResolver != "" && len(cfg.HTTP.Routers) > 0 {
 		var mw traefikMiddleware
@@ -207,7 +228,7 @@ func (s *Service) buildRouting(ctx context.Context) (traefikConfig, error) {
 			Scheme    string `json:"scheme"`
 			Permanent bool   `json:"permanent"`
 		}{Scheme: "https", Permanent: true}
-		cfg.HTTP.Middlewares = map[string]traefikMiddleware{redirectMiddleware: mw}
+		cfg.HTTP.Middlewares[redirectMiddleware] = mw
 	}
 	if len(cfg.HTTP.Routers) == 0 {
 		cfg.HTTP = nil
@@ -221,11 +242,18 @@ func (s *Service) buildRouting(ctx context.Context) (traefikConfig, error) {
 // syncRouting reescreve o ficheiro do Traefik se o conteúdo mudou. A
 // escrita é atómica (temporário + rename) para o Traefik nunca ler meio
 // ficheiro; a extensão .tmp é ignorada pelo file provider.
+// errNodesPending: há nós remotos de que ainda não se sabe nada.
+var errNodesPending = errors.New("à espera dos nós remotos")
+
 func (s *Service) syncRouting(ctx context.Context) {
 	if s.cfg.TraefikDynamicDir == "" {
 		return
 	}
 	cfg, err := s.buildRouting(ctx)
+	if errors.Is(err, errNodesPending) {
+		// Fica o routing que estava até os nós remotos voltarem.
+		return
+	}
 	if err != nil {
 		s.logger.Error("routing: construindo configuração", "err", err)
 		return

@@ -28,7 +28,7 @@ import (
 	"github.com/hashicorp/yamux"
 )
 
-const version = "0.1.1"
+const version = "0.1.2"
 
 type nodeConfig struct {
 	APIURL    string `json:"apiUrl"`
@@ -132,6 +132,9 @@ func serve(ctx context.Context, logger *slog.Logger, cfg nodeConfig, client *htt
 
 	ycfg := yamux.DefaultConfig()
 	ycfg.LogOutput = io.Discard
+	// Dar depressa pela falta do launcher (o mesmo do lado dele).
+	ycfg.KeepAliveInterval = 5 * time.Second
+	ycfg.ConnectionWriteTimeout = 5 * time.Second
 	session, err := yamux.Server(nc, ycfg)
 	if err != nil {
 		return err

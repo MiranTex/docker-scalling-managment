@@ -36,3 +36,14 @@ func (a *API) updateNode(w http.ResponseWriter, r *http.Request, who principal) 
 	a.audit.Log(who.Subject, "node.schedulable", name, strconv.FormatBool(*body.Schedulable))
 	writeJSON(w, http.StatusOK, n)
 }
+
+// drainNode: tira as réplicas do nó, uma a uma, para outros (em fundo).
+func (a *API) drainNode(w http.ResponseWriter, r *http.Request, who principal) {
+	name := r.PathValue("node")
+	if err := a.svc.DrainNode(r.Context(), name); err != nil {
+		a.fail(w, err)
+		return
+	}
+	a.audit.Log(who.Subject, "node.drain", name, "iniciado")
+	w.WriteHeader(http.StatusAccepted)
+}

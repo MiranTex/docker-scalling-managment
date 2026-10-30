@@ -91,7 +91,12 @@ type NodeView struct {
 	// motivo por que um nó remoto ainda não está na rede.
 	Network string `json:"network"`
 	// Online: o local dá sinal pelo launcher; um remoto, pelo agente ligado.
-	Online    bool    `json:"online"`
+	Online bool `json:"online"`
+	// Draining/Drain: a ser esvaziado agora; o estado do último esvaziar.
+	Draining bool   `json:"draining"`
+	Drain    string `json:"drain,omitempty"`
+	// Status: "online", "sem sinal há Ns" ou "perdido" (ver liveness.go).
+	Status    string  `json:"status"`
 	Allocated Usage   `json:"allocated"`
 	Replicas  int     `json:"replicas"`
 	Addons    int     `json:"addons"`
@@ -114,7 +119,8 @@ func (s *Service) ListNodes(ctx context.Context) ([]NodeView, error) {
 		if n.Kind == store.NodeAgent {
 			online = s.agents.get(n.Name) != nil
 		}
-		out[i] = NodeView{Node: n, Online: online, Capacity: s.nodeCapacityMB(n), Network: s.nodeNetwork(n)}
+		out[i] = NodeView{Node: n, Online: online, Status: s.nodeStatus(n), Capacity: s.nodeCapacityMB(n), Network: s.nodeNetwork(n)}
+		out[i].Draining, out[i].Drain = s.rt.nodeDrainState(n.Name)
 		byNode[n.Name] = &out[i]
 	}
 	for _, c := range containers {

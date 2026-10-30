@@ -2,11 +2,15 @@ package main
 
 import (
 	"bytes"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // O basestack usa o docker e o "docker compose" que vêm com o Docker
@@ -81,4 +85,38 @@ func foreignPublishers(ports ...int) ([]string, error) {
 		}
 	}
 	return found, nil
+}
+
+// waitForRoutes espera que a API e o registry respondam pelo Traefik (com
+// a CA da instalação): qualquer resposta que não seja 404/502/503 serve --
+// um 401 quer dizer que a rota está lá.
+func waitForRoutes(dir string, s Settings) error {
+	caPEM, err := os.ReadFile(filepath.Join(dir, "tls", "ca.crt"))
+	if err != nil {
+		return err
+	}
+	pool, _ := x509.SystemCertPool()
+	if pool == nil {
+		pool = x509.NewCertPool()
+	}
+	pool.AppendCertsFromPEM(caPEM)
+	client := &http.Client{Timeout: 3 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool}}}
+	urls := []string{s.APIURL() + "/v1/projects", "https://" + s.RegistryHost() + "/v2/"}
+	deadline := time.Now().Add(60 * time.Second)
+	for _, u := range urls {
+		for {
+			resp, err := client.Get(u)
+			if err == nil {
+				resp.Body.Close()
+				if c := resp.StatusCode; c != http.StatusNotFound && c != http.StatusBadGateway && c != http.StatusServiceUnavailable {
+					break
+				}
+			}
+			if time.Now().After(deadline) {
+				return fmt.Errorf("%s ainda não responde pelo Traefik -- vê basestack logs traefik", u)
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+	}
+	return nil
 }

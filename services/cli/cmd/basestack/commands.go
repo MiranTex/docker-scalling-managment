@@ -128,6 +128,12 @@ func cmdUp(args []string) error {
 			fmt.Printf("\nCA do registry instalada em %s.\n  Reinicia o Docker Desktop uma vez para ele confiar no registry (só ele lê essa pasta ao arrancar).\n", path)
 		}
 	}
+	// O compose espera pelos health checks; o Traefik ainda demora a pôr
+	// as rotas no ar -- os passos seguintes (e quem use a plataforma logo a
+	// seguir) precisam delas.
+	if err := waitForRoutes(dir, s); err != nil {
+		fmt.Printf("\nAviso: %v\n", err)
+	}
 	// Os nós remotos buscam o agente ao registry desta plataforma.
 	if imageExists(s.image("agent")) {
 		if err := pushQuiet(s, "agent"); err != nil {
