@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 
 // safeFrom: a página de onde o login foi pedido (?from=), só se for deste
 // site -- um "//outro.site" ou "https://..." era um redirecionamento aberto.
@@ -17,6 +16,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [changed] = useState(() => typeof window !== "undefined" && new URLSearchParams(window.location.search).has("changed"));
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -44,6 +44,7 @@ export default function LoginPage() {
     <main className="page">
       <div className="card">
         <h1>Entrar</h1>
+        {changed && !error && <div className="notice">Password trocada. Entra com a nova.</div>}
         {error && <div className="error">{error}</div>}
         <form onSubmit={handleSubmit}>
           <label htmlFor="email">E-mail</label>
@@ -67,7 +68,7 @@ export default function LoginPage() {
           </button>
         </form>
         <p className="muted" style={{ marginTop: "1rem" }}>
-          Ainda não tens conta? <Link href="/register">Criar conta</Link>
+          Sem conta? Pede-a a um administrador da plataforma.
         </p>
       </div>
     </main>

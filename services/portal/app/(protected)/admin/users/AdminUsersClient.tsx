@@ -23,6 +23,11 @@ export default function AdminUsersClient() {
   const [mintingID, setMintingID] = useState<string | null>(null);
   const [mintedTokens, setMintedTokens] = useState<MintedTokens | null>(null);
   const [creating, setCreating] = useState(false);
+  // Definir a password de uma conta (ex: quem a esqueceu).
+  const [pwUser, setPwUser] = useState<AdminUser | null>(null);
+  const [newPassword, setNewPassword] = useState("");
+  const [pwError, setPwError] = useState<string | null>(null);
+  const [pwDone, setPwDone] = useState(false);
   async function loadUsers() {
     const res = await fetch("/api/admin/users");
     if (res.ok) setUsers(await res.json());
@@ -54,6 +59,24 @@ export default function AdminUsersClient() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function handleSetPassword(e: React.FormEvent) {
+    e.preventDefault();
+    if (!pwUser) return;
+    setPwError(null);
+    const res = await fetch(`/api/admin/users/${encodeURIComponent(pwUser.id)}/password`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: newPassword }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setPwError(data.message ?? "não foi possível definir a password");
+      return;
+    }
+    setNewPassword("");
+    setPwDone(true);
   }
 
   async function handleRoleChange(id: string, newRole: string) {
@@ -224,7 +247,20 @@ export default function AdminUsersClient() {
                   </td>
                   <td>{new Date(u.created_at).toLocaleDateString("pt-PT")}</td>
                   <td>{u.email_verified_at ? "sim" : "não"}</td>
-                  <td>
+                  <td className="row" style={{ gap: 6, flexWrap: "nowrap" }}>
+                    {u.role !== "service" && (
+                      <button
+                        className="secondary"
+                        onClick={() => {
+                          setPwUser(u);
+                          setNewPassword("");
+                          setPwError(null);
+                          setPwDone(false);
+                        }}
+                      >
+                        Mudar password
+                      </button>
+                    )}
                     {u.role === "service" && (
                       <button
                         className="secondary"
@@ -241,6 +277,37 @@ export default function AdminUsersClient() {
           </table>
         )}
       </div>
+
+      {pwUser && (
+        <Modal title={`Password de ${pwUser.email}`} onClose={() => setPwUser(null)}>
+          {pwDone ? (
+            <>
+              <div className="notice">Password definida. As sessões abertas desta conta foram terminadas.</div>
+              <p className="muted">Passa-lhe a password por um canal seguro; pode trocá-la depois em "A minha conta".</p>
+              <button className="secondary" onClick={() => setPwUser(null)}>
+                Fechar
+              </button>
+            </>
+          ) : (
+            <form onSubmit={handleSetPassword}>
+              {pwError && <div className="error">{pwError}</div>}
+              <label htmlFor="new-password">Password nova (mínimo 8 caracteres)</label>
+              <input
+                id="new-password"
+                type="text"
+                required
+                minLength={8}
+                autoComplete="off"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+              />
+              <button className="primary" type="submit">
+                Definir password
+              </button>
+            </form>
+          )}
+        </Modal>
+      )}
     </>
   );
 }

@@ -44,6 +44,9 @@ type UserAdmin interface {
 	ListUsers(ctx context.Context) ([]store.User, error)
 	CreateUserWithPasswordAndRole(ctx context.Context, email, passwordHash, role string) (store.User, error)
 	UpdateUserRole(ctx context.Context, id, role string) (found bool, err error)
+	CountUsersByRole(ctx context.Context, role string) (int, error)
+	SetUserPassword(ctx context.Context, id, passwordHash string) (found bool, err error)
+	RevokeUserSessions(ctx context.Context, userID string, revokedAt time.Time) error
 }
 
 // EmailVerifier emite e confirma tokens de verificação de e-mail —
@@ -103,6 +106,11 @@ type Handler struct {
 	db           Pinger
 	accessTTL    time.Duration
 	logger       *slog.Logger
+	// Registo: openRegistration deixa qualquer pessoa criar conta; fechado,
+	// só bootstrapEmail se regista -- e só enquanto não há super-admin (o
+	// primeiro arranque), já como super-admin.
+	openRegistration bool
+	bootstrapEmail   string
 }
 
 // NewHandler monta o Handler. accessTTL é usado só para reportar
@@ -115,7 +123,14 @@ func NewHandler(users UserStore, userAdmin UserAdmin, tokens TokenIssuer, refres
 	return &Handler{
 		users: users, userAdmin: userAdmin, tokens: tokens, refresh: refreshTokens, apiKeys: apiKeys,
 		oauth: oauthLogin, verification: emailVerifier, db: db, accessTTL: accessTTL, logger: logger,
+		openRegistration: true,
 	}
+}
+
+// WithRegistration define quem se pode registar (ver Handler).
+func (h *Handler) WithRegistration(open bool, bootstrapEmail string) *Handler {
+	h.openRegistration, h.bootstrapEmail = open, strings.TrimSpace(bootstrapEmail)
+	return h
 }
 
 // Routes monta o mux com todos os endpoints deste serviço.
@@ -132,12 +147,14 @@ func (h *Handler) Routes() *http.ServeMux {
 	mux.HandleFunc("DELETE /v1/api-keys/{id}", h.requireAuth(h.handleRevokeAPIKey))
 	mux.HandleFunc("POST /v1/users/resolve", h.requireAuth(h.handleResolveUser))
 	mux.HandleFunc("GET /v1/me", h.requireAuth(h.handleMe))
+	mux.HandleFunc("POST /v1/me/password", h.requireAuth(h.handleChangeOwnPassword))
 	// Gestão de utilizadores -- só super-admin. Criar/listar contas e
 	// atribuir role são ações administrativas, não algo que qualquer
 	// sessão autenticada deva conseguir fazer.
 	mux.HandleFunc("GET /v1/admin/users", h.requireRole(store.RoleSuperAdmin, h.handleListUsers))
 	mux.HandleFunc("POST /v1/admin/users", h.requireRole(store.RoleSuperAdmin, h.handleCreateUser))
 	mux.HandleFunc("PATCH /v1/admin/users/{id}/role", h.requireRole(store.RoleSuperAdmin, h.handleUpdateUserRole))
+	mux.HandleFunc("PUT /v1/admin/users/{id}/password", h.requireRole(store.RoleSuperAdmin, h.handleSetUserPassword))
 	mux.HandleFunc("POST /v1/admin/users/{id}/tokens", h.requireRole(store.RoleSuperAdmin, h.handleMintServiceToken))
 	// Introspecção não exige um access token do chamador -- é chamado por
 	// OUTRO serviço, de posse só da API key que quer validar, não de uma
@@ -268,13 +285,38 @@ func (h *Handler) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Com o registo fechado, só o primeiro administrador se regista (o
+	// email do bootstrap, enquanto não há super-admin) -- e fica logo
+	// super-admin. As outras contas cria-as um administrador.
+	bootstrap := false
+	if h.bootstrapEmail != "" && strings.EqualFold(req.Email, h.bootstrapEmail) {
+		n, err := h.userAdmin.CountUsersByRole(r.Context(), store.RoleSuperAdmin)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal_error", "erro verificando administradores")
+			return
+		}
+		bootstrap = n == 0
+	}
+	if !h.openRegistration && !bootstrap {
+		writeError(w, http.StatusForbidden, "registration_closed", "o registo está fechado: pede uma conta a um administrador")
+		return
+	}
+
 	hash, err := password.Hash(req.Password)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "erro processando senha")
 		return
 	}
 
-	user, err := h.users.CreateUserWithPassword(r.Context(), req.Email, hash)
+	var user store.User
+	if bootstrap {
+		user, err = h.userAdmin.CreateUserWithPasswordAndRole(r.Context(), req.Email, hash, store.RoleSuperAdmin)
+		if err == nil {
+			h.logger.Info("primeiro administrador registado (super-admin)", "email", req.Email)
+		}
+	} else {
+		user, err = h.users.CreateUserWithPassword(r.Context(), req.Email, hash)
+	}
 	if errors.Is(err, store.ErrEmailTaken) {
 		writeError(w, http.StatusConflict, "email_taken", "e-mail já registado")
 		return
@@ -891,6 +933,10 @@ func (h *Handler) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	user, err := h.oauth.Login(r.Context(), provider, code)
 	if errors.Is(err, oauth.ErrUnknownProvider) {
 		writeError(w, http.StatusNotFound, "unknown_provider", "provider desconhecido")
+		return
+	}
+	if errors.Is(err, oauth.ErrSignupClosed) {
+		writeError(w, http.StatusForbidden, "registration_closed", "não há conta com este e-mail e o registo está fechado: pede uma conta a um administrador")
 		return
 	}
 	if errors.Is(err, oauth.ErrEmailNotVerified) {

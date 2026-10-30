@@ -49,6 +49,10 @@ type config struct {
 	// disso, a gestão de roles passa a ser feita pelos próprios
 	// endpoints admin, não por env var.
 	bootstrapSuperAdminEmail string
+	// openRegistration: qualquer pessoa cria conta em /v1/register (e pelo
+	// login social). Por defeito fechado: só o primeiro administrador se
+	// regista; as outras contas cria-as um administrador.
+	openRegistration bool
 }
 
 func loadConfig() config {
@@ -71,6 +75,7 @@ func loadConfig() config {
 		githubRedirectURL:  os.Getenv("AUTH_GITHUB_REDIRECT_URL"),
 
 		bootstrapSuperAdminEmail: os.Getenv("AUTH_BOOTSTRAP_SUPERADMIN_EMAIL"),
+		openRegistration:         os.Getenv("AUTH_OPEN_REGISTRATION") == "true",
 	}
 
 	if cfg.databaseURL == "" {

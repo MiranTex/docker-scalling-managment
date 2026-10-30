@@ -108,6 +108,22 @@ export function updateUserRole(accessToken: string, id: string, role: string) {
   });
 }
 
+export function setUserPassword(accessToken: string, id: string, password: string) {
+  return authFetch(`/v1/admin/users/${id}/password`, {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${accessToken}` },
+    body: JSON.stringify({ password }),
+  });
+}
+
+export function changeOwnPassword(accessToken: string, currentPassword: string, newPassword: string) {
+  return authFetch("/v1/me/password", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}` },
+    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+  });
+}
+
 export function mintServiceTokens(accessToken: string, id: string) {
   return authFetch(`/v1/admin/users/${encodeURIComponent(id)}/tokens`, {
     method: "POST",
