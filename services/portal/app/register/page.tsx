@@ -1,5 +1,6 @@
 "use client";
 
+import { authError } from "@/lib/errors";
 import { useState } from "react";
 import Link from "next/link";
 
@@ -22,7 +23,7 @@ export default function RegisterPage() {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        setError(data.message ?? "erro ao criar conta");
+        setError(authError(data, "erro ao criar conta"));
         return;
       }
       setDone(true);

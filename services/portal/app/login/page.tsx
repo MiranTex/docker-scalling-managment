@@ -1,5 +1,6 @@
 "use client";
 
+import { authError } from "@/lib/errors";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -30,7 +31,7 @@ export default function LoginPage() {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        setError(data.message ?? "e-mail ou senha inválidos");
+        setError(authError(data, "e-mail ou senha inválidos"));
         return;
       }
       router.push(safeFrom() ?? "/dashboard");

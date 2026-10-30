@@ -1,5 +1,6 @@
 "use client";
 
+import { authError } from "@/lib/errors";
 import { useEffect, useState } from "react";
 import PageHeader from "@/components/PageHeader";
 import { api } from "@/lib/platformClient";
@@ -36,7 +37,7 @@ export default function CLILoginClient({ code }: { code: string }) {
         body: JSON.stringify({ scopes: ["platform"], ttl_seconds: KEY_TTL_SECONDS }),
       });
       const created = await res.json().catch(() => ({}));
-      if (!res.ok || !created.key) throw new Error(created.message ?? "não foi possível criar a API key");
+      if (!res.ok || !created.key) throw new Error(authError(created, "não foi possível criar a API key"));
       await api(`cli/login/${encodeURIComponent(code)}/approve`, { method: "POST", body: JSON.stringify({ apiKey: created.key }) });
       setState("done");
     } catch (e) {

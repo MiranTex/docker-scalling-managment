@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Modal from "@/components/Modal";
 import PageHeader from "@/components/PageHeader";
+import { authError } from "@/lib/errors";
 import type { AdminUser, TokenPair } from "@/lib/authClient";
 
 const ROLES = ["user", "admin", "infra-admin", "super-admin", "service"];
@@ -49,7 +50,7 @@ export default function AdminUsersClient() {
       });
       const data = await res.json();
       if (!res.ok) {
-        setError(data.message ?? "erro ao criar utilizador");
+        setError(authError(data, "erro ao criar utilizador"));
         return;
       }
       setEmail("");
@@ -72,7 +73,7 @@ export default function AdminUsersClient() {
     });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
-      setPwError(data.message ?? "não foi possível definir a password");
+      setPwError(authError(data, "não foi possível definir a password"));
       return;
     }
     setNewPassword("");
@@ -91,7 +92,7 @@ export default function AdminUsersClient() {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        setError(data.message ?? "erro ao alterar role");
+        setError(authError(data, "erro ao alterar role"));
         return;
       }
       await loadUsers();
@@ -108,7 +109,7 @@ export default function AdminUsersClient() {
       const res = await fetch(`/api/admin/users/${encodeURIComponent(user.id)}/tokens`, { method: "POST" });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data.message ?? "erro ao gerar tokens");
+        setError(authError(data, "erro ao gerar tokens"));
         return;
       }
       setMintedTokens({ user, pair: data });
