@@ -207,6 +207,8 @@ export type NodeView = {
   status: string;
   draining: boolean;
   drain?: string;
+  agentOutdated?: boolean;
+  agentLatest?: string;
 };
 
 export type NodeJoinToken = { token: string; expiresAt: string; caHash: string; command: string };

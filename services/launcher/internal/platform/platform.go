@@ -149,6 +149,10 @@ type Config struct {
 	RegistryHost         string
 	RegistryPullPassword string
 
+	// AgentImage é a imagem do agente dos nós; a versão dela (label) diz
+	// se um agente está desatualizado.
+	AgentImage string
+
 	// Cluster liga o swarm e as redes overlay (ver swarm.go); AdvertiseAddr
 	// é o IP desta máquina na rede, por onde os nós chegam ao manager.
 	Cluster       bool

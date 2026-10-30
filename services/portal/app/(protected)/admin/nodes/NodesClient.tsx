@@ -155,6 +155,13 @@ export default function NodesClient() {
                         Docker {n.dockerVersion || "?"}
                         {n.kind === "agent" && ` · agente ${n.agentVersion || "?"}`}
                       </div>
+                      {n.agentOutdated && (
+                        <div>
+                          <span className="badge pending" title={`Na máquina: basestack upgrade (fica com ${n.agentLatest})`}>
+                            agente desatualizado
+                          </span>
+                        </div>
+                      )}
                     </td>
                     <td>
                       {n.network === "local" ? (

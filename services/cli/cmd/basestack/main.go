@@ -12,6 +12,9 @@ import (
 	"os"
 )
 
+// version vem do build (-ldflags "-X main.version=..."): o commit do git.
+var version = "dev"
+
 const usage = `basestack -- instala e gere a plataforma base-stack nesta máquina
 
 Uso:
@@ -31,7 +34,14 @@ Uso:
   basestack dev build   constrói as imagens a partir do código (desenvolvimento)
   basestack dev build --platform linux/amd64,linux/arm64 --push
                         constrói para várias arquiteturas e envia para o registry
+  basestack dev build --push-to registry.<domínio de outra plataforma>
+                        envia para o registry dessa (com docker login lá)
   basestack uninstall   remove a plataforma e os dados dela
+  basestack version     a versão deste binário e das imagens da plataforma
+  basestack upgrade     atualiza este binário (e, num nó, o agente) a partir do registry
+  basestack trust <https://api.domínio>
+                        o docker desta máquina passa a confiar no registry de
+                        outra plataforma (ex: para lhe enviar imagens)
 
 Nós (esta máquina a correr apps de uma plataforma noutra):
   basestack node join <url> --token bsj_... --ca sha256:...
@@ -76,6 +86,12 @@ func main() {
 		err = cmdDev(args)
 	case "uninstall":
 		err = cmdUninstall(args)
+	case "version", "--version":
+		err = cmdVersion(args)
+	case "upgrade":
+		err = cmdUpgrade(args)
+	case "trust":
+		err = cmdTrust(args)
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 	default:

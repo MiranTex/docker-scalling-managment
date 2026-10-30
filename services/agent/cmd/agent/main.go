@@ -28,7 +28,8 @@ import (
 	"github.com/hashicorp/yamux"
 )
 
-const version = "0.1.2"
+// version vem do build (-ldflags "-X main.version=..."): o commit do git.
+var version = "dev"
 
 type nodeConfig struct {
 	APIURL    string `json:"apiUrl"`

@@ -96,7 +96,12 @@ func cmdUp(args []string) error {
 	// imagens antigas de outra instalação (é rápido se nada mudou).
 	if s.ImageSource != "" {
 		if err := pullImages(s); err != nil {
-			return err
+			// Ex: a origem é o registry desta plataforma, que ainda não
+			// arrancou -- com as imagens já cá, segue-se com elas.
+			if !allImagesExist(s) {
+				return err
+			}
+			fmt.Printf("Aviso: %v\n  A usar as imagens que já estão nesta máquina.\n\n", err)
 		}
 	}
 	var missing []string
@@ -212,6 +217,15 @@ func indent(s string) string {
 func isTerminal(f *os.File) bool {
 	st, err := f.Stat()
 	return err == nil && st.Mode()&os.ModeCharDevice != 0
+}
+
+func allImagesExist(s Settings) bool {
+	for _, img := range platformImages {
+		if !imageExists(s.image(img.name)) {
+			return false
+		}
+	}
+	return true
 }
 
 func printAddresses(s Settings) {
@@ -334,11 +348,12 @@ func cmdDoctor(args []string) error {
 
 func cmdDev(args []string) error {
 	if len(args) == 0 || args[0] != "build" {
-		return errors.New("uso: basestack dev build [--source <repositório>] [--platform linux/amd64,linux/arm64] [--push] [imagem...]")
+		return errors.New("uso: basestack dev build [--source <repositório>] [--platform linux/amd64,linux/arm64] [--push | --push-to <registry>] [imagem...]")
 	}
 	fs := flag.NewFlagSet("dev build", flag.ContinueOnError)
 	source := fs.String("source", "", "raiz do repositório base-stack (por defeito, procura a partir da pasta atual)")
 	push := fs.Bool("push", false, "enviar também para o registry da plataforma (registry.<domínio>/basestack/...)")
+	pushTo := fs.String("push-to", "", "enviar para o registry de outra plataforma (ex: registry.192.168.1.100.nip.io), com o teu docker login lá")
 	platforms := fs.String("platform", "", "arquiteturas a construir, numa só tag (ex: linux/amd64,linux/arm64); por defeito a desta máquina")
 	names, err := parseInterspersed(fs, args[1:])
 	if err != nil {
@@ -364,9 +379,11 @@ func cmdDev(args []string) error {
 	for _, n := range names {
 		only[n] = true
 	}
+	// A versão (commit do git) fica na imagem e nos binários de dentro.
+	ver := gitVersion(root)
 	for _, img := range selected(only) {
-		fmt.Printf("==> %s\n", s.image(img.name))
-		build := []string{"build", "--tag", s.image(img.name)}
+		fmt.Printf("==> %s (%s)\n", s.image(img.name), ver)
+		build := []string{"build", "--tag", s.image(img.name), "--label", labelVersion + "=" + ver, "--build-arg", "VERSION=" + ver}
 		if *platforms != "" {
 			build = append(build, "--platform", *platforms)
 		}
@@ -376,10 +393,23 @@ func cmdDev(args []string) error {
 			return fmt.Errorf("construindo %s: %w", img.name, err)
 		}
 	}
+	if *pushTo != "" {
+		return pushImagesTo(s, strings.TrimRight(*pushTo, "/"), only)
+	}
 	if *push {
 		return pushImages(s, only)
 	}
 	return nil
+}
+
+// gitVersion: o commit do repositório (com -dirty se há alterações por
+// guardar).
+func gitVersion(root string) string {
+	out, err := exec.Command("git", "-C", root, "describe", "--always", "--dirty").Output()
+	if err != nil {
+		return "dev"
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // parseInterspersed aceita flags antes e depois dos nomes ("dev build

@@ -92,6 +92,10 @@ type NodeView struct {
 	Network string `json:"network"`
 	// Online: o local dá sinal pelo launcher; um remoto, pelo agente ligado.
 	Online bool `json:"online"`
+	// AgentOutdated: o agente deste nó é de outra versão que a da imagem
+	// do agente na plataforma (basestack upgrade no nó).
+	AgentOutdated bool   `json:"agentOutdated,omitempty"`
+	AgentLatest   string `json:"agentLatest,omitempty"`
 	// Draining/Drain: a ser esvaziado agora; o estado do último esvaziar.
 	Draining bool   `json:"draining"`
 	Drain    string `json:"drain,omitempty"`
@@ -112,6 +116,7 @@ func (s *Service) ListNodes(ctx context.Context) ([]NodeView, error) {
 	if err != nil {
 		return nil, fmt.Errorf("listando containers para os nós: %w", err)
 	}
+	latest := s.agentImageVersion(ctx)
 	byNode := map[string]*NodeView{}
 	out := make([]NodeView, len(nodes))
 	for i, n := range nodes {
@@ -121,6 +126,9 @@ func (s *Service) ListNodes(ctx context.Context) ([]NodeView, error) {
 		}
 		out[i] = NodeView{Node: n, Online: online, Status: s.nodeStatus(n), Capacity: s.nodeCapacityMB(n), Network: s.nodeNetwork(n)}
 		out[i].Draining, out[i].Drain = s.rt.nodeDrainState(n.Name)
+		if n.Kind == store.NodeAgent && latest != "" && n.AgentVersion != "" && n.AgentVersion != latest {
+			out[i].AgentOutdated, out[i].AgentLatest = true, latest
+		}
 		byNode[n.Name] = &out[i]
 	}
 	for _, c := range containers {
@@ -170,6 +178,19 @@ func (s *Service) SetNodeSchedulable(ctx context.Context, name string, schedulab
 		}
 	}
 	return NodeView{}, fmt.Errorf("%w: nó %s", ErrNotFound, name)
+}
+
+// agentImageVersion: a versão da imagem do agente nesta plataforma (a
+// que um nó apanha com basestack upgrade). "" se não se sabe.
+func (s *Service) agentImageVersion(ctx context.Context) string {
+	if s.cfg.AgentImage == "" {
+		return ""
+	}
+	info, err := s.local.InspectImage(ctx, s.cfg.AgentImage)
+	if err != nil {
+		return ""
+	}
+	return info.Config.Labels["org.opencontainers.image.version"]
 }
 
 // nodeNetwork diz se um nó tem a rede dos ambientes (e pode receber apps).
