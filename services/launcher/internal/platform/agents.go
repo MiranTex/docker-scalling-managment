@@ -36,8 +36,26 @@ var ErrUnauthorizedNode = errors.New("credencial do nó inválida ou revogada")
 
 type agentConn struct {
 	session *yamux.Session
-	docker  *dockerclient.Client
+	docker  Docker // o do nó, pelo túnel
 	version string
+
+	mu sync.Mutex
+	// swarmNodeID: o nó já está no swarm da plataforma (pode receber
+	// apps); swarmErr: porque não entrou.
+	swarmNodeID string
+	swarmErr    string
+}
+
+func (c *agentConn) close() {
+	if c.session != nil {
+		_ = c.session.Close()
+	}
+}
+
+func (c *agentConn) networked() (bool, string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.swarmNodeID != "", c.swarmErr
 }
 
 type agents struct {
@@ -51,6 +69,16 @@ func (a *agents) get(node string) *agentConn {
 	return a.m[node]
 }
 
+func (a *agents) names() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	out := make([]string, 0, len(a.m))
+	for n := range a.m {
+		out = append(out, n)
+	}
+	return out
+}
+
 // put troca a ligação de um nó (uma nova substitui a antiga, que se fecha).
 func (a *agents) put(node string, c *agentConn) {
 	a.mu.Lock()
@@ -58,7 +86,7 @@ func (a *agents) put(node string, c *agentConn) {
 	a.m[node] = c
 	a.mu.Unlock()
 	if old != nil {
-		_ = old.session.Close()
+		old.close()
 	}
 }
 
@@ -67,7 +95,7 @@ func (a *agents) drop(node string, c *agentConn) {
 	defer a.mu.Unlock()
 	if c == nil || a.m[node] == c {
 		if cur := a.m[node]; cur != nil {
-			_ = cur.session.Close()
+			cur.close()
 		}
 		delete(a.m, node)
 	}
@@ -156,6 +184,16 @@ func (s *Service) ServeAgent(ctx context.Context, node string, conn net.Conn, ve
 		})
 	}
 	report()
+	if s.clusterOn() {
+		id, err := s.joinSwarm(ctx, node, c.docker, address)
+		c.mu.Lock()
+		c.swarmNodeID = id
+		if err != nil {
+			c.swarmErr = err.Error()
+			s.logger.Error("o nó não entrou no swarm", "node", node, "err", err)
+		}
+		c.mu.Unlock()
+	}
 	tick := time.NewTicker(nodeHeartbeat)
 	defer tick.Stop()
 	for {
@@ -191,6 +229,7 @@ func (s *Service) RemoveNode(ctx context.Context, name string) error {
 		}
 		return err
 	}
+	s.leaveSwarm(ctx, s.agents.get(name))
 	s.agents.drop(name, nil)
 	s.logger.Info("nó removido", "node", name)
 	return nil

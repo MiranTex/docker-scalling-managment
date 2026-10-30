@@ -120,7 +120,8 @@ type ContainerInspect struct {
 		// as que o docker-compose cria) só aparecem dentro de Networks.
 		IPAddress string `json:"IPAddress"`
 		Networks  map[string]struct {
-			IPAddress string `json:"IPAddress"`
+			IPAddress string   `json:"IPAddress"`
+			Aliases   []string `json:"Aliases"`
 		} `json:"Networks"`
 	} `json:"NetworkSettings"`
 }

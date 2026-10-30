@@ -143,6 +143,15 @@ type SystemInfo struct {
 	Architecture  string `json:"Architecture"` // do kernel: x86_64, aarch64
 	OSType        string `json:"OSType"`
 	ServerVersion string `json:"ServerVersion"`
+	Swarm         struct {
+		LocalNodeState   string `json:"LocalNodeState"` // inactive, active, pending, error
+		NodeID           string `json:"NodeID"`
+		NodeAddr         string `json:"NodeAddr"`
+		ControlAvailable bool   `json:"ControlAvailable"` // é manager
+		Cluster          *struct {
+			ID string `json:"ID"`
+		} `json:"Cluster"`
+	} `json:"Swarm"`
 }
 
 func (c *Client) Info(ctx context.Context) (*SystemInfo, error) {

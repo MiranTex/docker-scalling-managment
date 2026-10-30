@@ -13,6 +13,8 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -40,6 +42,9 @@ func main() {
 	_ = godotenv.Load()
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	cfg := loadConfig()
+	if len(os.Args) > 1 && os.Args[1] == "join-token" {
+		os.Exit(joinToken(cfg))
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -131,6 +136,37 @@ func main() {
 // connectWithRetry tenta ligar ao Postgres algumas vezes antes de
 // desistir -- mesma razão de services/templatesadmin/cmd/templatesadmin/main.go:
 // o compose sobe este serviço e o Postgres ao mesmo tempo.
+// joinToken ("launcher join-token", via "basestack node token" na máquina
+// da plataforma): cria um token de entrada sem passar pelo portal e
+// imprime o comando para o nó novo.
+func joinToken(cfg config) int {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if cfg.caCert == "" {
+		fmt.Fprintln(os.Stderr, "os nós remotos não estão ligados nesta instalação (falta LAUNCHER_CA_CERT)")
+		return 1
+	}
+	db, err := store.Open(ctx, cfg.databaseURL)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	defer db.Close()
+	t, err := platform.New(db, dockerclient.New(cfg.dockerSocket), nil, cfg.platformConfig(), slog.New(slog.NewTextHandler(io.Discard, nil))).
+		CreateJoinToken(ctx, "basestack-cli")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	cmd, err := platformapi.JoinCommand(platformapi.AgentConfig{PublicURL: cfg.publicAPIURL, CACertFile: cfg.caCert}, t.Token)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	fmt.Printf("Corre no nó novo (o token serve uma vez e expira às %s UTC):\n\n  %s\n", t.ExpiresAt.Format("15:04"), cmd)
+	return 0
+}
+
 func connectWithRetry(ctx context.Context, dsn string, logger *slog.Logger) *store.DB {
 	const maxAttempts = 10
 	var lastErr error

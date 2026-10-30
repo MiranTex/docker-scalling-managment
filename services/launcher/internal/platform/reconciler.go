@@ -24,6 +24,15 @@ const (
 // ctx terminar.
 func (s *Service) Run(ctx context.Context) {
 	s.registerLocalNode(ctx)
+	if s.clusterOn() {
+		if err := s.ensureSwarm(ctx); err != nil {
+			s.logger.Error("modo cluster: o swarm não ficou pronto -- os nós remotos não recebem apps", "err", err)
+			s.swarm.mu.Lock()
+			s.swarm.err = err
+			s.swarm.mu.Unlock()
+		}
+	}
+	s.ensureEnvNetworks(ctx)
 	s.startupCleanup(ctx)
 	s.AttachPlatformToAll(ctx)
 

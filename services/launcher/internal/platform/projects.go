@@ -147,7 +147,7 @@ func (s *Service) CreateEnvironment(ctx context.Context, projectSlug, envSlug, b
 	if err := s.db.CreateEnvironment(ctx, e); err != nil {
 		return store.Environment{}, mapStoreErr(err)
 	}
-	if _, err := s.docker.CreateLabeledNetwork(ctx, e.Network, environmentLabels(p, e)); err != nil {
+	if _, err := s.local.CreateNetworkWith(ctx, e.Network, s.envNetworkOptions(environmentLabels(p, e))); err != nil {
 		_ = s.db.DeleteEnvironment(ctx, e.ID)
 		return store.Environment{}, fmt.Errorf("criando rede %s: %w", e.Network, err)
 	}
@@ -176,13 +176,19 @@ func (s *Service) attachPlatform(ctx context.Context, network string) {
 	for _, c := range s.platformContainers() {
 		err := s.docker.ConnectNetwork(ctx, network, c)
 		switch {
-		case err == nil, strings.Contains(err.Error(), "already exists"):
+		case err == nil, alreadyAttached(err):
 		case isNotFound(err):
 			s.logger.Debug("container da plataforma não existe", "container", c)
 		default:
 			s.logger.Warn("não foi possível ligar container da plataforma à rede do ambiente", "network", network, "container", c, "err", err)
 		}
 	}
+}
+
+// alreadyAttached: o container já está na rede (o Docker 29 diz "is
+// already attached", os anteriores "already exists").
+func alreadyAttached(err error) bool {
+	return err != nil && (strings.Contains(err.Error(), "already exists") || strings.Contains(err.Error(), "already attached"))
 }
 
 // AttachPlatformToAll volta a ligar o Traefik e o launcher a todas as redes

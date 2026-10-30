@@ -41,17 +41,38 @@ type agentSettings struct {
 }
 
 func (a *API) WithAgents(cfg AgentConfig) error {
-	raw, err := os.ReadFile(cfg.CACertFile)
+	raw, hash, err := loadCA(cfg.CACertFile)
 	if err != nil {
 		return err
 	}
+	a.agents = &agentSettings{cfg: cfg, caPEM: raw, caHash: hash}
+	return nil
+}
+
+func loadCA(file string) (raw []byte, hash string, err error) {
+	raw, err = os.ReadFile(file)
+	if err != nil {
+		return nil, "", err
+	}
 	b, _ := pem.Decode(raw)
 	if b == nil {
-		return errors.New("agentes: a CA não está em PEM")
+		return nil, "", errors.New("agentes: a CA não está em PEM")
 	}
 	sum := sha256.Sum256(b.Bytes)
-	a.agents = &agentSettings{cfg: cfg, caPEM: raw, caHash: "sha256:" + hex.EncodeToString(sum[:])}
-	return nil
+	return raw, "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
+// JoinCommand é o comando que um nó novo corre para entrar com token.
+func JoinCommand(cfg AgentConfig, token string) (string, error) {
+	_, hash, err := loadCA(cfg.CACertFile)
+	if err != nil {
+		return "", err
+	}
+	return joinCommand(cfg.PublicURL, token, hash), nil
+}
+
+func joinCommand(url, token, caHash string) string {
+	return fmt.Sprintf("basestack node join %s --token %s --ca %s", url, token, caHash)
 }
 
 func (a *API) agentsEnabled(w http.ResponseWriter) bool {
@@ -75,7 +96,7 @@ func (a *API) createJoinToken(w http.ResponseWriter, r *http.Request, who princi
 	a.audit.Log(who.Subject, "node.join-token", "", "criado, expira "+t.ExpiresAt.Format(time.RFC3339))
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"token": t.Token, "expiresAt": t.ExpiresAt, "caHash": a.agents.caHash,
-		"command": fmt.Sprintf("basestack node join %s --token %s --ca %s", a.agents.cfg.PublicURL, t.Token, a.agents.caHash),
+		"command": joinCommand(a.agents.cfg.PublicURL, t.Token, a.agents.caHash),
 	})
 }
 

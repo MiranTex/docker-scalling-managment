@@ -46,7 +46,7 @@ func nodeOf(c dockerclient.Container) string {
 // do seu agente.
 func (s *Service) dockerOn(node string) (Docker, error) {
 	if node == LocalNode {
-		return s.docker, nil
+		return s.local, nil
 	}
 	if c := s.agents.get(node); c != nil {
 		return c.docker, nil
@@ -69,7 +69,7 @@ func normalArch(a string) string {
 // registerLocalNode grava (ou refresca) o nó local com o que o Docker diz.
 // Corre no arranque e a cada nodeHeartbeat.
 func (s *Service) registerLocalNode(ctx context.Context) {
-	info, err := s.docker.Info(ctx)
+	info, err := s.local.Info(ctx)
 	if err != nil {
 		s.logger.Error("lendo a máquina local para o registo do nó", "err", err)
 		return
@@ -87,6 +87,9 @@ func (s *Service) registerLocalNode(ctx context.Context) {
 // alocado (somado das labels de recursos, como as quotas).
 type NodeView struct {
 	store.Node
+	// Network: "cluster" (está no swarm, recebe apps), "local", ou o
+	// motivo por que um nó remoto ainda não está na rede.
+	Network string `json:"network"`
 	// Online: o local dá sinal pelo launcher; um remoto, pelo agente ligado.
 	Online    bool    `json:"online"`
 	Allocated Usage   `json:"allocated"`
@@ -110,16 +113,8 @@ func (s *Service) ListNodes(ctx context.Context) ([]NodeView, error) {
 		online := time.Since(n.LastSeenAt) < nodeOfflineAfter
 		if n.Kind == store.NodeAgent {
 			online = s.agents.get(n.Name) != nil
-			if online {
-				// O que corre no nó remoto, pelo túnel.
-				if d, err := s.dockerOn(n.Name); err == nil {
-					if remote, err := d.ListContainers(ctx, false, map[string][]string{"label": {dockerclient.PlatformLabel + "=" + dockerclient.PlatformLabelValue}}); err == nil {
-						containers = append(containers, remote...)
-					}
-				}
-			}
 		}
-		out[i] = NodeView{Node: n, Online: online, Capacity: s.nodeCapacityMB(n)}
+		out[i] = NodeView{Node: n, Online: online, Capacity: s.nodeCapacityMB(n), Network: s.nodeNetwork(n)}
 		byNode[n.Name] = &out[i]
 	}
 	for _, c := range containers {
@@ -171,6 +166,26 @@ func (s *Service) SetNodeSchedulable(ctx context.Context, name string, schedulab
 	return NodeView{}, fmt.Errorf("%w: nó %s", ErrNotFound, name)
 }
 
+// nodeNetwork diz se um nó tem a rede dos ambientes (e pode receber apps).
+func (s *Service) nodeNetwork(n store.Node) string {
+	switch {
+	case n.Kind != store.NodeAgent:
+		return "local"
+	case !s.clusterOn():
+		return "sem modo cluster na plataforma"
+	}
+	c := s.agents.get(n.Name)
+	if c == nil {
+		return "offline"
+	}
+	if ok, why := c.networked(); ok {
+		return "cluster"
+	} else if why != "" {
+		return why
+	}
+	return "a entrar no swarm"
+}
+
 // nodeCapacityMB é a memória que o escalonador pode alocar num nó: a que
 // ele tem vezes o overcommit. No local, LAUNCHER_HOST_MEMORY_MB (se
 // definido) manda, como sempre mandou.
@@ -196,8 +211,10 @@ type placement struct {
 }
 
 type candidate struct {
-	Node      store.Node
-	Online    bool
+	Node   store.Node
+	Online bool
+	// Network: "local", "cluster" ou o motivo por que não tem a rede.
+	Network   string
 	Allocated Usage
 	Capacity  float64
 }
@@ -215,10 +232,10 @@ func schedule(cands []candidate, p placement) (string, error) {
 			why = append(why, c.Node.Name+": offline")
 		case !c.Node.Schedulable:
 			why = append(why, c.Node.Name+": em manutenção")
-		case c.Node.Kind == store.NodeAgent:
-			// Sem rede entre nós, uma app num nó remoto não chegava aos
+		case c.Network != "local" && c.Network != "cluster":
+			// Sem a rede do ambiente, uma app neste nó não chegava aos
 			// addons nem o Traefik a ela.
-			why = append(why, c.Node.Name+": nó remoto, ainda sem rede entre nós para apps")
+			why = append(why, c.Node.Name+": sem rede para apps ("+c.Network+")")
 		case len(p.Platforms) > 0 && !hasPlatform(p.Platforms, platform):
 			why = append(why, fmt.Sprintf("%s: a imagem não tem %s (tem %s)", c.Node.Name, platform, strings.Join(p.Platforms, ", ")))
 		case float64(c.Allocated.MemoryMB+p.MemoryMB) > c.Capacity:
@@ -261,7 +278,7 @@ func (s *Service) placeReplica(ctx context.Context, rev store.Revision) (string,
 	}
 	cands := make([]candidate, len(nodes))
 	for i, n := range nodes {
-		cands[i] = candidate{Node: n.Node, Online: n.Online, Allocated: n.Allocated, Capacity: n.Capacity}
+		cands[i] = candidate{Node: n.Node, Online: n.Online, Network: n.Network, Allocated: n.Allocated, Capacity: n.Capacity}
 	}
 	return schedule(cands, placement{VCPU: rev.VCPU, MemoryMB: rev.MemoryMB, Platforms: s.imagePlatforms(ctx, rev.Image)})
 }
@@ -270,7 +287,7 @@ func (s *Service) placeReplica(ctx context.Context, rev store.Revision) (string,
 // o deploy a buscou). Uma imagem de várias arquiteturas aparece com a
 // desta máquina; com nós remotos, isto passa a ler o índice no registry.
 func (s *Service) imagePlatforms(ctx context.Context, image string) []string {
-	info, err := s.docker.InspectImage(ctx, image)
+	info, err := s.local.InspectImage(ctx, image)
 	if err != nil || info.Os == "" || info.Architecture == "" {
 		return nil
 	}

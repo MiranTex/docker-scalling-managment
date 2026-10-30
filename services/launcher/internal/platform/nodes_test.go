@@ -14,10 +14,11 @@ func TestScheduleChoosesAFittingNode(t *testing.T) {
 		return store.Node{Name: name, OS: "linux", Arch: arch, Schedulable: schedulable}
 	}
 	cands := []candidate{
-		{Node: node("intel-cheio", "amd64", true), Online: true, Allocated: Usage{MemoryMB: 3800}, Capacity: 4096},
-		{Node: node("intel", "amd64", true), Online: true, Allocated: Usage{MemoryMB: 1000}, Capacity: 4096},
-		{Node: node("arm-grande", "arm64", true), Online: true, Capacity: 16384},
-		{Node: node("em-manutencao", "amd64", false), Online: true, Capacity: 65536},
+		{Node: node("intel-cheio", "amd64", true), Online: true, Network: "cluster", Allocated: Usage{MemoryMB: 3800}, Capacity: 4096},
+		{Node: node("intel", "amd64", true), Online: true, Network: "cluster", Allocated: Usage{MemoryMB: 1000}, Capacity: 4096},
+		{Node: node("arm-grande", "arm64", true), Online: true, Network: "local", Capacity: 16384},
+		{Node: node("em-manutencao", "amd64", false), Online: true, Network: "cluster", Capacity: 65536},
+		{Node: node("sem-rede", "amd64", true), Online: true, Network: "a entrar no swarm", Capacity: 65536},
 		{Node: node("desligado", "amd64", true), Online: false, Capacity: 65536},
 	}
 
@@ -41,7 +42,7 @@ func TestScheduleChoosesAFittingNode(t *testing.T) {
 	if !errors.Is(err, ErrNoNode) || strings.Contains(err.Error(), "quota") {
 		t.Fatalf("erro = %v", err)
 	}
-	for _, want := range []string{"intel-cheio: 3800 MB alocados", "arm-grande: a imagem não tem linux/arm64", "em-manutencao: em manutenção", "desligado: offline"} {
+	for _, want := range []string{"intel-cheio: 3800 MB alocados", "arm-grande: a imagem não tem linux/arm64", "em-manutencao: em manutenção", "desligado: offline", "sem-rede: sem rede para apps (a entrar no swarm)"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("o erro não explica %q: %v", want, err)
 		}

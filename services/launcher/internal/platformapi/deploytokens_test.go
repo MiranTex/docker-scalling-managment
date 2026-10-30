@@ -25,6 +25,9 @@ type netDocker struct{ platform.Docker }
 func (netDocker) CreateLabeledNetwork(context.Context, string, map[string]string) (string, error) {
 	return "n", nil
 }
+func (netDocker) CreateNetworkWith(context.Context, string, dockerclient.NetworkOptions) (string, error) {
+	return "n", nil
+}
 func (netDocker) ConnectNetwork(context.Context, string, string) error { return nil }
 func (netDocker) ListContainers(context.Context, bool, map[string][]string) ([]dockerclient.Container, error) {
 	return nil, nil

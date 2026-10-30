@@ -18,6 +18,7 @@ type fakeDocker struct {
 	mu         sync.Mutex
 	networks   map[string]map[string]string // nome -> labels
 	connected  map[string][]string          // rede -> containers
+	drivers    map[string]string            // rede -> driver
 	containers map[string]dockerclient.Container
 	removed    []string
 
@@ -237,6 +238,20 @@ func (f *fakeDocker) PullImage(context.Context, string) error { return nil }
 // Info: a máquina do nó local nos testes.
 func (f *fakeDocker) Info(context.Context) (*dockerclient.SystemInfo, error) {
 	return &dockerclient.SystemInfo{Name: "teste", NCPU: 4, MemTotal: 16 << 30, Architecture: "x86_64", OSType: "linux", ServerVersion: "29.0.0"}, nil
+}
+
+// CreateNetworkWith guarda o driver pedido (bridge ou overlay).
+func (f *fakeDocker) CreateNetworkWith(ctx context.Context, name string, o dockerclient.NetworkOptions) (string, error) {
+	id, err := f.CreateLabeledNetwork(ctx, name, o.Labels)
+	if err == nil {
+		f.mu.Lock()
+		if f.drivers == nil {
+			f.drivers = map[string]string{}
+		}
+		f.drivers[name] = o.Driver
+		f.mu.Unlock()
+	}
+	return id, err
 }
 
 func (f *fakeDocker) CreateLabeledNetwork(_ context.Context, name string, labels map[string]string) (string, error) {

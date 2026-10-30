@@ -98,6 +98,13 @@ type Docker interface {
 	ResizeExec(ctx context.Context, execID string, rows, cols int) error
 	InspectExec(ctx context.Context, execID string) (*dockerclient.ExecInspect, error)
 	Info(ctx context.Context) (*dockerclient.SystemInfo, error)
+	CreateNetworkWith(ctx context.Context, name string, o dockerclient.NetworkOptions) (string, error)
+	ConnectNetworkAliases(ctx context.Context, networkID, containerID string, aliases []string) error
+	SwarmInit(ctx context.Context, advertise string) error
+	SwarmWorkerToken(ctx context.Context) (string, error)
+	SwarmJoin(ctx context.Context, advertise, manager, token string) error
+	SwarmLeave(ctx context.Context) error
+	RemoveSwarmNode(ctx context.Context, id string) error
 }
 
 type Config struct {
@@ -141,6 +148,11 @@ type Config struct {
 	RegistryHost         string
 	RegistryPullPassword string
 
+	// Cluster liga o swarm e as redes overlay (ver swarm.go); AdvertiseAddr
+	// é o IP desta máquina na rede, por onde os nós chegam ao manager.
+	Cluster       bool
+	AdvertiseAddr string
+
 	// PublicIPs são os IPs públicos deste servidor -- um domínio próprio só
 	// fica ativo quando o DNS dele resolve para um destes.
 	PublicIPs []string
@@ -152,13 +164,17 @@ type Config struct {
 }
 
 type Service struct {
-	db     *store.DB
+	db *store.DB
+	// docker é o do cluster (ver cluster.go): o local mais os nós remotos.
 	docker Docker
+	// local é só o desta máquina (swarm, e o nó "local" do escalonador).
+	local  Docker
 	box    *secretbox.Box // nil = segredos desligados
 	cfg    Config
 	logger *slog.Logger
 	rt     *runtime
 	agents *agents // ligações dos agentes dos nós remotos
+	swarm  swarmState
 	// probe faz o health check HTTP/TCP a uma réplica -- substituível nos
 	// testes.
 	probe func(ctx context.Context, host string, port int, path string) error
@@ -174,7 +190,11 @@ func New(db *store.DB, docker Docker, box *secretbox.Box, cfg Config, logger *sl
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Service{db: db, docker: docker, box: box, cfg: cfg, logger: logger, rt: newRuntime(), agents: &agents{m: map[string]*agentConn{}}, probe: defaultProbe, lookupHost: net.DefaultResolver.LookupHost}
+	ag := &agents{m: map[string]*agentConn{}}
+	return &Service{
+		db: db, docker: newClusterDocker(docker, ag), local: docker, box: box, cfg: cfg, logger: logger, rt: newRuntime(), agents: ag,
+		probe: defaultProbe, lookupHost: net.DefaultResolver.LookupHost,
+	}
 }
 
 // isNotFound reconhece o 404 do Docker (container/imagem/volume que não existe).

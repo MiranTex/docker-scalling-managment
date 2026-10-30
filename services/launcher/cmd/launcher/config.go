@@ -113,6 +113,10 @@ type config struct {
 	// Nós remotos: a CA da instalação, o URL público da API (por onde os
 	// agentes chegam) e a imagem do agente. Sem a CA, desligados.
 	caCert, publicAPIURL, agentImage string
+	// cluster: swarm + redes overlay (ver platform/swarm.go);
+	// advertiseAddr: o IP desta máquina na rede, para os nós.
+	cluster       bool
+	advertiseAddr string
 	// traefikCertificates: "cert:key" separados por vírgula, caminhos vistos
 	// pelo Traefik -- entram no routing (ex: o certificado do registry).
 	traefikCertificates []platform.TLSCertificate
@@ -177,6 +181,8 @@ func loadConfig() config {
 		caCert:               os.Getenv("LAUNCHER_CA_CERT"),
 		publicAPIURL:         os.Getenv("LAUNCHER_PUBLIC_API_URL"),
 		agentImage:           os.Getenv("LAUNCHER_AGENT_IMAGE"),
+		cluster:              os.Getenv("LAUNCHER_CLUSTER") == "true",
+		advertiseAddr:        os.Getenv("LAUNCHER_ADVERTISE_ADDR"),
 	}
 	for _, pair := range envList("LAUNCHER_TRAEFIK_CERTIFICATES") {
 		cert, key, ok := strings.Cut(pair, ":")
@@ -230,6 +236,8 @@ func (c config) platformConfig() platform.Config {
 		PublicBaseDomain:      c.publicBaseDomain,
 		TLSCertResolver:       c.tlsCertResolver,
 		PublicIPs:             c.publicIPs,
+		Cluster:               c.cluster,
+		AdvertiseAddr:         c.advertiseAddr,
 	}
 }
 

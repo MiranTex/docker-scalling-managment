@@ -21,6 +21,7 @@ func cmdInit(args []string) error {
 	portalPort := fs.Int("portal-port", 0, "porta do portal neste host")
 	adminEmail := fs.String("admin-email", "", "email da conta que fica super-admin")
 	acmeEmail := fs.String("acme-email", "", "email para certificados HTTPS (Let's Encrypt); vazio = só HTTP")
+	cluster := fs.Bool("cluster", false, "modo cluster: esta máquina recebe nós remotos (swarm + redes overlay; só Linux)")
 	imagesFrom := fs.String("images-from", "", "registry de onde buscar as imagens da plataforma (ex: registry.<domínio>/basestack); vazio = construí-las aqui")
 	yes := fs.Bool("yes", false, "não perguntar: usa as flags e os valores por defeito")
 	if err := fs.Parse(args); err != nil {
@@ -64,6 +65,10 @@ func cmdInit(args []string) error {
 	}
 	s.ACMEEmail = ask("Email para HTTPS automático (vazio = só HTTP, ex: numa rede local)", *acmeEmail)
 	s.ImageSource = strings.TrimRight(*imagesFrom, "/")
+	if *cluster && runtime.GOOS == "darwin" {
+		return errors.New("o modo cluster é para servidores Linux: o Docker Desktop corre numa VM que as outras máquinas não alcançam")
+	}
+	s.Cluster = *cluster
 	s.Secrets = generateSecrets()
 
 	if err := saveSettings(dir, s); err != nil {
@@ -121,6 +126,12 @@ func cmdUp(args []string) error {
 				path, err, filepath.Join(dir, "tls", "ca.crt"))
 		} else if changed {
 			fmt.Printf("\nCA do registry instalada em %s.\n  Reinicia o Docker Desktop uma vez para ele confiar no registry (só ele lê essa pasta ao arrancar).\n", path)
+		}
+	}
+	// Os nós remotos buscam o agente ao registry desta plataforma.
+	if imageExists(s.image("agent")) {
+		if err := pushQuiet(s, "agent"); err != nil {
+			fmt.Printf("\nAviso: não consegui pôr o agente no registry (%v) -- os nós novos não o vão conseguir buscar.\n  Tenta outra vez com: basestack up\n", err)
 		}
 	}
 	printAddresses(s)
@@ -417,6 +428,16 @@ Escreve "basestack" para confirmar: `, dir)
 	return nil
 }
 
+func parseOnOff(v string) (bool, error) {
+	switch strings.ToLower(v) {
+	case "on", "true", "sim", "1":
+		return true, nil
+	case "off", "false", "nao", "não", "0":
+		return false, nil
+	}
+	return false, fmt.Errorf("valor inválido %q -- on ou off", v)
+}
+
 func firstNonEmpty(v ...string) string {
 	for _, s := range v {
 		if s != "" {
@@ -438,7 +459,7 @@ func firstNonZero(v ...int) int {
 // cmdSet muda uma escolha do init sem mexer nos segredos.
 func cmdSet(args []string) error {
 	if len(args) != 2 {
-		return errors.New("uso: basestack set <domain|portal-port|admin-email|acme-email|images-from> <valor>")
+		return errors.New("uso: basestack set <domain|portal-port|admin-email|acme-email|images-from|cluster> <valor>")
 	}
 	s, dir, err := loadSettings()
 	if err != nil {
@@ -469,13 +490,22 @@ func cmdSet(args []string) error {
 			}
 		}
 		s.ACMEEmail = value
+	case "cluster":
+		on, err := parseOnOff(value)
+		if err != nil {
+			return err
+		}
+		if on && runtime.GOOS == "darwin" {
+			return errors.New("o modo cluster é para servidores Linux: o Docker Desktop corre numa VM que as outras máquinas não alcançam")
+		}
+		s.Cluster = on
 	case "images-from":
 		if strings.Contains(value, "://") || strings.ContainsAny(value, " :") {
 			return fmt.Errorf("origem inválida: %q (ex: registry.192.168.1.67.nip.io/basestack; vazio = construir localmente)", value)
 		}
 		s.ImageSource = strings.TrimRight(value, "/")
 	default:
-		return fmt.Errorf("chave desconhecida %q -- domain, portal-port, admin-email, acme-email ou images-from", key)
+		return fmt.Errorf("chave desconhecida %q -- domain, portal-port, admin-email, acme-email, images-from ou cluster", key)
 	}
 	if err := saveSettings(dir, s); err != nil {
 		return err
