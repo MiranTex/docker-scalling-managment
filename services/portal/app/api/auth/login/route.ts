@@ -1,16 +1,18 @@
 import { NextResponse } from "next/server";
 import { login } from "@/lib/authClient";
-import { isHttps, setSessionCookies } from "@/lib/session";
+import { clientIP, isHttps, setSessionCookies } from "@/lib/session";
 
 export async function POST(req: Request) {
   const { email, password } = await req.json();
-  // O IP real (o Traefik põe-no no X-Forwarded-For; o primeiro é o do
-  // cliente) -- para o auth abrandar quem adivinha passwords.
-  const clientIP = (req.headers.get("x-forwarded-for") ?? "").split(",")[0].trim() || req.headers.get("x-real-ip") || undefined;
-  const authRes = await login(email, password, clientIP);
+  const authRes = await login(email, password, clientIP(req));
   const data = await authRes.json().catch(() => ({}));
   if (!authRes.ok) {
     return NextResponse.json(data, { status: authRes.status });
+  }
+  // Password certa mas falta o 2FA: a página pede o código (ou a ativação)
+  // e continua em /api/auth/login/mfa*.
+  if (data.mfa_required || data.mfa_setup_required) {
+    return NextResponse.json(data);
   }
 
   const res = NextResponse.json({ ok: true });

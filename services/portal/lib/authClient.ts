@@ -36,7 +36,15 @@ export type AdminUser = {
   role: string;
   created_at: string;
   email_verified_at?: string;
+  mfa_enabled?: boolean;
 };
+
+// O que o login devolve quando a password está certa mas falta o 2FA: um
+// mfa_token curto para o segundo passo (ou, para um admin sem 2FA, para o
+// ativar).
+export type MFAPending = { mfa_required?: boolean; mfa_setup_required?: boolean; mfa_token: string };
+
+export type MFAStatus = { enabled: boolean; required: boolean; recovery_codes_left: number };
 
 async function authFetch(path: string, init?: RequestInit): Promise<Response> {
   return fetch(`${AUTH_SERVICE_URL}${path}`, {
@@ -54,6 +62,24 @@ export function login(email: string, password: string, clientIP?: string) {
     headers: clientIP ? { "X-Forwarded-For": clientIP } : {},
     body: JSON.stringify({ email, password }),
   });
+}
+
+// O segundo passo do login: um código da app ou de recuperação.
+export function loginMFA(mfaToken: string, code: string, clientIP?: string) {
+  return authFetch("/v1/login/mfa", {
+    method: "POST",
+    headers: clientIP ? { "X-Forwarded-For": clientIP } : {},
+    body: JSON.stringify({ mfa_token: mfaToken, code }),
+  });
+}
+
+// Ativação obrigatória durante o login (admins sem 2FA).
+export function loginMFASetup(mfaToken: string) {
+  return authFetch("/v1/login/mfa/setup", { method: "POST", body: JSON.stringify({ mfa_token: mfaToken }) });
+}
+
+export function loginMFAConfirm(mfaToken: string, code: string) {
+  return authFetch("/v1/login/mfa/confirm", { method: "POST", body: JSON.stringify({ mfa_token: mfaToken, code }) });
 }
 
 export function register(email: string, password: string) {
@@ -127,6 +153,48 @@ export function changeOwnPassword(accessToken: string, currentPassword: string, 
     method: "POST",
     headers: { Authorization: `Bearer ${accessToken}` },
     body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+  });
+}
+
+// O 2FA da própria conta.
+
+export function getMyMFA(accessToken: string) {
+  return authFetch("/v1/me/mfa", { headers: { Authorization: `Bearer ${accessToken}` } });
+}
+
+export function startMyMFA(accessToken: string) {
+  return authFetch("/v1/me/mfa/setup", { method: "POST", headers: { Authorization: `Bearer ${accessToken}` } });
+}
+
+export function confirmMyMFA(accessToken: string, code: string) {
+  return authFetch("/v1/me/mfa/confirm", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}` },
+    body: JSON.stringify({ code }),
+  });
+}
+
+export function newRecoveryCodes(accessToken: string, code: string) {
+  return authFetch("/v1/me/mfa/recovery-codes", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}` },
+    body: JSON.stringify({ code }),
+  });
+}
+
+export function disableMyMFA(accessToken: string, password: string) {
+  return authFetch("/v1/me/mfa", {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${accessToken}` },
+    body: JSON.stringify({ password }),
+  });
+}
+
+// Um super-admin desliga o 2FA de uma conta (ex: perdeu o telemóvel).
+export function adminDisableMFA(accessToken: string, id: string) {
+  return authFetch(`/v1/admin/users/${encodeURIComponent(id)}/mfa`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${accessToken}` },
   });
 }
 

@@ -53,6 +53,9 @@ type config struct {
 	// login social). Por defeito fechado: só o primeiro administrador se
 	// regista; as outras contas cria-as um administrador.
 	openRegistration bool
+	// mfaKey: a chave (32 bytes em base64) que cifra os segredos do 2FA;
+	// vazia = 2FA desligado. mfaIssuer: o nome na app autenticadora.
+	mfaKey, mfaIssuer string
 }
 
 func loadConfig() config {
@@ -76,6 +79,8 @@ func loadConfig() config {
 
 		bootstrapSuperAdminEmail: os.Getenv("AUTH_BOOTSTRAP_SUPERADMIN_EMAIL"),
 		openRegistration:         os.Getenv("AUTH_OPEN_REGISTRATION") == "true",
+		mfaKey:                   os.Getenv("AUTH_MFA_KEY"),
+		mfaIssuer:                envString("AUTH_MFA_ISSUER", "base-stack"),
 	}
 
 	if cfg.databaseURL == "" {

@@ -38,7 +38,7 @@ func openTestDB(t *testing.T) *DB {
 	// Isola cada teste dos demais (e de execuções anteriores) sem exigir
 	// um Postgres descartável por teste -- mais simples que subir/derrubar
 	// containers a cada execução.
-	if _, err := db.sql.ExecContext(ctx, `TRUNCATE auth.refresh_tokens, auth.password_credentials, auth.api_keys, auth.users CASCADE`); err != nil {
+	if _, err := db.sql.ExecContext(ctx, `TRUNCATE auth.refresh_tokens, auth.password_credentials, auth.api_keys, auth.mfa_totp, auth.mfa_recovery_codes, auth.users CASCADE`); err != nil {
 		t.Fatalf("limpando tabelas antes do teste: %v", err)
 	}
 	return db
@@ -340,5 +340,58 @@ func TestSetUserPasswordAndRevokeSessions(t *testing.T) {
 	}
 	if tok, _, _ := db.FindByHash(ctx, "h-"+tokenID); tok.RevokedAt == nil {
 		t.Error("a sessão não foi revogada")
+	}
+}
+
+func TestTOTPLifecycle(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	u, err := db.CreateUserWithPassword(ctx, uniqueEmail(t), "h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found, _ := db.GetTOTP(ctx, u.ID); found {
+		t.Fatal("conta nova já com 2FA")
+	}
+	if err := db.StartTOTP(ctx, u.ID, "cifrado-1"); err != nil {
+		t.Fatal(err)
+	}
+	if tt, found, _ := db.GetTOTP(ctx, u.ID); !found || tt.Confirmed || tt.SecretEnc != "cifrado-1" {
+		t.Fatalf("depois de começar: %+v %v", tt, found)
+	}
+	if err := db.ConfirmTOTP(ctx, u.ID, 100, []string{"r1", "r2"}); err != nil {
+		t.Fatal(err)
+	}
+	// Ativo: começar outro não lhe mexe.
+	_ = db.StartTOTP(ctx, u.ID, "cifrado-2")
+	if tt, _, _ := db.GetTOTP(ctx, u.ID); !tt.Confirmed || tt.SecretEnc != "cifrado-1" || tt.LastStep != 100 {
+		t.Errorf("2FA ativo alterado: %+v", tt)
+	}
+	if ok, _ := db.UseTOTPStep(ctx, u.ID, 100); ok {
+		t.Error("o passo 100 já foi usado")
+	}
+	if ok, _ := db.UseTOTPStep(ctx, u.ID, 101); !ok {
+		t.Error("o passo 101 devia passar")
+	}
+	if ok, _ := db.UseRecoveryCode(ctx, u.ID, "r1"); !ok {
+		t.Error("código de recuperação r1")
+	}
+	if ok, _ := db.UseRecoveryCode(ctx, u.ID, "r1"); ok {
+		t.Error("r1 serviu duas vezes")
+	}
+	if n, _ := db.RemainingRecoveryCodes(ctx, u.ID); n != 1 {
+		t.Errorf("restam %d, queria 1", n)
+	}
+	if on, _ := db.MFAEnabledUsers(ctx); !on[u.ID] {
+		t.Error("a conta devia aparecer com 2FA")
+	}
+	if err := db.DisableTOTP(ctx, u.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, _ := db.GetTOTP(ctx, u.ID); found {
+		t.Error("2FA continua depois de desligar")
+	}
+	if n, _ := db.RemainingRecoveryCodes(ctx, u.ID); n != 0 {
+		t.Errorf("códigos de recuperação depois de desligar: %d", n)
 	}
 }

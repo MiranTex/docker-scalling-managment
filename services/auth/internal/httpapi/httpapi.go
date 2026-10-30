@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"auth/internal/apikey"
+	"auth/internal/mfa"
 	"auth/internal/oauth"
 	"auth/internal/opaquetoken"
 	"auth/internal/password"
@@ -113,6 +114,11 @@ type Handler struct {
 	bootstrapEmail   string
 	// limiter abranda quem erra passwords (ver loginlimit.go).
 	limiter *loginLimiter
+	// 2FA (ver mfa.go): nil = desligado.
+	mfaStore   MFAStore
+	mfaBox     *mfa.Box
+	mfaIssuer  string
+	challenges *mfaChallenges
 }
 
 // NewHandler monta o Handler. accessTTL é usado só para reportar
@@ -125,7 +131,7 @@ func NewHandler(users UserStore, userAdmin UserAdmin, tokens TokenIssuer, refres
 	return &Handler{
 		users: users, userAdmin: userAdmin, tokens: tokens, refresh: refreshTokens, apiKeys: apiKeys,
 		oauth: oauthLogin, verification: emailVerifier, db: db, accessTTL: accessTTL, logger: logger,
-		openRegistration: true, limiter: newLoginLimiter(),
+		openRegistration: true, limiter: newLoginLimiter(), challenges: &mfaChallenges{m: map[string]mfaChallenge{}},
 	}
 }
 
@@ -140,6 +146,11 @@ func (h *Handler) Routes() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/register", h.handleRegister)
 	mux.HandleFunc("POST /v1/login", h.handleLogin)
+	// 2FA (ver mfa.go): o segundo passo do login, e a ativação obrigatória
+	// dos admins a meio dele.
+	mux.HandleFunc("POST /v1/login/mfa", h.handleLoginMFA)
+	mux.HandleFunc("POST /v1/login/mfa/setup", h.handleLoginMFASetup)
+	mux.HandleFunc("POST /v1/login/mfa/confirm", h.handleLoginMFAConfirm)
 	mux.HandleFunc("POST /v1/token/refresh", h.handleRefresh)
 	mux.HandleFunc("POST /v1/logout", h.handleLogout)
 	mux.HandleFunc("POST /v1/verify-email", h.handleVerifyEmail)
@@ -150,6 +161,11 @@ func (h *Handler) Routes() *http.ServeMux {
 	mux.HandleFunc("POST /v1/users/resolve", h.requireAuth(h.handleResolveUser))
 	mux.HandleFunc("GET /v1/me", h.requireAuth(h.handleMe))
 	mux.HandleFunc("POST /v1/me/password", h.requireAuth(h.handleChangeOwnPassword))
+	mux.HandleFunc("GET /v1/me/mfa", h.requireAuth(h.handleGetMyMFA))
+	mux.HandleFunc("POST /v1/me/mfa/setup", h.requireAuth(h.handleStartMyMFA))
+	mux.HandleFunc("POST /v1/me/mfa/confirm", h.requireAuth(h.handleConfirmMyMFA))
+	mux.HandleFunc("POST /v1/me/mfa/recovery-codes", h.requireAuth(h.handleNewRecoveryCodes))
+	mux.HandleFunc("DELETE /v1/me/mfa", h.requireAuth(h.handleDisableMyMFA))
 	// Gestão de utilizadores -- só super-admin. Criar/listar contas e
 	// atribuir role são ações administrativas, não algo que qualquer
 	// sessão autenticada deva conseguir fazer.
@@ -157,6 +173,7 @@ func (h *Handler) Routes() *http.ServeMux {
 	mux.HandleFunc("POST /v1/admin/users", h.requireRole(store.RoleSuperAdmin, h.handleCreateUser))
 	mux.HandleFunc("PATCH /v1/admin/users/{id}/role", h.requireRole(store.RoleSuperAdmin, h.handleUpdateUserRole))
 	mux.HandleFunc("PUT /v1/admin/users/{id}/password", h.requireRole(store.RoleSuperAdmin, h.handleSetUserPassword))
+	mux.HandleFunc("DELETE /v1/admin/users/{id}/mfa", h.requireRole(store.RoleSuperAdmin, h.handleAdminDisableMFA))
 	mux.HandleFunc("POST /v1/admin/users/{id}/tokens", h.requireRole(store.RoleSuperAdmin, h.handleMintServiceToken))
 	// Introspecção não exige um access token do chamador -- é chamado por
 	// OUTRO serviço, de posse só da API key que quer validar, não de uma
@@ -433,6 +450,10 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.limiter.reset(account)
+	// Com 2FA (ou um admin que tem de o ativar): o segundo passo.
+	if h.mfaStep(w, r, user) {
+		return
+	}
 
 	pair, err := h.issueTokenPair(r.Context(), user.ID, user.Role)
 	if err != nil {
@@ -527,6 +548,7 @@ type userListItem struct {
 	Role            string     `json:"role"`
 	CreatedAt       time.Time  `json:"created_at"`
 	EmailVerifiedAt *time.Time `json:"email_verified_at,omitempty"`
+	MFAEnabled      bool       `json:"mfa_enabled"`
 }
 
 // handleListUsers devolve todas as contas -- só super-admin (ver
@@ -538,10 +560,15 @@ func (h *Handler) handleListUsers(w http.ResponseWriter, r *http.Request, _ stri
 		return
 	}
 
+	var withMFA map[string]bool
+	if h.mfaOn() {
+		withMFA, _ = h.mfaStore.MFAEnabledUsers(r.Context())
+	}
 	items := make([]userListItem, 0, len(users))
 	for _, u := range users {
 		items = append(items, userListItem{
 			ID: u.ID, Email: u.Email, Role: u.Role, CreatedAt: u.CreatedAt, EmailVerifiedAt: u.EmailVerifiedAt,
+			MFAEnabled: withMFA[u.ID],
 		})
 	}
 	writeJSON(w, http.StatusOK, items)
@@ -958,6 +985,16 @@ func (h *Handler) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "erro no login social")
 		return
+	}
+
+	// O login social não passa pelo 2FA: quem o tem (ou o tem de ter)
+	// entra com e-mail e password.
+	if h.mfaOn() {
+		t, on, _ := h.mfaStore.GetTOTP(r.Context(), user.ID)
+		if (on && t.Confirmed) || mfaMandatory(user.Role) {
+			writeError(w, http.StatusForbidden, "mfa_required", "esta conta usa 2FA: entra com e-mail e password")
+			return
+		}
 	}
 
 	pair, err := h.issueTokenPair(r.Context(), user.ID, user.Role)

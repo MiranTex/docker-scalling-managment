@@ -172,7 +172,8 @@ func cmdUp(args []string) error {
 	fmt.Printf(`
 Primeira vez? Regista-te em %s/register com %s -- fica logo administrador.
 O registo fica fechado a todos os outros: as contas criam-se no portal
-(Administração > Utilizadores). Sem acesso à conta: basestack reset-password <email>
+(Administração > Utilizadores). Os administradores ativam o 2FA (obrigatório)
+no primeiro login. Sem acesso à conta: basestack reset-password / reset-2fa <email>
 `, s.PortalURL(), s.AdminEmail)
 	return nil
 }
@@ -431,6 +432,20 @@ func cmdResetPassword(args []string) error {
 		return err
 	}
 	return compose(dir, "exec", "-T", "auth", "/usr/local/bin/authd", "reset-password", args[0]).Run()
+}
+
+// cmdReset2FA desliga o 2FA de uma conta (ex: o admin perdeu o telemóvel e
+// os códigos de recuperação). Na máquina da plataforma, como o
+// reset-password.
+func cmdReset2FA(args []string) error {
+	if len(args) != 1 {
+		return errors.New("uso: basestack reset-2fa <email>")
+	}
+	_, dir, err := loadSettings()
+	if err != nil {
+		return err
+	}
+	return compose(dir, "exec", "-T", "auth", "/usr/local/bin/authd", "reset-2fa", args[0]).Run()
 }
 
 func cmdUninstall(args []string) error {

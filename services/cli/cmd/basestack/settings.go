@@ -62,6 +62,9 @@ type Secrets struct {
 	// segredo HTTP do próprio registry.
 	RegistryPullPassword string `json:"registryPullPassword"`
 	RegistryHTTPSecret   string `json:"registryHttpSecret"`
+	// MFAKey cifra os segredos do 2FA na base (AES-256, base64). Perdê-la
+	// obriga a reconfigurar o 2FA de todas as contas.
+	MFAKey string `json:"mfaKey"`
 }
 
 // lanIP é o IP desta máquina na rede local (o da interface que sai para
@@ -132,7 +135,7 @@ func generateSecrets() Secrets {
 		DatabasePassword: password(), AuthDBPassword: password(), SecretsadminDBPassword: password(),
 		TemplatesadminDBPassword: password(), LauncherDBPassword: password(),
 		SecretsMasterKey: key(), LauncherSecretsKey: key(), GrafanaAdminPassword: password(),
-		RegistryPullPassword: password(), RegistryHTTPSecret: password(),
+		RegistryPullPassword: password(), RegistryHTTPSecret: password(), MFAKey: key(),
 	}
 }
 
@@ -147,6 +150,7 @@ func (s *Settings) fillMissingSecrets() bool {
 	}
 	fill(&s.Secrets.RegistryPullPassword, fresh.RegistryPullPassword)
 	fill(&s.Secrets.RegistryHTTPSecret, fresh.RegistryHTTPSecret)
+	fill(&s.Secrets.MFAKey, fresh.MFAKey)
 	return changed
 }
 
