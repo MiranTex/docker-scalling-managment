@@ -118,6 +118,9 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/cli/login/poll", a.cliLoginPoll)
 	mux.HandleFunc("GET /v1/cli/login/{code}", a.requireUser(a.cliLoginGet))
 	mux.HandleFunc("POST /v1/cli/login/{code}/approve", a.requireUser(a.cliLoginApprove))
+	// Instalar a CLI por curl (ver clidownload.go).
+	mux.HandleFunc("GET /v1/cli/install.sh", a.cliInstallScript)
+	mux.HandleFunc("GET /v1/cli/download/{name}", a.cliDownload)
 	mux.HandleFunc("GET /v1/agent/ca", a.agentCA)
 	mux.HandleFunc("POST /v1/agent/join", a.agentJoin)
 	mux.HandleFunc("GET /v1/agent/connect", a.agentConnect)
