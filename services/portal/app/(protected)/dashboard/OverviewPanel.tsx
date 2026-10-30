@@ -1,5 +1,6 @@
 "use client";
 
+import Loading from "@/components/Skeleton";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { DbStatus } from "@/lib/dbAdminClient";
@@ -78,7 +79,7 @@ export default function OverviewPanel() {
               </p>
             </>
           ) : (
-            <p className="muted">A carregar...</p>
+            <Loading />
           )}
         </div>
         <div className="card wide">
@@ -91,7 +92,7 @@ export default function OverviewPanel() {
               <Link href="/admin/database/backups">Ver backups →</Link>
             </p>
           ) : (
-            <p className="muted">A carregar...</p>
+            <Loading />
           )}
         </div>
       </div>

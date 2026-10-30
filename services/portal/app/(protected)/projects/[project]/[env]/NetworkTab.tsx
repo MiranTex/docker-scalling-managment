@@ -1,5 +1,6 @@
 "use client";
 
+import Loading from "@/components/Skeleton";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api, envPath, statusBadge, type EnvironmentNetwork, type NetworkMember } from "@/lib/platformClient";
@@ -39,7 +40,7 @@ export default function NetworkTab({ project, env }: { project: string; env: str
       </p>
       {error && <div className="error">{error}</div>}
       {!network ? (
-        <p className="muted">A carregar...</p>
+        <Loading />
       ) : (
         <>
           <p>

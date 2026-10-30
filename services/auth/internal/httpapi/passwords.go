@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"auth/internal/password"
+	"auth/internal/store"
 )
 
 // Trocar passwords: um super-admin define a de qualquer conta; cada pessoa
@@ -26,6 +27,10 @@ func (h *Handler) handleSetUserPassword(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	id := r.PathValue("id")
+	if u, found, err := h.users.FindUserByID(r.Context(), id); err == nil && found && u.Role == store.RoleService {
+		writeError(w, http.StatusBadRequest, "service_account", "contas de serviço não têm password (usam tokens)")
+		return
+	}
 	if !h.setPassword(w, r, id, req.Password) {
 		return
 	}
@@ -73,6 +78,7 @@ func (h *Handler) setPassword(w http.ResponseWriter, r *http.Request, userID, pl
 	}
 	found, err := h.userAdmin.SetUserPassword(r.Context(), userID, hash)
 	if err != nil {
+		h.logger.Error("gravando a password", "user", userID, "err", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "erro gravando a password")
 		return false
 	}

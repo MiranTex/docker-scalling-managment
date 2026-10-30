@@ -296,3 +296,49 @@ func TestRefreshTokenLifecycle(t *testing.T) {
 		t.Fatal("token legítimo devia ter sido revogado junto pela deteção de reuso")
 	}
 }
+
+// A password vive em password_credentials: trocar uma que existe, e criar
+// a de uma conta que não tinha (ex: só login social).
+func TestSetUserPasswordAndRevokeSessions(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	email := uniqueEmail(t)
+	u, err := db.CreateUserWithPassword(ctx, email, "hash-antigo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found, err := db.SetUserPassword(ctx, u.ID, "hash-novo"); err != nil || !found {
+		t.Fatalf("SetUserPassword: %v %v", found, err)
+	}
+	if _, hash, err := db.FindUserByEmailWithPassword(ctx, email); err != nil || hash != "hash-novo" {
+		t.Errorf("hash depois de trocar = %q, %v", hash, err)
+	}
+
+	social, err := db.CreateUserWithoutPassword(ctx, uniqueEmail(t), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found, err := db.SetUserPassword(ctx, social.ID, "hash-primeiro"); err != nil || !found {
+		t.Fatalf("SetUserPassword numa conta sem password: %v %v", found, err)
+	}
+	if _, hash, err := db.FindUserByEmailWithPassword(ctx, social.Email); err != nil || hash != "hash-primeiro" {
+		t.Errorf("conta só social ganhou password = %q, %v", hash, err)
+	}
+
+	missing, _ := idgen.New()
+	if found, err := db.SetUserPassword(ctx, missing, "x"); err != nil || found {
+		t.Errorf("conta inexistente: %v %v", found, err)
+	}
+
+	tokenID, _ := idgen.New()
+	family, _ := idgen.New()
+	if err := db.Create(ctx, refresh.Token{ID: tokenID, UserID: u.ID, FamilyID: family, TokenHash: "h-" + tokenID, ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.RevokeUserSessions(ctx, u.ID, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if tok, _, _ := db.FindByHash(ctx, "h-"+tokenID); tok.RevokedAt == nil {
+		t.Error("a sessão não foi revogada")
+	}
+}

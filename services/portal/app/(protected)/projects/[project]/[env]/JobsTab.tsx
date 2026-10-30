@@ -1,5 +1,6 @@
 "use client";
 
+import Loading from "@/components/Skeleton";
 import { useEffect, useState } from "react";
 import Modal from "@/components/Modal";
 import { api, envPath, statusBadge, type Job } from "@/lib/platformClient";
@@ -52,7 +53,7 @@ export default function JobsTab({ project, env }: { project: string; env: string
       <p className="muted">Backups, restores, migrations e comandos pontuais deste ambiente (os 50 mais recentes).</p>
       {error && <div className="error">{error}</div>}
       {!jobs ? (
-        <p className="muted">A carregar...</p>
+        <Loading />
       ) : jobs.length === 0 ? (
         <p className="muted">Nenhum job ainda.</p>
       ) : (

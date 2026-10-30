@@ -1,5 +1,6 @@
 "use client";
 
+import { copyText } from "@/lib/clipboard";
 import { useEffect, useState } from "react";
 import Modal from "@/components/Modal";
 import PageHeader from "@/components/PageHeader";
@@ -120,7 +121,7 @@ export default function AdminUsersClient() {
 
   async function copyToClipboard(text: string) {
     try {
-      await navigator.clipboard.writeText(text);
+      await copyText(text);
     } catch {
       // O token continua visível para seleção manual.
     }

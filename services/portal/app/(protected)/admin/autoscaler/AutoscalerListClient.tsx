@@ -1,5 +1,6 @@
 "use client";
 
+import Loading from "@/components/Skeleton";
 import PageHeader from "@/components/PageHeader";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -50,7 +51,7 @@ export default function AutoscalerListClient() {
     <div className="card wide">
       {listError && <div className="error">{listError}</div>}
       {!instances ? (
-        <p className="muted">A carregar...</p>
+        <Loading />
       ) : instances.length === 0 ? (
         <p className="muted">Nenhum autoscaler-group vivo encontrado.</p>
       ) : (

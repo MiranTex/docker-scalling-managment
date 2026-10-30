@@ -1,5 +1,6 @@
 "use client";
 
+import Loading from "@/components/Skeleton";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import type { Capacity, LauncherInstance, ReplicaSummary } from "@/lib/launcherClient";
@@ -175,7 +176,7 @@ export default function InstancesClient() {
         {actionError && <div className="error">{actionError}</div>}
 
         {!rows ? (
-          <p className="muted">A carregar...</p>
+          <Loading />
         ) : rows.length === 0 ? (
           <p className="muted">Nenhuma instância neste filtro.</p>
         ) : (

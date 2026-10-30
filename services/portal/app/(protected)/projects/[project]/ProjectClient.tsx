@@ -1,5 +1,6 @@
 "use client";
 
+import Loading from "@/components/Skeleton";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -86,7 +87,7 @@ export default function ProjectClient({ project }: { project: string }) {
     return (
       <div className="card wide">
         <h1>{project}</h1>
-        {error ? <div className="error">{error}</div> : <p className="muted">A carregar...</p>}
+        {error ? <div className="error">{error}</div> : <Loading />}
       </div>
     );
   }

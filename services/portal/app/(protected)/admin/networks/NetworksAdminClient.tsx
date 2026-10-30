@@ -1,5 +1,6 @@
 "use client";
 
+import Loading from "@/components/Skeleton";
 import { useEffect, useState } from "react";
 import Modal from "@/components/Modal";
 import type { ContainerSummary, DockerNetwork, NetworkDetail } from "@/lib/launcherClient";
@@ -239,7 +240,7 @@ export default function NetworksAdminClient() {
         </p>
 
         {!networks ? (
-          <p className="muted">A carregar...</p>
+          <Loading />
         ) : networks.length === 0 ? (
           <p className="muted">Nenhuma rede definida pelo utilizador ainda.</p>
         ) : (

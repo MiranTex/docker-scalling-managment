@@ -1,5 +1,6 @@
 "use client";
 
+import Loading from "@/components/Skeleton";
 import { useEffect, useState } from "react";
 import Modal from "@/components/Modal";
 import { api, envPath, type EnvSecret } from "@/lib/platformClient";
@@ -68,7 +69,7 @@ export default function SecretsTab({ project, env }: { project: string; env: str
       </div>
       {!open && error && <div className="error">{error}</div>}
       {!secrets ? (
-        <p className="muted">A carregar...</p>
+        <Loading />
       ) : secrets.length === 0 ? (
         <p className="muted">Nenhum segredo ainda.</p>
       ) : (
