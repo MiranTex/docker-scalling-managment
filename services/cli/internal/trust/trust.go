@@ -68,7 +68,18 @@ func FetchVerified(apiURL, want string) ([]byte, error) {
 	return raw, nil
 }
 
-// desktopPath: onde o Docker Desktop (Mac) procura a CA de um registry.
+// dockerDesktop: o docker desta máquina é o Docker Desktop (Mac, ou Linux
+// com o Docker Desktop) -- o daemon corre numa VM, que não vê as CAs do
+// sistema nem o /etc/docker: lê ~/.docker/certs.d, e só ao arrancar.
+func dockerDesktop() bool {
+	if runtime.GOOS == "darwin" {
+		return true
+	}
+	out, err := exec.Command("docker", "info", "--format", "{{.OperatingSystem}}").Output()
+	return err == nil && strings.Contains(string(out), "Docker Desktop")
+}
+
+// desktopPath: onde o Docker Desktop procura a CA de um registry.
 func desktopPath(host string) (string, error) {
 	h, err := os.UserHomeDir()
 	if err != nil {
@@ -79,27 +90,27 @@ func desktopPath(host string) (string, error) {
 
 // Trusted diz se o docker desta máquina já confia nesta CA para o host.
 func Trusted(caPEM []byte, host string) bool {
-	switch runtime.GOOS {
-	case "darwin":
+	switch {
+	case dockerDesktop():
 		p, err := desktopPath(host)
 		if err != nil {
 			return false
 		}
 		cur, err := os.ReadFile(p)
 		return err == nil && string(cur) == string(caPEM)
-	case "linux":
+	case runtime.GOOS == "linux":
 		script, err := linuxScript(caPEM, "-", host)
 		return err == nil && script == ""
 	}
 	return false
 }
 
-// Install põe o docker desta máquina a confiar na CA para o host. No Mac
-// é um ficheiro do utilizador (e um reinício do Docker Desktop); no Linux
-// pede root (ver InstallLinux).
+// Install põe o docker desta máquina a confiar na CA para o host. Com o
+// Docker Desktop (Mac ou Linux) é um ficheiro do utilizador e um reinício;
+// com o Docker Engine (Linux) pede root (ver InstallLinux).
 func Install(caPEM []byte, host string) error {
-	switch runtime.GOOS {
-	case "darwin":
+	switch {
+	case dockerDesktop():
 		p, err := desktopPath(host)
 		if err != nil {
 			return err
@@ -110,9 +121,13 @@ func Install(caPEM []byte, host string) error {
 		if err := os.WriteFile(p, caPEM, 0o644); err != nil {
 			return err
 		}
-		fmt.Printf("CA instalada em %s.\n  Reinicia o Docker Desktop uma vez para ele confiar em %s.\n", p, host)
+		restart := "pelo ícone do Docker Desktop"
+		if runtime.GOOS == "linux" {
+			restart = "systemctl --user restart docker-desktop"
+		}
+		fmt.Printf("CA instalada em %s.\n  Reinicia o Docker Desktop uma vez para ele confiar em %s (%s).\n", p, host, restart)
 		return nil
-	case "linux":
+	case runtime.GOOS == "linux":
 		f, err := os.CreateTemp("", "basestack-ca-*.crt")
 		if err != nil {
 			return err
