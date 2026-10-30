@@ -19,6 +19,7 @@ import {
 import TabBar, { useActiveTab } from "@/components/TabBar";
 import TerminalModal from "@/components/TerminalModal";
 import ConfirmModal from "../../../../../admin/database/ConfirmModal";
+import BasicAuthCard from "./BasicAuthCard";
 import DomainsCard from "./DomainsCard";
 import ServiceConfig from "./ServiceConfig";
 import TemplateCard from "./TemplateCard";
@@ -429,7 +430,10 @@ export default function ServiceClient({ project, env, svc }: { project: string; 
 
       {tab === "domains" &&
         (service.kind === "web" ? (
-          <DomainsCard project={project} env={env} svc={svc} />
+          <>
+            <DomainsCard project={project} env={env} svc={svc} />
+            <BasicAuthCard project={project} env={env} service={service} onSaved={load} />
+          </>
         ) : (
           <div className="card full">
             <p className="muted">Só serviços web têm domínios.</p>

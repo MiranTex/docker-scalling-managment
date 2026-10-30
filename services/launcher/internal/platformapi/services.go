@@ -288,3 +288,30 @@ func (a *API) deleteDomain(w http.ResponseWriter, r *http.Request, _ principal) 
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+func (a *API) setBasicAuth(w http.ResponseWriter, r *http.Request, who principal) {
+	var in struct {
+		User     string `json:"user"`
+		Password string `json:"password"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	p, e, s := svcPath(r)
+	if err := a.svc.SetBasicAuth(r.Context(), p, e, s, in.User, in.Password); err != nil {
+		a.fail(w, err)
+		return
+	}
+	a.audit.Log(who.Subject, "service.basic_auth", p+"/"+e+"/"+s, "ligada para "+in.User)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *API) clearBasicAuth(w http.ResponseWriter, r *http.Request, who principal) {
+	p, e, s := svcPath(r)
+	if err := a.svc.ClearBasicAuth(r.Context(), p, e, s); err != nil {
+		a.fail(w, err)
+		return
+	}
+	a.audit.Log(who.Subject, "service.basic_auth", p+"/"+e+"/"+s, "desligada")
+	w.WriteHeader(http.StatusNoContent)
+}

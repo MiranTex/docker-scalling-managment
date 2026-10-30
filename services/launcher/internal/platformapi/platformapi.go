@@ -173,6 +173,9 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+svc+"/domains", developer(a.addDomain))
 	mux.HandleFunc("POST "+svc+"/domains/{hostname}/verify", developer(a.verifyDomain))
 	mux.HandleFunc("DELETE "+svc+"/domains/{hostname}", developer(a.deleteDomain))
+	// Proteção com password à frente do serviço (ver platform/basicauth.go).
+	mux.HandleFunc("PUT "+svc+"/basic-auth", developer(a.setBasicAuth))
+	mux.HandleFunc("DELETE "+svc+"/basic-auth", developer(a.clearBasicAuth))
 
 	const templates = "/v1/projects/{project}/templates"
 	mux.HandleFunc("GET "+templates, viewer(a.listTemplates))

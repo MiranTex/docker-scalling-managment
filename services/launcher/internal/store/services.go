@@ -62,6 +62,10 @@ type Service struct {
 	// configuração (nil = criado à mão, ou modelo apagado).
 	TemplateID      *string   `json:"templateId,omitempty"`
 	TemplateVersion *int      `json:"templateVersion,omitempty"`
+	// BasicAuthUser: com utilizador, o Traefik pede utilizador e password
+	// antes de chegar à app (ver SetServiceBasicAuth). O hash não sai daqui.
+	BasicAuthUser string `json:"basicAuthUser,omitempty"`
+	BasicAuthHash string `json:"-"`
 	CreatedAt       time.Time `json:"createdAt"`
 	UpdatedAt       time.Time `json:"updatedAt"`
 	CreatedBy       string    `json:"createdBy"`
@@ -69,14 +73,16 @@ type Service struct {
 
 const serviceColumns = `id, environment_id, slug, kind, port, health_path, health_timeout_seconds, cmd, env, release_cmd,
 	vcpu::float8, memory_mb, scaling_mode, replicas, min_replicas, max_replicas, cpu_scale_up_percent, cpu_scale_down_percent,
-	desired_state, current_revision_id, metrics_port, metrics_path, template_id, template_version, created_at, updated_at, created_by`
+	desired_state, current_revision_id, metrics_port, metrics_path, template_id, template_version, created_at, updated_at, created_by,
+	basic_auth_user, basic_auth_hash`
 
 func scanService(row interface{ Scan(...any) error }) (Service, error) {
 	var s Service
 	var cmd, env, release []byte
 	err := row.Scan(&s.ID, &s.EnvironmentID, &s.Slug, &s.Kind, &s.Port, &s.HealthPath, &s.HealthTimeoutSeconds, &cmd, &env, &release,
 		&s.VCPU, &s.MemoryMB, &s.ScalingMode, &s.Replicas, &s.MinReplicas, &s.MaxReplicas, &s.CPUScaleUpPercent, &s.CPUScaleDownPercent,
-		&s.DesiredState, &s.CurrentRevisionID, &s.MetricsPort, &s.MetricsPath, &s.TemplateID, &s.TemplateVersion, &s.CreatedAt, &s.UpdatedAt, &s.CreatedBy)
+		&s.DesiredState, &s.CurrentRevisionID, &s.MetricsPort, &s.MetricsPath, &s.TemplateID, &s.TemplateVersion, &s.CreatedAt, &s.UpdatedAt, &s.CreatedBy,
+		&s.BasicAuthUser, &s.BasicAuthHash)
 	if err != nil {
 		return Service{}, err
 	}
@@ -455,6 +461,19 @@ func (db *DB) DeleteRegistryCredential(ctx context.Context, projectID, registry 
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrRegistryNotFound
+	}
+	return nil
+}
+
+// SetServiceBasicAuth liga (user e hash) ou desliga (vazios) a proteção
+// com password do serviço.
+func (db *DB) SetServiceBasicAuth(ctx context.Context, serviceID, user, hash string) error {
+	res, err := db.sql.ExecContext(ctx, `UPDATE launcher.services SET basic_auth_user = $2, basic_auth_hash = $3, updated_at = now() WHERE id = $1`, serviceID, user, hash)
+	if err != nil {
+		return fmt.Errorf("store: gravando a proteção do serviço %q: %w", serviceID, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrServiceNotFound
 	}
 	return nil
 }
