@@ -94,20 +94,17 @@ func pushQuiet(s Settings, names ...string) error {
 }
 
 // pullImages busca as imagens da plataforma de ImageSource e dá-lhes o
-// nome local que o compose usa. Com missingOnly, só as que faltam. Usa o
-// login do docker de quem corre (docker login <registry>).
-func pullImages(s Settings, missingOnly bool) error {
+// nome local que o compose usa. Usa o login do docker de quem corre
+// (docker login <registry>).
+func pullImages(s Settings) error {
 	if s.ImageSource == "" {
 		return errors.New("sem origem das imagens -- basestack set images-from <registry>/basestack, ou constrói-as: basestack dev build")
 	}
 	for _, img := range platformImages {
 		local := s.image(img.name)
-		if missingOnly && imageExists(local) {
-			continue
-		}
 		remote := strings.TrimRight(s.ImageSource, "/") + "/" + img.name + ":" + s.Version
 		fmt.Printf("==> %s\n", remote)
-		cmd := exec.Command("docker", "pull", remote)
+		cmd := exec.Command("docker", "pull", "--quiet", remote)
 		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("buscando %s (fizeste \"docker login %s\"?): %w", remote, strings.SplitN(s.ImageSource, "/", 2)[0], err)

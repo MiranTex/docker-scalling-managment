@@ -63,7 +63,14 @@ func cmdInit(args []string) error {
 	if _, err := mail.ParseAddress(s.AdminEmail); err != nil {
 		return fmt.Errorf("email do administrador inválido: %q", s.AdminEmail)
 	}
-	s.ACMEEmail = ask("Email para HTTPS automático (vazio = só HTTP, ex: numa rede local)", *acmeEmail)
+	if privateDomain(s.Domain) {
+		if *acmeEmail != "" {
+			return errACMEPrivate
+		}
+		fmt.Println("HTTPS automático: não (o domínio é da rede local; as apps ficam em HTTP, o registry e os nós em HTTPS com a CA da instalação)")
+	} else {
+		s.ACMEEmail = ask("Email para HTTPS automático (Let's Encrypt; vazio = só HTTP)", *acmeEmail)
+	}
 	s.ImageSource = strings.TrimRight(*imagesFrom, "/")
 	if *cluster && runtime.GOOS == "darwin" {
 		return errors.New("o modo cluster é para servidores Linux: o Docker Desktop corre numa VM que as outras máquinas não alcançam")
@@ -85,8 +92,10 @@ func cmdUp(args []string) error {
 	if err != nil {
 		return err
 	}
+	// Com uma origem, busca-se sempre: só as que faltam deixava ficar
+	// imagens antigas de outra instalação (é rápido se nada mudou).
 	if s.ImageSource != "" {
-		if err := pullImages(s, true); err != nil {
+		if err := pullImages(s); err != nil {
 			return err
 		}
 	}
@@ -104,6 +113,9 @@ func cmdUp(args []string) error {
 	} else if len(busy) > 0 {
 		return fmt.Errorf("estas portas já estão ocupadas por outros containers: %s\n  pára-os primeiro (ex: a demo antiga: docker compose -f demo/docker-compose.yml stop)", strings.Join(busy, ", "))
 	}
+	if s.ACMEEmail != "" && privateDomain(s.Domain) {
+		fmt.Printf("Aviso: %v.\n  Corrige com: basestack set acme-email \"\" && basestack up\n\n", errACMEPrivate)
+	}
 	if s.fillMissingSecrets() {
 		if err := saveSettings(dir, s); err != nil {
 			return err
@@ -115,6 +127,16 @@ func cmdUp(args []string) error {
 	if runtime.GOOS == "linux" {
 		if err := trustOnLinux(filepath.Join(dir, "tls", "ca.crt"), s.RegistryHost()); err != nil {
 			return err
+		}
+		if s.Cluster && !s.FirewallApplied && ufwActive() {
+			if applied, err := offerFirewall(rolePlatform); err != nil {
+				return err
+			} else if applied {
+				s.FirewallApplied = true
+				if err := saveSettings(dir, s); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	if err := compose(dir, append([]string{"up", "--detach", "--remove-orphans", "--wait"}, args...)...).Run(); err != nil {
@@ -395,14 +417,14 @@ func findRepo() (string, error) {
 	}
 }
 
-// cmdPull volta a buscar todas as imagens da plataforma à origem
-// (images-from) -- para atualizar; o up só busca as que faltam.
+// cmdPull busca as imagens da plataforma à origem (images-from) sem as
+// aplicar -- o up também as busca, antes de arrancar.
 func cmdPull(args []string) error {
 	s, _, err := loadSettings()
 	if err != nil {
 		return err
 	}
-	if err := pullImages(s, false); err != nil {
+	if err := pullImages(s); err != nil {
 		return err
 	}
 	fmt.Println("Imagens atualizadas. Aplica com: basestack up")
@@ -477,6 +499,9 @@ func cmdSet(args []string) error {
 		if value == "" || strings.ContainsAny(value, "/: ") {
 			return fmt.Errorf("domínio inválido: %q (só o nome, ex: 192.168.1.50.nip.io)", value)
 		}
+		if privateDomain(value) && s.ACMEEmail != "" {
+			return fmt.Errorf("%w\n  primeiro: basestack set acme-email \"\"", errACMEPrivate)
+		}
 		s.Domain = value
 	case "portal-port":
 		n, err := strconv.Atoi(value)
@@ -493,6 +518,9 @@ func cmdSet(args []string) error {
 		if value != "" {
 			if _, err := mail.ParseAddress(value); err != nil {
 				return fmt.Errorf("email inválido: %q", value)
+			}
+			if privateDomain(s.Domain) {
+				return errACMEPrivate
 			}
 		}
 		s.ACMEEmail = value

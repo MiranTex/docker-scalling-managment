@@ -216,3 +216,34 @@ func TestFlagsAfterNames(t *testing.T) {
 		t.Errorf("names=%v push=%v platform=%q err=%v", names, *push, *platform, err)
 	}
 }
+
+func TestPrivateDomain(t *testing.T) {
+	for d, want := range map[string]bool{
+		"192.168.1.100.nip.io":        true,
+		"api.10.0.0.5.nip.io":         true,
+		"192-168-1-10.sslip.io":       true,
+		"127.0.0.1.nip.io":            true,
+		"localhost":                   true,
+		"servidor.local":              true,
+		"203.0.113.10.nip.io":         false, // IP público
+		"exemplo.pt":                  false,
+		"plataforma.minhaempresa.com": false,
+	} {
+		if got := privateDomain(d); got != want {
+			t.Errorf("privateDomain(%q) = %v, queria %v", d, got, want)
+		}
+	}
+}
+
+func TestUfwScriptPerRole(t *testing.T) {
+	platform := ufwScript(rolePlatform, "192.168.1.0/24")
+	node := ufwScript(roleNode, "192.168.1.0/24")
+	for _, want := range []string{"port 7946", "port 4789 proto udp", "proto esp", "from 192.168.1.0/24"} {
+		if !strings.Contains(platform, want) || !strings.Contains(node, want) {
+			t.Errorf("falta %q:\n%s\n%s", want, platform, node)
+		}
+	}
+	if !strings.Contains(platform, "port 2377 proto tcp") || strings.Contains(node, "2377") {
+		t.Error("a 2377 (manager) é só da plataforma")
+	}
+}
