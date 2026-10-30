@@ -86,9 +86,12 @@ export function register(email: string, password: string) {
   return authFetch("/v1/register", { method: "POST", body: JSON.stringify({ email, password }) });
 }
 
-export function refreshTokens(refreshToken: string) {
+// refreshTokens passa o IP de quem pede: o auth só aceita um refresh token
+// acabado de rodar (pedidos em paralelo) se vier do mesmo IP.
+export function refreshTokens(refreshToken: string, clientIP?: string) {
   return authFetch("/v1/token/refresh", {
     method: "POST",
+    headers: clientIP ? { "X-Forwarded-For": clientIP } : {},
     body: JSON.stringify({ refresh_token: refreshToken }),
   });
 }

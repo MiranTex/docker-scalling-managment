@@ -3,7 +3,7 @@ import { login } from "@/lib/authClient";
 import { clientIP, isHttps, setSessionCookies } from "@/lib/session";
 
 export async function POST(req: Request) {
-  const { email, password } = await req.json();
+  const { email, password, remember } = await req.json();
   const authRes = await login(email, password, clientIP(req));
   const data = await authRes.json().catch(() => ({}));
   if (!authRes.ok) {
@@ -16,6 +16,6 @@ export async function POST(req: Request) {
   }
 
   const res = NextResponse.json({ ok: true });
-  setSessionCookies(res, data, isHttps(req), email);
+  setSessionCookies(res, data, isHttps(req), email, remember === true);
   return res;
 }

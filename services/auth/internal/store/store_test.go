@@ -279,7 +279,7 @@ func TestRefreshTokenLifecycle(t *testing.T) {
 		t.Fatalf("Issue: %v", err)
 	}
 
-	second, userID, err := manager.Rotate(ctx, first)
+	second, userID, err := manager.Rotate(ctx, first, "203.0.113.1")
 	if err != nil {
 		t.Fatalf("Rotate: %v", err)
 	}
@@ -287,12 +287,16 @@ func TestRefreshTokenLifecycle(t *testing.T) {
 		t.Fatalf("userID = %q, want %q", userID, user.ID)
 	}
 
-	// Reapresentar o token já rodado tem que ser tratado como reuso e
-	// revogar a família inteira -- inclusive `second`, que é legítimo.
-	if _, _, err := manager.Rotate(ctx, first); err != refresh.ErrReuseDetected {
+	// Logo a seguir, do mesmo IP (pedidos em paralelo): ainda serve.
+	if _, _, err := manager.Rotate(ctx, first, "203.0.113.1"); err != nil {
+		t.Fatalf("pedido paralelo dentro da margem: %v", err)
+	}
+	// Reapresentar o token já rodado de outro IP tem que ser tratado como
+	// reuso e revogar a família inteira -- inclusive `second`, que é legítimo.
+	if _, _, err := manager.Rotate(ctx, first, "198.51.100.7"); err != refresh.ErrReuseDetected {
 		t.Fatalf("esperava ErrReuseDetected, got %v", err)
 	}
-	if _, _, err := manager.Rotate(ctx, second); err == nil {
+	if _, _, err := manager.Rotate(ctx, second, "203.0.113.1"); err == nil {
 		t.Fatal("token legítimo devia ter sido revogado junto pela deteção de reuso")
 	}
 }
