@@ -205,6 +205,9 @@ func (s *Service) ServeAgent(ctx context.Context, node string, conn net.Conn, ve
 		}
 		c.mu.Unlock()
 	}
+	// O reconciliador vê já o nó de volta (ex: réplicas que o Docker dele
+	// repôs sem rede, ou que sobram porque já foram substituídas).
+	s.Kick()
 	tick := time.NewTicker(nodeHeartbeat)
 	defer tick.Stop()
 	for {

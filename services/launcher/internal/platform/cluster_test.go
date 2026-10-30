@@ -282,3 +282,33 @@ func TestLostNodeServesUntilReplacementsAreReady(t *testing.T) {
 		}
 	}
 }
+
+// Um nó sem sinal cujas réplicas já não respondem morreu mesmo: perde-se
+// aos deadAfter, sem esperar pelo nodeLossGrace. Se respondem (só o túnel
+// caiu), espera-se.
+func TestDeadNodeIsLostEarly(t *testing.T) {
+	ctx := context.Background()
+	svc, nodes := twoRemoteNodes(t)
+	svc.reconcileOnce(ctx)
+	victim := runningApps(nodes["node-1"])[0]
+	svc.agents.drop("node-1", nil)
+	svc.agents.mu.Lock()
+	svc.agents.watch.down["node-1"] = time.Now().Add(-deadAfter - time.Second)
+	svc.agents.mu.Unlock()
+
+	// As réplicas ainda respondem: continua só "sem sinal".
+	svc.reconcileOnce(ctx)
+	if got := runningApps(nodes["node-2"]); len(got) != 1 {
+		t.Fatalf("com as réplicas a responder, não se substitui ainda: node-2 %v", got)
+	}
+
+	// Deixam de responder: perdido já, e a substituta nasce no node-2.
+	svc.rt.observeSuspect(victim, false)
+	svc.reconcileOnce(ctx)
+	if got := runningApps(nodes["node-2"]); len(got) != 2 {
+		t.Fatalf("nó morto: node-2 %v, queria 2", got)
+	}
+	if l, _ := svc.agents.liveness("node-1", time.Now()); l != nodeLost {
+		t.Errorf("node-1 devia estar perdido")
+	}
+}

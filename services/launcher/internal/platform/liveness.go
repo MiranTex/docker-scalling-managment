@@ -36,7 +36,25 @@ const (
 	// lostKeep: quanto tempo depois de perdido um nó ainda se guardam as
 	// réplicas dele para o routing.
 	lostKeep = 10 * time.Minute
+	// deadAfter: um nó sem sinal cujas réplicas já não respondem pela
+	// overlay morreu mesmo -- não se espera pelo nodeLossGrace (esse prazo
+	// é para um túnel que cai com a máquina viva).
+	deadAfter = 15 * time.Second
 )
+
+// allUnready: há réplicas e nenhuma passa no health check (as dos
+// workers, que não se verificam, ficam como estavam -- prontas).
+func allUnready(rt *runtime, seen []dockerclient.Container) bool {
+	if len(seen) == 0 {
+		return false
+	}
+	for _, c := range seen {
+		if rt.isReady(containerName(c)) {
+			return false
+		}
+	}
+	return true
+}
 
 type liveness int
 
@@ -63,6 +81,9 @@ func (a *agents) liveness(node string, now time.Time) (liveness, time.Duration) 
 	defer a.mu.Unlock()
 	if a.m[node] != nil {
 		return nodeUp, 0
+	}
+	if a.watch.lost[node] {
+		return nodeLost, now.Sub(a.watch.down[node])
 	}
 	since, ok := a.watch.down[node]
 	if !ok {
@@ -125,7 +146,8 @@ func (s *Service) appReplicas(ctx context.Context, all bool) (out []dockerclient
 				s.rt.forget(containerName(c))
 			}
 			delete(w.seen, n.Name)
-		case now.Sub(since) >= nodeLossGrace:
+		case now.Sub(since) >= nodeLossGrace || w.lost[n.Name] ||
+			now.Sub(since) >= deadAfter && known && allUnready(s.rt, seen):
 			if !w.lost[n.Name] {
 				w.lost[n.Name] = true
 				s.logger.Warn("nó perdido -- as réplicas dele vão ser substituídas", "node", n.Name, "replicas", len(seen))

@@ -37,6 +37,20 @@ func TestScheduleChoosesAFittingNode(t *testing.T) {
 		}
 	}
 
+	// Espalhar: o nó com menos réplicas do serviço ganha, mesmo com menos
+	// memória livre.
+	spread := []candidate{
+		{Node: node("grande", "amd64", true), Online: true, Network: "cluster", Capacity: 32768, Siblings: 2},
+		{Node: node("pequeno", "amd64", true), Online: true, Network: "cluster", Capacity: 4096, Siblings: 1},
+	}
+	if got, _ := schedule(spread, placement{MemoryMB: 512}); got != "pequeno" {
+		t.Errorf("espalhar: %q, queria pequeno", got)
+	}
+	spread[1].Siblings = 2
+	if got, _ := schedule(spread, placement{MemoryMB: 512}); got != "grande" {
+		t.Errorf("empate em réplicas, decide a memória: %q, queria grande", got)
+	}
+
 	// Sem nenhum que sirva, o erro explica cada nó.
 	_, err := schedule(cands, placement{MemoryMB: 4000, Platforms: []string{"linux/amd64"}})
 	if !errors.Is(err, ErrNoNode) || strings.Contains(err.Error(), "quota") {

@@ -101,7 +101,9 @@ func waitForRoutes(dir string, s Settings) error {
 	}
 	pool.AppendCertsFromPEM(caPEM)
 	client := &http.Client{Timeout: 3 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool}}}
-	urls := []string{s.APIURL() + "/v1/projects", "https://" + s.RegistryHost() + "/v2/"}
+	// O /token do registry é servido pelo launcher: sem ele, um push ou
+	// pull logo a seguir ao up falha.
+	urls := []string{s.APIURL() + "/v1/projects", "https://" + s.RegistryHost() + "/v2/", "https://" + s.RegistryHost() + "/token"}
 	deadline := time.Now().Add(60 * time.Second)
 	for _, u := range urls {
 		for {
