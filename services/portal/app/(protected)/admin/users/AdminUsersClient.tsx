@@ -81,6 +81,20 @@ export default function AdminUsersClient() {
     setPwDone(true);
   }
 
+  // Desligar o 2FA de uma conta (ex: perdeu o telemóvel e os códigos de
+  // recuperação); volta a ativá-lo no próximo login, se for admin.
+  async function handleDisableMFA(user: AdminUser) {
+    if (!confirm(`Desligar o 2FA de ${user.email}? As sessões abertas desta conta são terminadas.`)) return;
+    setError(null);
+    const res = await fetch(`/api/admin/users/${encodeURIComponent(user.id)}/mfa`, { method: "DELETE" });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setError(authError(data, "não foi possível desligar o 2FA"));
+      return;
+    }
+    await loadUsers();
+  }
+
   async function handleRoleChange(id: string, newRole: string) {
     setError(null);
     setMintedTokens(null);
@@ -227,6 +241,7 @@ export default function AdminUsersClient() {
                 <th>Role</th>
                 <th>Criado</th>
                 <th>E-mail verificado</th>
+                <th>2FA</th>
                 <th>Ações</th>
               </tr>
             </thead>
@@ -249,6 +264,7 @@ export default function AdminUsersClient() {
                   </td>
                   <td>{new Date(u.created_at).toLocaleDateString("pt-PT")}</td>
                   <td>{u.email_verified_at ? "sim" : "não"}</td>
+                  <td>{u.mfa_enabled ? <span className="badge active">ativo</span> : <span className="muted">—</span>}</td>
                   <td className="row" style={{ gap: 6, flexWrap: "nowrap" }}>
                     {u.role !== "service" && (
                       <button
@@ -261,6 +277,11 @@ export default function AdminUsersClient() {
                         }}
                       >
                         Mudar password
+                      </button>
+                    )}
+                    {u.mfa_enabled && (
+                      <button className="secondary" onClick={() => handleDisableMFA(u)}>
+                        Desligar 2FA
                       </button>
                     )}
                     {u.role === "service" && (

@@ -20,6 +20,13 @@ export function isHttps(req: Request): boolean {
   return forwarded ? forwarded === "https" : new URL(req.url).protocol === "https:";
 }
 
+// clientIP: o IP real de quem pede (o Traefik põe-no no X-Forwarded-For; o
+// primeiro é o do cliente) -- para o auth abrandar quem adivinha passwords
+// e códigos.
+export function clientIP(req: Request): string | undefined {
+  return (req.headers.get("x-forwarded-for") ?? "").split(",")[0].trim() || req.headers.get("x-real-ip") || undefined;
+}
+
 export const ACCESS_COOKIE = "access_token";
 export const REFRESH_COOKIE = "refresh_token";
 export const EMAIL_COOKIE = "user_email";
