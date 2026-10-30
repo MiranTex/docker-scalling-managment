@@ -159,6 +159,8 @@ export type Service = {
   template?: TemplateRef;
   createdAt: string;
   updatedAt: string;
+  // Com utilizador, o serviço está protegido com password (basic auth).
+  basicAuthUser?: string;
 };
 
 export type Deployment = {

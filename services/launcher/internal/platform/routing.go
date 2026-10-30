@@ -58,8 +58,18 @@ type traefikMiddleware struct {
 		Scheme    string `json:"scheme"`
 		Permanent bool   `json:"permanent"`
 	} `json:"redirectScheme,omitempty"`
-	Retry   *traefikRetry   `json:"retry,omitempty"`
-	Headers *traefikHeaders `json:"headers,omitempty"`
+	Retry     *traefikRetry     `json:"retry,omitempty"`
+	Headers   *traefikHeaders   `json:"headers,omitempty"`
+	BasicAuth *traefikBasicAuth `json:"basicAuth,omitempty"`
+}
+
+// traefikBasicAuth: a proteção com password de um serviço (ver
+// basicauth.go). removeHeader: a app não recebe o Authorization -- a
+// password é da plataforma, não dela.
+type traefikBasicAuth struct {
+	Users        []string `json:"users"`
+	Realm        string   `json:"realm"`
+	RemoveHeader bool     `json:"removeHeader"`
 }
 
 // hstsMiddleware: com HTTPS, o browser passa a usar só HTTPS nos domínios
@@ -169,7 +179,7 @@ func hostRule(hosts []string) string {
 // buildRouting monta a configuração a partir do estado atual: só réplicas
 // da revisão atual, prontas e fora de drenagem, de serviços web ligados.
 func (s *Service) buildRouting(ctx context.Context) (traefikConfig, error) {
-	cfg := traefikConfig{HTTP: &traefikHTTP{Routers: map[string]traefikRouter{}, Services: map[string]traefikService{}}}
+	cfg := traefikConfig{HTTP: &traefikHTTP{Routers: map[string]traefikRouter{}, Services: map[string]traefikService{}, Middlewares: map[string]traefikMiddleware{}}}
 	services, err := s.db.ListAllServices(ctx)
 	if err != nil {
 		return cfg, err
@@ -233,15 +243,25 @@ func (s *Service) buildRouting(ctx context.Context) (traefikConfig, error) {
 		name := routerName(p, e, svc)
 		rule := hostRule(hosts)
 		cfg.HTTP.Services[name] = traefikService{LoadBalancer: traefikLB{Servers: servers, PassHostHeader: true}}
-		httpRouter := traefikRouter{Rule: rule, EntryPoints: []string{"web"}, Service: name, Middlewares: []string{retryMiddleware}}
+		// Com proteção, a password é pedida antes de tudo o resto (o retry
+		// não repete pedidos sem ela).
+		var protect []string
+		if svc.BasicAuthHash != "" {
+			mw := name + "-auth"
+			cfg.HTTP.Middlewares[mw] = traefikMiddleware{BasicAuth: &traefikBasicAuth{
+				Users: []string{svc.BasicAuthUser + ":" + svc.BasicAuthHash}, Realm: svc.Slug, RemoveHeader: true,
+			}}
+			protect = []string{mw}
+		}
+		httpRouter := traefikRouter{Rule: rule, EntryPoints: []string{"web"}, Service: name, Middlewares: append(protect, retryMiddleware)}
 		if s.cfg.TLSCertResolver != "" {
 			httpRouter.Middlewares = []string{redirectMiddleware}
-			cfg.HTTP.Routers[name+"-tls"] = traefikRouter{Rule: rule, EntryPoints: []string{"websecure"}, Service: name, Middlewares: []string{retryMiddleware, hstsMiddleware}, TLS: &traefikTLS{CertResolver: s.cfg.TLSCertResolver}}
+			cfg.HTTP.Routers[name+"-tls"] = traefikRouter{Rule: rule, EntryPoints: []string{"websecure"}, Service: name, Middlewares: append([]string{hstsMiddleware}, append(protect, retryMiddleware)...), TLS: &traefikTLS{CertResolver: s.cfg.TLSCertResolver}}
 		}
 		cfg.HTTP.Routers[name] = httpRouter
 	}
 	if len(cfg.HTTP.Routers) > 0 {
-		cfg.HTTP.Middlewares = map[string]traefikMiddleware{retryMiddleware: {Retry: &traefikRetry{Attempts: 3, InitialInterval: "100ms"}}}
+		cfg.HTTP.Middlewares[retryMiddleware] = traefikMiddleware{Retry: &traefikRetry{Attempts: 3, InitialInterval: "100ms"}}
 	}
 	if s.cfg.TLSCertResolver != "" && len(cfg.HTTP.Routers) > 0 {
 		var mw traefikMiddleware
