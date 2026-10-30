@@ -63,6 +63,12 @@ services:
       - --providers.docker.endpoint=tcp://docker-api-ro:2375
       - --providers.docker.exposedByDefault=false
       - --providers.docker.network=basestack-platform
+      # Um componente a reiniciar (ex: o launcher num up) fica com a rota e
+      # responde 503, em vez de a rota sumir e dar 404 enganador.
+      - --providers.docker.allowEmptyServices=true
+      # Desistir depressa de uma réplica que não atende (ex: o nó dela
+      # morreu): o retry do routing tenta outra.
+      - --serversTransport.forwardingTimeouts.dialTimeout=3s
       - --providers.file.directory=/etc/traefik/dynamic
       - --providers.file.watch=true
       - --entrypoints.web.address=:80

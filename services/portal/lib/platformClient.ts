@@ -203,6 +203,10 @@ export type NodeView = {
   agentVersion?: string;
   // "local", "cluster" (recebe apps) ou o motivo por que ainda não tem rede.
   network: string;
+  // "online", "sem sinal há Ns" ou "perdido".
+  status: string;
+  draining: boolean;
+  drain?: string;
 };
 
 export type NodeJoinToken = { token: string; expiresAt: string; caHash: string; command: string };

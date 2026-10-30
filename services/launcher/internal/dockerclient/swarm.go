@@ -39,6 +39,11 @@ func (c *Client) SwarmLeave(ctx context.Context) error {
 	return c.do(ctx, "POST", "/swarm/leave?force=true", nil, nil)
 }
 
+// InspectSwarmNode: erro se o manager não conhece o nó (só num manager).
+func (c *Client) InspectSwarmNode(ctx context.Context, id string) error {
+	return c.do(ctx, "GET", "/nodes/"+url.PathEscape(id), nil, nil)
+}
+
 // RemoveSwarmNode tira um nó da lista do manager (depois de ele sair).
 func (c *Client) RemoveSwarmNode(ctx context.Context, id string) error {
 	return c.do(ctx, "DELETE", "/nodes/"+url.PathEscape(id)+"?force=true", nil, nil)

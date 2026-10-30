@@ -91,7 +91,12 @@ type NodeView struct {
 	// motivo por que um nó remoto ainda não está na rede.
 	Network string `json:"network"`
 	// Online: o local dá sinal pelo launcher; um remoto, pelo agente ligado.
-	Online    bool    `json:"online"`
+	Online bool `json:"online"`
+	// Draining/Drain: a ser esvaziado agora; o estado do último esvaziar.
+	Draining bool   `json:"draining"`
+	Drain    string `json:"drain,omitempty"`
+	// Status: "online", "sem sinal há Ns" ou "perdido" (ver liveness.go).
+	Status    string  `json:"status"`
 	Allocated Usage   `json:"allocated"`
 	Replicas  int     `json:"replicas"`
 	Addons    int     `json:"addons"`
@@ -114,7 +119,8 @@ func (s *Service) ListNodes(ctx context.Context) ([]NodeView, error) {
 		if n.Kind == store.NodeAgent {
 			online = s.agents.get(n.Name) != nil
 		}
-		out[i] = NodeView{Node: n, Online: online, Capacity: s.nodeCapacityMB(n), Network: s.nodeNetwork(n)}
+		out[i] = NodeView{Node: n, Online: online, Status: s.nodeStatus(n), Capacity: s.nodeCapacityMB(n), Network: s.nodeNetwork(n)}
+		out[i].Draining, out[i].Drain = s.rt.nodeDrainState(n.Name)
 		byNode[n.Name] = &out[i]
 	}
 	for _, c := range containers {
@@ -217,11 +223,15 @@ type candidate struct {
 	Network   string
 	Allocated Usage
 	Capacity  float64
+	// Siblings: réplicas da mesma revisão que já correm neste nó.
+	Siblings int
 }
 
 // schedule escolhe o nó para uma réplica: online, a aceitar réplicas, com
-// a arquitetura da imagem e memória livre; entre esses, o com mais
-// memória livre. Sem nenhum, o erro diz porque cada um ficou de fora.
+// a arquitetura da imagem e memória livre; entre esses, o com menos
+// réplicas do mesmo serviço (espalhar: a morte de uma máquina não leva
+// todas) e, a seguir, o com mais memória livre. Sem nenhum, o erro diz
+// porque cada um ficou de fora.
 func schedule(cands []candidate, p placement) (string, error) {
 	var ok []candidate
 	var why []string
@@ -251,7 +261,12 @@ func schedule(cands []candidate, p placement) (string, error) {
 		return "", fmt.Errorf("%w: %s", ErrNoNode, strings.Join(why, "; "))
 	}
 	free := func(c candidate) float64 { return c.Capacity - float64(c.Allocated.MemoryMB) }
-	sort.SliceStable(ok, func(i, j int) bool { return free(ok[i]) > free(ok[j]) })
+	sort.SliceStable(ok, func(i, j int) bool {
+		if ok[i].Siblings != ok[j].Siblings {
+			return ok[i].Siblings < ok[j].Siblings
+		}
+		return free(ok[i]) > free(ok[j])
+	})
 	return ok[0].Node.Name, nil
 }
 
@@ -276,9 +291,17 @@ func (s *Service) placeReplica(ctx context.Context, rev store.Revision) (string,
 	if err != nil {
 		return "", err
 	}
+	siblings := map[string]int{}
+	if list, err := s.docker.ListContainers(ctx, false, map[string][]string{"label": {LabelRevision + "=" + rev.ID}}); err == nil {
+		for _, c := range list {
+			if _, draining := s.rt.drainDeadline(containerName(c)); !draining {
+				siblings[nodeOf(c)]++
+			}
+		}
+	}
 	cands := make([]candidate, len(nodes))
 	for i, n := range nodes {
-		cands[i] = candidate{Node: n.Node, Online: n.Online, Network: n.Network, Allocated: n.Allocated, Capacity: n.Capacity}
+		cands[i] = candidate{Node: n.Node, Online: n.Online, Network: n.Network, Allocated: n.Allocated, Capacity: n.Capacity, Siblings: siblings[n.Name]}
 	}
 	return schedule(cands, placement{VCPU: rev.VCPU, MemoryMB: rev.MemoryMB, Platforms: s.imagePlatforms(ctx, rev.Image)})
 }

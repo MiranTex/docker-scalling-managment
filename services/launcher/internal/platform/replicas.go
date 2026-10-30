@@ -2,6 +2,7 @@ package platform
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -32,6 +33,30 @@ const (
 // incluindo parados).
 func (s *Service) replicasOf(ctx context.Context, serviceID string) ([]dockerclient.Container, error) {
 	return s.docker.ListContainers(ctx, true, map[string][]string{"label": {LabelService + "=" + serviceID}})
+}
+
+// replicaAddr é por onde a plataforma (health checks, Traefik) chega a uma
+// réplica: o IP dela na rede do ambiente. O DNS de uma overlay entre nós
+// não é de confiança para containers soltos (um container que volta a
+// entrar na rede pode deixar de resolver os que já lá estavam noutros
+// nós); o IP não muda enquanto a réplica existir. Sem IP, o nome.
+func replicaAddr(c dockerclient.Container) string {
+	for _, raw := range c.NetworkSettings.Networks {
+		var ep struct {
+			IPAddress string `json:"IPAddress"`
+		}
+		if json.Unmarshal(raw, &ep) == nil && ep.IPAddress != "" {
+			return ep.IPAddress
+		}
+	}
+	return containerName(c)
+}
+
+// detached: a réplica corre mas não está em rede nenhuma (ex: o nó saiu
+// e voltou a entrar no swarm) -- nunca vai servir, substitui-se. Sem
+// informação de redes (nil) não se conclui nada.
+func detached(c dockerclient.Container) bool {
+	return c.NetworkSettings.Networks != nil && replicaAddr(c) == containerName(c)
 }
 
 func containerName(c dockerclient.Container) string {
@@ -229,7 +254,15 @@ func (s *Service) probeReplica(ctx context.Context, name string, rev store.Revis
 		}
 		return nil
 	}
-	return s.probe(ctx, name, rev.Port, rev.HealthPath)
+	// Pelo IP na rede do ambiente (ver replicaAddr).
+	host := name
+	for _, ep := range info.NetworkSettings.Networks {
+		if ep.IPAddress != "" {
+			host = ep.IPAddress
+			break
+		}
+	}
+	return s.probe(ctx, host, rev.Port, rev.HealthPath)
 }
 
 // defaultProbe é o health check real. Separado para os testes o poderem

@@ -108,6 +108,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /v1/nodes/{node}", platformAdmin(a.updateNode))
 	mux.HandleFunc("DELETE /v1/nodes/{node}", platformAdmin(a.deleteNode))
 	mux.HandleFunc("POST /v1/nodes/{node}/check", platformAdmin(a.checkNode))
+	mux.HandleFunc("POST /v1/nodes/{node}/drain", platformAdmin(a.drainNode))
 	mux.HandleFunc("POST /v1/nodes/join-tokens", platformAdmin(a.createJoinToken))
 	// Os agentes dos nós remotos (sem sessão de utilizador -- ver agents.go).
 	mux.HandleFunc("GET /v1/agent/ca", a.agentCA)

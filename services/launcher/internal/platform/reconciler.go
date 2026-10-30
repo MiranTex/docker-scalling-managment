@@ -116,9 +116,15 @@ func (s *Service) reconcileServices(ctx context.Context) {
 		s.logger.Error("reconciliador: listando serviços", "err", err)
 		return
 	}
-	containers, err := s.docker.ListContainers(ctx, true, map[string][]string{"label": {LabelRole + "=" + RoleApp}})
+	containers, unknown, err := s.appReplicas(ctx, true)
 	if err != nil {
 		s.logger.Error("reconciliador: listando réplicas", "err", err)
+		return
+	}
+	if unknown {
+		// Um nó remoto ainda não voltou depois do arranque: sem saber o que
+		// lá corre, criar réplicas agora era duplicá-las.
+		s.logger.Info("reconciliador: à espera dos nós remotos antes de mexer nas réplicas")
 		return
 	}
 	byService := map[string][]dockerclient.Container{}
@@ -145,6 +151,9 @@ func (s *Service) reconcileServices(ctx context.Context) {
 			continue
 		}
 		for _, c := range list {
+			if isPhantom(c) {
+				continue
+			}
 			s.logger.Info("reconciliador: réplica de serviço inexistente", "container", containerName(c))
 			s.stopAndRemove(ctx, containerName(c))
 		}

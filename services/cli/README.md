@@ -104,6 +104,26 @@ na mesma máquina. As redes dos ambientes que já existiam são migradas no
 
 Os addons ficam sempre na máquina da plataforma (os dados estão lá).
 
+**Quando um nó falha.** A plataforma só vê um nó pelo túnel do agente, e
+túnel em baixo não quer dizer réplicas perdidas:
+
+- até 60s sem sinal, as réplicas dele continuam a contar (nada se cria
+  noutro lado); as que não respondem ao health check (feito pela overlay,
+  que não depende do túnel) saem logo do routing, e um pedido que ainda
+  lá caia é repetido noutra réplica;
+- passados 60s o nó fica **perdido** e as réplicas dele renascem noutros
+  nós; se ele voltar, as que lá ficaram são as mais antigas e saem;
+- depois de reiniciar, a plataforma espera pelos nós (até 60s) antes de
+  mexer nas réplicas -- sem saber o que lá corre, criava duplicados.
+
+**Esvaziar** (portal, Nós) põe um nó em manutenção e muda as réplicas dele
+para outros, uma a uma, como num deploy -- para reiniciar ou atualizar a
+máquina sem cortar o serviço.
+
+Se cair a máquina da plataforma, cai o portal, a API, o Traefik e os
+addons: as apps nos nós continuam a correr, mas sem tráfego de fora. Isso
+é alta disponibilidade, uma fase à parte.
+
 ### Cluster de bolso (desenvolvimento)
 
 `scripts/cluster-dind.sh` monta uma plataforma em modo cluster e dois nós,

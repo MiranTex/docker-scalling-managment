@@ -132,7 +132,7 @@ func (f *fakeDocker) CreateContainer(_ context.Context, name string, req dockerc
 	}
 	f.created[name] = req
 	id := "cid-" + name
-	f.containers[id] = dockerclient.Container{ID: id, Names: []string{"/" + name}, Image: req.Image, State: "created", Labels: req.Labels}
+	f.containers[id] = dockerclient.Container{ID: id, Names: []string{"/" + name}, Image: req.Image, State: "created", Labels: req.Labels, Created: time.Now().UnixNano()}
 	if req.Labels[LabelRole] == RoleJob {
 		f.lastJobCmd = req.Cmd
 	}

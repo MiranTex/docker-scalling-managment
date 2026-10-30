@@ -105,6 +105,7 @@ type Docker interface {
 	SwarmJoin(ctx context.Context, advertise, manager, token string) error
 	SwarmLeave(ctx context.Context) error
 	RemoveSwarmNode(ctx context.Context, id string) error
+	InspectSwarmNode(ctx context.Context, id string) error
 }
 
 type Config struct {
@@ -190,7 +191,7 @@ func New(db *store.DB, docker Docker, box *secretbox.Box, cfg Config, logger *sl
 	if logger == nil {
 		logger = slog.Default()
 	}
-	ag := &agents{m: map[string]*agentConn{}}
+	ag := &agents{m: map[string]*agentConn{}, watch: newNodeWatch()}
 	return &Service{
 		db: db, docker: newClusterDocker(docker, ag), local: docker, box: box, cfg: cfg, logger: logger, rt: newRuntime(), agents: ag,
 		probe: defaultProbe, lookupHost: net.DefaultResolver.LookupHost,

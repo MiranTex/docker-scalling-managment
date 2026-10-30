@@ -18,8 +18,9 @@ type Container struct {
 	ID              string            `json:"Id"`
 	Names           []string          `json:"Names"`
 	Image           string            `json:"Image"`
-	State           string            `json:"State"`  // "running", "exited", ...
-	Status          string            `json:"Status"` // texto legível, ex: "Up 5 minutes"
+	State           string            `json:"State"`   // "running", "exited", ...
+	Status          string            `json:"Status"`  // texto legível, ex: "Up 5 minutes"
+	Created         int64             `json:"Created"` // unix
 	Labels          map[string]string `json:"Labels"`
 	NetworkSettings struct {
 		Networks map[string]json.RawMessage `json:"Networks"`
