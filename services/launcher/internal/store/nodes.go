@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -34,14 +35,60 @@ type Node struct {
 	LastSeenAt    time.Time `json:"lastSeenAt"`
 	Kind          string    `json:"kind"` // NodeLocal ou NodeAgent
 	AgentVersion  string    `json:"agentVersion,omitempty"`
+	// Labels: as etiquetas que um admin pôs; AutoLabels: as detetadas
+	// (ex: gpu=nvidia). O escalonador usa as duas (ver EffectiveLabels).
+	Labels     map[string]string `json:"labels"`
+	AutoLabels map[string]string `json:"autoLabels"`
 }
 
-const nodeColumns = `name, address, os, arch, cpus, memory_mb, docker_version, schedulable, created_at, last_seen_at, kind, agent_version`
+// EffectiveLabels: as detetadas mais as do admin (que ganham se a chave
+// for a mesma).
+func (n Node) EffectiveLabels() map[string]string {
+	out := make(map[string]string, len(n.Labels)+len(n.AutoLabels))
+	for k, v := range n.AutoLabels {
+		out[k] = v
+	}
+	for k, v := range n.Labels {
+		out[k] = v
+	}
+	return out
+}
+
+const nodeColumns = `name, address, os, arch, cpus, memory_mb, docker_version, schedulable, created_at, last_seen_at, kind, agent_version,
+	labels, auto_labels`
 
 func scanNode(row interface{ Scan(...any) error }) (Node, error) {
 	var n Node
-	err := row.Scan(&n.Name, &n.Address, &n.OS, &n.Arch, &n.CPUs, &n.MemoryMB, &n.DockerVersion, &n.Schedulable, &n.CreatedAt, &n.LastSeenAt, &n.Kind, &n.AgentVersion)
-	return n, err
+	var labels, auto []byte
+	err := row.Scan(&n.Name, &n.Address, &n.OS, &n.Arch, &n.CPUs, &n.MemoryMB, &n.DockerVersion, &n.Schedulable, &n.CreatedAt, &n.LastSeenAt, &n.Kind, &n.AgentVersion,
+		&labels, &auto)
+	if err != nil {
+		return n, err
+	}
+	if err := unmarshalLabels(map[*map[string]string][]byte{&n.Labels: labels, &n.AutoLabels: auto}); err != nil {
+		return n, err
+	}
+	return n, nil
+}
+
+func unmarshalLabels(fields map[*map[string]string][]byte) error {
+	for dst, raw := range fields {
+		if err := json.Unmarshal(raw, dst); err != nil {
+			return err
+		}
+		if *dst == nil {
+			*dst = map[string]string{}
+		}
+	}
+	return nil
+}
+
+func marshalLabels(m map[string]string) []byte {
+	if m == nil {
+		m = map[string]string{}
+	}
+	b, _ := json.Marshal(m)
+	return b
 }
 
 // PutNodeFacts regista um nó ou atualiza o que ele reporta (recursos,
@@ -49,11 +96,12 @@ func scanNode(row interface{ Scan(...any) error }) (Node, error) {
 // entra a aceitar réplicas e um que já existe mantém o que tinha.
 func (db *DB) PutNodeFacts(ctx context.Context, n Node) error {
 	_, err := db.sql.ExecContext(ctx, `
-		INSERT INTO launcher.nodes (name, address, os, arch, cpus, memory_mb, docker_version)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO launcher.nodes (name, address, os, arch, cpus, memory_mb, docker_version, auto_labels)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT (name) DO UPDATE SET address = EXCLUDED.address, os = EXCLUDED.os, arch = EXCLUDED.arch,
-			cpus = EXCLUDED.cpus, memory_mb = EXCLUDED.memory_mb, docker_version = EXCLUDED.docker_version, last_seen_at = now()`,
-		n.Name, n.Address, n.OS, n.Arch, n.CPUs, n.MemoryMB, n.DockerVersion)
+			cpus = EXCLUDED.cpus, memory_mb = EXCLUDED.memory_mb, docker_version = EXCLUDED.docker_version,
+			auto_labels = EXCLUDED.auto_labels, last_seen_at = now()`,
+		n.Name, n.Address, n.OS, n.Arch, n.CPUs, n.MemoryMB, n.DockerVersion, marshalLabels(n.AutoLabels))
 	if err != nil {
 		return fmt.Errorf("store: gravando nó %s: %w", n.Name, err)
 	}
@@ -96,13 +144,25 @@ func (db *DB) SetNodeSchedulable(ctx context.Context, name string, schedulable b
 	return nil
 }
 
+// SetNodeLabels troca as etiquetas que um admin pôs no nó.
+func (db *DB) SetNodeLabels(ctx context.Context, name string, labels map[string]string) error {
+	res, err := db.sql.ExecContext(ctx, `UPDATE launcher.nodes SET labels = $2 WHERE name = $1`, name, marshalLabels(labels))
+	if err != nil {
+		return fmt.Errorf("store: etiquetas do nó %s: %w", name, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNodeNotFound
+	}
+	return nil
+}
+
 // UpdateNodeFacts atualiza o que um nó que já existe reporta, e o
 // last_seen_at.
 func (db *DB) UpdateNodeFacts(ctx context.Context, n Node) error {
 	res, err := db.sql.ExecContext(ctx, `
 		UPDATE launcher.nodes SET address = $2, os = $3, arch = $4, cpus = $5, memory_mb = $6, docker_version = $7,
-			agent_version = $8, last_seen_at = now() WHERE name = $1`,
-		n.Name, n.Address, n.OS, n.Arch, n.CPUs, n.MemoryMB, n.DockerVersion, n.AgentVersion)
+			agent_version = $8, auto_labels = $9, last_seen_at = now() WHERE name = $1`,
+		n.Name, n.Address, n.OS, n.Arch, n.CPUs, n.MemoryMB, n.DockerVersion, n.AgentVersion, marshalLabels(n.AutoLabels))
 	if err != nil {
 		return fmt.Errorf("store: atualizando nó %s: %w", n.Name, err)
 	}

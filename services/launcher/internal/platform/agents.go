@@ -191,7 +191,7 @@ func (s *Service) ServeAgent(ctx context.Context, node string, conn net.Conn, ve
 		}
 		_ = s.db.UpdateNodeFacts(ctx, store.Node{
 			Name: node, Address: address, OS: info.OSType, Arch: normalArch(info.Architecture), CPUs: info.NCPU,
-			MemoryMB: info.MemTotal >> 20, DockerVersion: info.ServerVersion, AgentVersion: version,
+			MemoryMB: info.MemTotal >> 20, DockerVersion: info.ServerVersion, AgentVersion: version, AutoLabels: detectLabels(info),
 		})
 	}
 	report()

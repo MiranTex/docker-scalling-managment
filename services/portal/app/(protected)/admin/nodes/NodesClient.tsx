@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import Modal from "@/components/Modal";
 import PageHeader from "@/components/PageHeader";
 import { api, type NodeCheck, type NodeJoinToken, type NodeView } from "@/lib/platformClient";
+import { formatLabels, parseLabels } from "@/lib/labels";
 
 const gb = (mb: number) => `${(mb / 1024).toFixed(1)} GB`;
 
@@ -16,6 +17,7 @@ export default function NodesClient() {
   const [busy, setBusy] = useState<string | null>(null);
   const [join, setJoin] = useState<NodeJoinToken | null>(null);
   const [check, setCheck] = useState<{ node: string; result: NodeCheck | null } | null>(null);
+  const [editLabels, setEditLabels] = useState<{ node: NodeView; text: string; error: string | null } | null>(null);
 
   async function load() {
     try {
@@ -42,6 +44,19 @@ export default function NodesClient() {
       setError((e as Error).message);
     } finally {
       setBusy(null);
+    }
+  }
+
+  async function saveLabels(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editLabels) return;
+    try {
+      const labels = parseLabels(editLabels.text);
+      await api(`nodes/${encodeURIComponent(editLabels.node.name)}`, { method: "PATCH", body: JSON.stringify({ labels }) });
+      setEditLabels(null);
+      await load();
+    } catch (err) {
+      setEditLabels({ ...editLabels, error: (err as Error).message });
     }
   }
 
@@ -126,6 +141,22 @@ export default function NodesClient() {
                   <tr key={n.name}>
                     <td>
                       <strong>{n.name}</strong>
+                      {(Object.keys(n.autoLabels ?? {}).length > 0 || Object.keys(n.labels ?? {}).length > 0) && (
+                        <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 4 }}>
+                          {Object.entries(n.autoLabels ?? {})
+                            .filter(([k]) => !(k in (n.labels ?? {})))
+                            .map(([k, v]) => (
+                              <span key={k} className="badge label" title="Detetada pela plataforma" style={{ fontStyle: "italic" }}>
+                                {k}={v}
+                              </span>
+                            ))}
+                          {Object.entries(n.labels ?? {}).map(([k, v]) => (
+                            <span key={k} className="badge label">
+                              {k}={v}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                       {n.drain && !n.draining && <div className="muted">{n.drain}</div>}
                       {n.address && (
                         <div className="muted">
@@ -186,6 +217,13 @@ export default function NodesClient() {
                       <button className="secondary" disabled={!n.online} onClick={() => runCheck(n)} title="Corre um container pequeno no nó">
                         Testar
                       </button>
+                      <button
+                        className="secondary"
+                        onClick={() => setEditLabels({ node: n, text: formatLabels(n.labels, "\n"), error: null })}
+                        title="As réplicas de serviços que exigem etiquetas só vão para nós que as tenham"
+                      >
+                        Etiquetas
+                      </button>
                       {n.schedulable ? (
                         <button className="secondary" disabled={busy === n.name} onClick={() => setSchedulable(n, false)}>
                           Manutenção
@@ -223,6 +261,38 @@ export default function NodesClient() {
       </div>
 
       {join && <JoinModal join={join} onClose={() => { setJoin(null); load(); }} />}
+
+      {editLabels && (
+        <Modal title={`Etiquetas de ${editLabels.node.name}`} onClose={() => setEditLabels(null)}>
+          <p className="muted">
+            Um serviço que exija etiquetas (na Configuração dele) só recebe réplicas em nós que tenham todas. Mudar aqui não
+            move as réplicas que já correm.
+          </p>
+          {Object.keys(editLabels.node.autoLabels ?? {}).length > 0 && (
+            <p>
+              Detetadas pela plataforma: <code>{formatLabels(editLabels.node.autoLabels)}</code>
+            </p>
+          )}
+          {editLabels.error && <div className="error">{editLabels.error}</div>}
+          <form onSubmit={saveLabels}>
+            <label htmlFor="node-labels">Uma por linha, chave=valor (ex: disco=ssd)</label>
+            <textarea
+              id="node-labels"
+              rows={5}
+              value={editLabels.text}
+              onChange={(e) => setEditLabels({ ...editLabels, text: e.target.value })}
+            />
+            <div className="row">
+              <button className="primary" type="submit">
+                Guardar
+              </button>
+              <button className="secondary" type="button" onClick={() => setEditLabels(null)}>
+                Cancelar
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
 
       {check && (
         <Modal title={`Testar ${check.node}`} onClose={() => setCheck(null)}>
