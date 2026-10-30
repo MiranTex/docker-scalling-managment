@@ -24,9 +24,9 @@ cli-linux:
 PREFIX ?= /usr/local
 install-cli: cli
 	@mkdir -p "$(PREFIX)/bin" 2>/dev/null || sudo mkdir -p "$(PREFIX)/bin"
-	@if [ -w "$(PREFIX)/bin" ]; then install -m 0755 bin/bs "$(PREFIX)/bin/bs"; \
-	else echo "A instalar em $(PREFIX)/bin com sudo"; sudo install -m 0755 bin/bs "$(PREFIX)/bin/bs"; fi
-	@echo "bs instalado em $(PREFIX)/bin/bs -- experimenta: bs projects"
+	@if [ -w "$(PREFIX)/bin" ]; then install -m 0755 bin/bs "$(PREFIX)/bin/bs" && ln -sf bs "$(PREFIX)/bin/docker-credential-basestack"; \
+	else echo "A instalar em $(PREFIX)/bin com sudo"; sudo install -m 0755 bin/bs "$(PREFIX)/bin/bs" && sudo ln -sf bs "$(PREFIX)/bin/docker-credential-basestack"; fi
+	@echo "bs instalado em $(PREFIX)/bin/bs (e o helper do docker ao lado) -- experimenta: bs login"
 
 # basestack instala e gere a plataforma numa máquina (ver
 # services/cli/README.md); é para quem opera, o bs para quem usa.

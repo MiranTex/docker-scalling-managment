@@ -153,15 +153,8 @@ func setupDockerHelper(registry string) error {
 	if exe, err = filepath.EvalSymlinks(exe); err != nil {
 		return err
 	}
-	link := filepath.Join(filepath.Dir(exe), "docker-credential-"+helperName)
-	if target, err := os.Readlink(link); err != nil || target != exe {
-		_ = os.Remove(link)
-		if err := os.Symlink(exe, link); err != nil {
-			return fmt.Errorf("criando %s: %w", link, err)
-		}
-	}
-	if _, err := exec.LookPath("docker-credential-" + helperName); err != nil {
-		return fmt.Errorf("%s não está no PATH", filepath.Dir(exe))
+	if err := ensureHelperLink(exe); err != nil {
+		return err
 	}
 	dir := os.Getenv("DOCKER_CONFIG")
 	if dir == "" {
@@ -172,6 +165,37 @@ func setupDockerHelper(registry string) error {
 		dir = filepath.Join(h, ".docker")
 	}
 	return registerCredHelper(dir, registry)
+}
+
+// ensureHelperLink põe docker-credential-basestack (uma ligação ao bs)
+// numa pasta do PATH: a do bs, ou -- se essa pedir root -- uma do
+// utilizador (~/.local/bin, ~/bin).
+func ensureHelperLink(exe string) error {
+	name := "docker-credential-" + helperName
+	if found, err := exec.LookPath(name); err == nil {
+		if target, err := filepath.EvalSymlinks(found); err == nil && target == exe {
+			return nil
+		}
+	}
+	dirs := []string{filepath.Dir(exe)}
+	if h, err := os.UserHomeDir(); err == nil {
+		dirs = append(dirs, filepath.Join(h, ".local", "bin"), filepath.Join(h, "bin"))
+	}
+	inPath := map[string]bool{}
+	for _, d := range filepath.SplitList(os.Getenv("PATH")) {
+		inPath[filepath.Clean(d)] = true
+	}
+	for _, d := range dirs {
+		if !inPath[filepath.Clean(d)] {
+			continue
+		}
+		link := filepath.Join(d, name)
+		_ = os.Remove(link)
+		if err := os.Symlink(exe, link); err == nil {
+			return nil
+		}
+	}
+	return fmt.Errorf("sem uma pasta do PATH onde escrever -- corre: sudo ln -sf %s %s", exe, filepath.Join(filepath.Dir(exe), name))
 }
 
 // registerCredHelper põe credHelpers[registry] = basestack no config.json
