@@ -61,18 +61,10 @@ func saveConfig(c config) (string, error) {
 	return p, os.WriteFile(p, append(raw, '\n'), 0o600)
 }
 
-func cmdLogin(args []string) error {
-	if len(args) > 0 {
-		return fmt.Errorf("bs login não leva argumentos")
-	}
+// loginWithKey é o login antigo: o URL e uma API key colada (bs login
+// --api-key) -- para scripts ou quando não há browser.
+func loginWithKey(apiURL string) error {
 	in := bufio.NewReader(os.Stdin)
-	def := "http://api.127.0.0.1.nip.io"
-	fmt.Printf("URL da API [%s]: ", def)
-	line, _ := in.ReadString('\n')
-	apiURL := strings.TrimRight(strings.TrimSpace(line), "/")
-	if apiURL == "" {
-		apiURL = def
-	}
 	fmt.Print("API key (ak_..., com o scope \"platform\"): ")
 	var token string
 	if term.IsTerminal(int(os.Stdin.Fd())) {
@@ -86,7 +78,12 @@ func cmdLogin(args []string) error {
 		line, _ := in.ReadString('\n')
 		token = strings.TrimSpace(line)
 	}
-	c := config{APIURL: apiURL, Token: token}
+	return finishLogin(config{APIURL: apiURL, Token: token})
+}
+
+// finishLogin confirma a key na API, guarda a configuração e põe o docker
+// desta máquina a usá-la no registry da plataforma.
+func finishLogin(c config) error {
 	var projects []struct {
 		Slug string `json:"slug"`
 	}
@@ -98,5 +95,12 @@ func cmdLogin(args []string) error {
 		return err
 	}
 	fmt.Printf("Sessão guardada em %s (%d projeto(s) visível(eis)).\n", p, len(projects))
+	if registry := registryOf(c.APIURL); registry != "" {
+		if err := setupDockerHelper(registry); err != nil {
+			fmt.Printf("Aviso: o docker não ficou configurado para %s (%v).\n", registry, err)
+		} else {
+			fmt.Printf("docker push/pull em %s usam esta sessão (sem docker login).\n", registry)
+		}
+	}
 	return nil
 }

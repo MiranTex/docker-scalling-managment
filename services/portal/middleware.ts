@@ -39,7 +39,8 @@ export async function middleware(req: NextRequest) {
     return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
   }
   const loginUrl = new URL("/login", req.url);
-  loginUrl.searchParams.set("from", req.nextUrl.pathname);
+  // A página e a query (ex: /cli-login?code=...), para voltar lá depois.
+  loginUrl.searchParams.set("from", req.nextUrl.pathname + req.nextUrl.search);
   const redirect = NextResponse.redirect(loginUrl);
   clearSessionCookies(redirect);
   return redirect;
@@ -52,6 +53,7 @@ export const config = {
     "/admin/:path*",
     "/projects/:path*",
     "/metrics/:path*",
+    "/cli-login",
     "/api/tokens/:path*",
     "/api/admin/:path*",
     "/api/platform/:path*",

@@ -55,6 +55,7 @@ type API struct {
 	term     *terminals
 	registry *registryTokens
 	agents   *agentSettings
+	cli      *cliLogins
 	dial     dialer
 	audit    *audit.Logger
 	logger   *slog.Logger
@@ -64,7 +65,7 @@ func New(svc *platform.Service, tokens TokenVerifier, apiKeys APIKeys, users Use
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &API{svc: svc, tokens: tokens, apiKeys: apiKeys, users: users, term: newTerminals(), dial: (&net.Dialer{}).DialContext, audit: audit.NewLogger(logger), logger: logger}
+	return &API{svc: svc, tokens: tokens, apiKeys: apiKeys, users: users, term: newTerminals(), dial: (&net.Dialer{}).DialContext, audit: audit.NewLogger(logger), logger: logger, cli: newCLILogins()}
 }
 
 // Register acrescenta as rotas a um mux existente (o do httpapi), para o
@@ -111,6 +112,12 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/nodes/{node}/drain", platformAdmin(a.drainNode))
 	mux.HandleFunc("POST /v1/nodes/join-tokens", platformAdmin(a.createJoinToken))
 	// Os agentes dos nós remotos (sem sessão de utilizador -- ver agents.go).
+	// Login da CLI pelo browser (ver clilogin.go): o bs começa e pergunta
+	// sem sessão; a página do portal autoriza com a sessão de quem entrou.
+	mux.HandleFunc("POST /v1/cli/login", a.cliLoginStart)
+	mux.HandleFunc("POST /v1/cli/login/poll", a.cliLoginPoll)
+	mux.HandleFunc("GET /v1/cli/login/{code}", a.requireUser(a.cliLoginGet))
+	mux.HandleFunc("POST /v1/cli/login/{code}/approve", a.requireUser(a.cliLoginApprove))
 	mux.HandleFunc("GET /v1/agent/ca", a.agentCA)
 	mux.HandleFunc("POST /v1/agent/join", a.agentJoin)
 	mux.HandleFunc("GET /v1/agent/connect", a.agentConnect)

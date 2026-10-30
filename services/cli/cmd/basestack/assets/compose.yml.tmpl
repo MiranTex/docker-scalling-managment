@@ -238,18 +238,21 @@ services:
       LAUNCHER_PUBLIC_API_URL: "https://api.{{.Domain}}"
       LAUNCHER_AGENT_IMAGE: "{{.RegistryHost}}/basestack/agent:{{.Version}}"
       # Cluster: swarm + redes overlay entre os nós (basestack set cluster on).
+      # O portal: a página onde se autoriza o login da CLI pelo browser.
+      LAUNCHER_PORTAL_URL: "{{.PortalURL}}"
       LAUNCHER_CLUSTER: "{{.Cluster}}"
       LAUNCHER_ADVERTISE_ADDR: "{{.AdvertiseAddr}}"
       LAUNCHER_TRAEFIK_CERTIFICATES: "/etc/traefik/tls/{{.TLS.RegistryCert}}:/etc/traefik/tls/{{.TLS.RegistryKey}}"
     labels:
       base-stack.managed: "true"
-      # A API de plataforma (CLI bs, CI) em api.<domínio> -- só /v1/projects.
+      # A API de plataforma (CLI bs, CI) em api.<domínio> -- só /v1/projects
+      # e /v1/cli (login da CLI pelo browser).
       traefik.enable: "true"
       traefik.docker.network: basestack-platform
-      traefik.http.routers.platform-api.rule: "Host(`api.{{.Domain}}`) && PathPrefix(`/v1/projects`)"
+      traefik.http.routers.platform-api.rule: "Host(`api.{{.Domain}}`) && (PathPrefix(`/v1/projects`) || PathPrefix(`/v1/cli`))"
       traefik.http.routers.platform-api.entrypoints: web
       traefik.http.routers.platform-api.service: platform-api
-      traefik.http.routers.platform-api-tls.rule: "Host(`api.{{.Domain}}`) && PathPrefix(`/v1/projects`)"
+      traefik.http.routers.platform-api-tls.rule: "Host(`api.{{.Domain}}`) && (PathPrefix(`/v1/projects`) || PathPrefix(`/v1/cli`))"
       traefik.http.routers.platform-api-tls.entrypoints: websecure
       traefik.http.routers.platform-api-tls.service: platform-api
       traefik.http.routers.platform-api-tls.tls: "true"

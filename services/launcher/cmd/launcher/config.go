@@ -117,6 +117,8 @@ type config struct {
 	// advertiseAddr: o IP desta máquina na rede, para os nós.
 	cluster       bool
 	advertiseAddr string
+	// portalURL: onde está o portal (a página do login da CLI pelo browser).
+	portalURL string
 	// traefikCertificates: "cert:key" separados por vírgula, caminhos vistos
 	// pelo Traefik -- entram no routing (ex: o certificado do registry).
 	traefikCertificates []platform.TLSCertificate
@@ -183,6 +185,7 @@ func loadConfig() config {
 		agentImage:           os.Getenv("LAUNCHER_AGENT_IMAGE"),
 		cluster:              os.Getenv("LAUNCHER_CLUSTER") == "true",
 		advertiseAddr:        os.Getenv("LAUNCHER_ADVERTISE_ADDR"),
+		portalURL:            os.Getenv("LAUNCHER_PORTAL_URL"),
 	}
 	for _, pair := range envList("LAUNCHER_TRAEFIK_CERTIFICATES") {
 		cert, key, ok := strings.Cut(pair, ":")
