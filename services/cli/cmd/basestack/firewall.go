@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bs/internal/trust"
 	"bufio"
 	"encoding/json"
 	"errors"
@@ -93,12 +94,12 @@ func offerFirewall(role firewallRole) (bool, error) {
 		return false, nil
 	}
 	script := ufwScript(role, cidr)
-	fmt.Printf("\nA ufw está ativa: a rede do cluster precisa destas regras (só para %s):\n\n%s\n", cidr, indent(strings.TrimPrefix(script, "set -e\n")))
+	fmt.Printf("\nA ufw está ativa: a rede do cluster precisa destas regras (só para %s):\n\n%s\n", cidr, trust.Indent(strings.TrimPrefix(script, "set -e\n")))
 	var cmd *exec.Cmd
 	switch {
 	case os.Geteuid() == 0:
 		cmd = exec.Command("sh", "-c", script)
-	case isTerminal(os.Stdin):
+	case trust.IsTerminal(os.Stdin):
 		fmt.Print("Aplicar agora com sudo? [s/N] ")
 		line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
 		if a := strings.ToLower(strings.TrimSpace(line)); a != "s" && a != "sim" && a != "y" && a != "yes" {

@@ -1,23 +1,16 @@
 package main
 
 import (
-	"bufio"
-	"crypto/sha256"
-	"crypto/tls"
-	"encoding/hex"
-	"encoding/pem"
+	"bs/internal/trust"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
-	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
-	"time"
 )
 
 // O basestack chega às outras máquinas pela imagem basestack/cli no
@@ -228,79 +221,33 @@ func cmdTrust(args []string) error {
 		return err
 	}
 	u, err := url.Parse(apiURL)
-	if err != nil || u.Scheme != "https" || !strings.HasPrefix(u.Host, "api.") {
+	if err != nil || !strings.HasPrefix(u.Host, "api.") {
 		return errors.New("o URL é o da API da plataforma: https://api.<domínio>")
 	}
 	registry := "registry." + strings.TrimPrefix(u.Hostname(), "api.")
 
 	var caPEM []byte
 	if *want != "" {
-		if caPEM, err = fetchCA(apiURL, *want); err != nil {
+		if caPEM, err = trust.FetchVerified(apiURL, *want); err != nil {
 			return err
 		}
 	} else {
-		raw, hash, err := fetchCAUnverified(apiURL)
+		raw, hash, err := trust.Fetch(apiURL)
 		if err != nil {
 			return err
 		}
 		fmt.Printf("A CA de %s tem a impressão digital:\n    %s\nConfere-a na máquina da plataforma (Nós > Adicionar nó mostra-a em --ca).\n", apiURL, hash)
-		if !isTerminal(os.Stdin) {
+		if !trust.IsTerminal(os.Stdin) {
 			return errors.New("sem terminal para confirmar: repete com --ca " + hash)
 		}
-		fmt.Print("Confiar nela? [s/N] ")
-		line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
-		if a := strings.ToLower(strings.TrimSpace(line)); a != "s" && a != "sim" && a != "y" && a != "yes" {
+		if !trust.Confirm("Confiar nela?") {
 			return errors.New("cancelado")
 		}
 		caPEM = raw
 	}
-
-	switch runtime.GOOS {
-	case "darwin":
-		h, err := os.UserHomeDir()
-		if err != nil {
-			return err
-		}
-		path := filepath.Join(h, ".docker", "certs.d", registry, "ca.crt")
-		if err := writeFile(path, caPEM, 0o644); err != nil {
-			return err
-		}
-		fmt.Printf("CA instalada em %s.\n  Reinicia o Docker Desktop uma vez para ele confiar em %s.\n", path, registry)
-	case "linux":
-		f, err := os.CreateTemp("", "basestack-ca-*.crt")
-		if err != nil {
-			return err
-		}
-		defer os.Remove(f.Name())
-		if _, err := f.Write(caPEM); err != nil {
-			return err
-		}
-		f.Close()
-		_ = os.Chmod(f.Name(), 0o644)
-		if err := trustOnLinux(f.Name(), registry); err != nil {
-			return err
-		}
-	default:
-		return fmt.Errorf("instala à mão a CA de %s no docker desta máquina", registry)
+	if err := trust.Install(caPEM, registry); err != nil {
+		return err
 	}
-	fmt.Printf("A seguir: docker login %s (o teu email e uma API key dessa plataforma).\n", registry)
+	fmt.Printf("A seguir: bs login %s (ou docker login %s)\n", apiURL, registry)
 	return nil
-}
-
-// fetchCAUnverified busca a CA sem a conferir (para mostrar a impressão
-// digital a quem a vai confirmar).
-func fetchCAUnverified(apiURL string) ([]byte, string, error) {
-	insecure := &http.Client{Timeout: 15 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}}
-	resp, err := insecure.Get(apiURL + "/v1/agent/ca")
-	if err != nil {
-		return nil, "", fmt.Errorf("ligando a %s: %w", apiURL, err)
-	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(resp.Body)
-	b, _ := pem.Decode(raw)
-	if resp.StatusCode != http.StatusOK || b == nil {
-		return nil, "", fmt.Errorf("%s não devolveu a CA da plataforma (%d)", apiURL, resp.StatusCode)
-	}
-	sum := sha256.Sum256(b.Bytes)
-	return raw, "sha256:" + hex.EncodeToString(sum[:]), nil
 }

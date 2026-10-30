@@ -1,13 +1,11 @@
 package main
 
 import (
+	"bs/internal/trust"
 	"bytes"
-	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/hex"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"flag"
 	"fmt"
@@ -140,7 +138,7 @@ func nodeJoin(args []string) error {
 
 	// 1. A CA: buscada sem verificar e conferida pela impressão digital
 	// que veio do portal -- a partir daqui, só se fala com quem a tem.
-	caPEM, err := fetchCA(apiURL, *caHash)
+	caPEM, err := trust.FetchVerified(apiURL, *caHash)
 	if err != nil {
 		return err
 	}
@@ -181,7 +179,7 @@ func nodeJoin(args []string) error {
 	// buscar o agente e, mais tarde, as apps), e a firewall tem de deixar
 	// passar a rede do cluster.
 	if runtime.GOOS == "linux" {
-		if err := trustOnLinux(filepath.Join(dir, "ca.crt"), n.Registry); err != nil {
+		if err := trust.InstallLinux(filepath.Join(dir, "ca.crt"), n.Registry); err != nil {
 			return err
 		}
 		if ufwActive() {
@@ -196,25 +194,6 @@ func nodeJoin(args []string) error {
 		}
 	}
 	return startAgent(n, dir)
-}
-
-func fetchCA(apiURL, want string) ([]byte, error) {
-	insecure := &http.Client{Timeout: 15 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}}
-	resp, err := insecure.Get(apiURL + "/v1/agent/ca")
-	if err != nil {
-		return nil, fmt.Errorf("ligando a %s: %w", apiURL, err)
-	}
-	defer resp.Body.Close()
-	caPEM, _ := io.ReadAll(resp.Body)
-	b, _ := pem.Decode(caPEM)
-	if resp.StatusCode != http.StatusOK || b == nil {
-		return nil, fmt.Errorf("%s não devolveu a CA da plataforma (%d)", apiURL, resp.StatusCode)
-	}
-	sum := sha256.Sum256(b.Bytes)
-	if got := "sha256:" + hex.EncodeToString(sum[:]); got != want {
-		return nil, fmt.Errorf("a CA de %s não é a esperada (%s, queria %s) -- o URL está certo? alguém no meio?", apiURL, got, want)
-	}
-	return caPEM, nil
 }
 
 // clientWithCA confia nas CAs do sistema (domínio público) e na da

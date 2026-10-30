@@ -9,7 +9,7 @@ import { api } from "@/lib/platformClient";
 // pessoa, com o scope "platform", e aparece em Tokens (revoga-se lá).
 const KEY_TTL_SECONDS = 90 * 24 * 3600;
 
-type Pending = { name: string; expiresAt: string; approved: boolean };
+type Pending = { name: string; expiresAt: string; approved: boolean; caHash?: string };
 
 export default function CLILoginClient({ code }: { code: string }) {
   const [pending, setPending] = useState<Pending | null>(null);
@@ -68,6 +68,12 @@ export default function CLILoginClient({ code }: { code: string }) {
               <p className="muted">
                 Se não foste tu a pedir isto no terminal, não autorizes: daria acesso a todos os teus projetos.
               </p>
+              {pending.caHash && (
+                <p className="muted" style={{ wordBreak: "break-all" }}>
+                  Se o terminal perguntar se deve confiar na CA do registry, a impressão digital certa é:{" "}
+                  <code>{pending.caHash}</code>
+                </p>
+              )}
               <button className="primary" disabled={state === "busy"} onClick={approve}>
                 {state === "busy" ? "A autorizar..." : "Autorizar"}
               </button>

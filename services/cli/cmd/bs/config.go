@@ -6,10 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"golang.org/x/term"
+
+	"bs/internal/trust"
 )
 
 type config struct {
@@ -101,6 +104,36 @@ func finishLogin(c config) error {
 		} else {
 			fmt.Printf("docker push/pull em %s usam esta sessão (sem docker login).\n", registry)
 		}
+		offerTrust(c.APIURL, registry)
 	}
 	return nil
+}
+
+// offerTrust: se o docker desta máquina ainda não confia no registry da
+// plataforma (a CA da instalação), mostra a impressão digital -- a mesma
+// da página de autorização no portal -- e oferece-se para a instalar.
+func offerTrust(apiURL, registry string) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		return // sem docker, não há o que configurar
+	}
+	caPEM, hash, err := trust.Fetch(apiURL)
+	if err != nil {
+		// Ex: um domínio público com Let's Encrypt, sem CA própria a servir.
+		return
+	}
+	if trust.Trusted(caPEM, registry) {
+		return
+	}
+	fmt.Printf("\nO docker desta máquina ainda não confia no registry %s.\nImpressão digital da CA da plataforma (confere com a do portal):\n    %s\n", registry, hash)
+	if !trust.IsTerminal(os.Stdin) {
+		fmt.Println("Sem terminal para confirmar -- mais tarde: bs login outra vez (ou basestack trust).")
+		return
+	}
+	if !trust.Confirm("Confiar nela?") {
+		fmt.Println("Ficou por fazer: docker push/pull vão recusar o HTTPS do registry.")
+		return
+	}
+	if err := trust.Install(caPEM, registry); err != nil {
+		fmt.Printf("Aviso: %v\n", err)
+	}
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bs/internal/trust"
 	"bytes"
 	"crypto/x509"
 	"flag"
@@ -176,7 +177,7 @@ func TestLinuxTrustScript(t *testing.T) {
 	if _, err := ensureTLS(dir, testSettings()); err != nil {
 		t.Fatal(err)
 	}
-	script, err := linuxTrust(filepath.Join(dir, "tls", "ca.crt"), "registry.example.test")
+	script, err := trust.LinuxScript(filepath.Join(dir, "tls", "ca.crt"), "registry.example.test")
 	if err != nil {
 		t.Fatal(err)
 	}
