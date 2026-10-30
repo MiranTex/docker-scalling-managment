@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -72,7 +73,7 @@ func loadNode() (nodeFile, string, error) {
 }
 
 func cmdNode(args []string) error {
-	usage := errors.New("uso: basestack node token | join <url> --token bsj_... --ca sha256:... [--name <nome>] | start | status | leave")
+	usage := errors.New("uso: basestack node token | join <url> --token bsj_... --ca sha256:... [--name <nome>] | set-api <url> | start | status | leave")
 	if len(args) == 0 {
 		return usage
 	}
@@ -95,6 +96,11 @@ func cmdNode(args []string) error {
 		return startAgent(n, dir)
 	case "status":
 		return nodeStatus()
+	case "set-api":
+		if len(args) != 2 {
+			return errors.New("uso: basestack node set-api https://api.<domínio novo>")
+		}
+		return nodeSetAPI(args[1])
 	case "leave":
 		return nodeLeave()
 	}
@@ -250,6 +256,39 @@ func startAgent(n nodeFile, dir string) error {
 		}
 	}
 	return fmt.Errorf("o agente arrancou mas ainda não se ligou -- vê: docker logs %s", agentContainer)
+}
+
+// nodeSetAPI muda o endereço da plataforma neste nó (ex: a plataforma
+// passou a um domínio público): a API, o registry e a imagem do agente
+// seguem-no, e o agente religa-se. A credencial do nó não muda.
+func nodeSetAPI(apiURL string) error {
+	n, dir, err := loadNode()
+	if err != nil {
+		return err
+	}
+	apiURL = strings.TrimRight(apiURL, "/")
+	u, err := url.Parse(apiURL)
+	if err != nil || u.Scheme != "https" || !strings.HasPrefix(u.Hostname(), "api.") {
+		return errors.New("o endereço é o da API da plataforma, em HTTPS: https://api.<domínio>")
+	}
+	registry := "registry." + strings.TrimPrefix(u.Hostname(), "api.")
+	tag := "dev"
+	if i := strings.LastIndex(n.AgentImage, ":"); i > 0 {
+		tag = n.AgentImage[i+1:]
+	}
+	n.APIURL, n.Registry, n.AgentImage = apiURL, registry, registry+"/basestack/agent:"+tag
+	if err := saveNode(dir, n); err != nil {
+		return err
+	}
+	fmt.Printf("O nó %q passa a ligar-se a %s (registry %s).\n", n.Node, apiURL, registry)
+	// Sem um certificado público, o docker daqui tem de confiar na CA da
+	// plataforma também para o nome novo.
+	if runtime.GOOS == "linux" && !trust.PubliclyTrusted(registry) {
+		if err := trust.InstallLinux(filepath.Join(dir, "ca.crt"), registry); err != nil {
+			return err
+		}
+	}
+	return startAgent(n, dir)
 }
 
 func nodeStatus() error {

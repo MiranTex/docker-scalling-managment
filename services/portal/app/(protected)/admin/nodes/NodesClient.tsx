@@ -1,5 +1,6 @@
 "use client";
 
+import Loading from "@/components/Skeleton";
 import { useEffect, useState } from "react";
 import Modal from "@/components/Modal";
 import PageHeader from "@/components/PageHeader";
@@ -99,7 +100,7 @@ export default function NodesClient() {
       {error && <div className="error">{error}</div>}
       <div className="card wide">
         {!nodes ? (
-          <p className="muted">A carregar...</p>
+          <Loading />
         ) : nodes.length === 0 ? (
           <p className="muted">Ainda nenhum nó registado -- o launcher regista a máquina local ao arrancar.</p>
         ) : (

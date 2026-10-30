@@ -612,3 +612,298 @@ code.truncate {
 .card form > button.primary { width: 100%; }
 .modal .row { justify-content: flex-start; }
 .modal .row + .row, .modal > button { margin-top: 0.5rem; }
+
+/* ---------- Motion, foco e materiais ---------- */
+:root {
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.25), 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+
+/* Tipografia: tracking negativo nos títulos grandes, corpo neutro. */
+h1 {
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+
+h2 {
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Foco visível em todos os controlos (teclado), sem anel no clique do rato. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline-offset: 0;
+  border-color: var(--accent);
+}
+
+/* Botões: feedback no press, instantâneo. */
+button,
+a.primary,
+a.secondary,
+a.danger {
+  transition:
+    transform 140ms var(--ease-out),
+    background-color 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease,
+    opacity 140ms ease;
+}
+
+button:active:not(:disabled),
+a.primary:active,
+a.secondary:active,
+a.danger:active {
+  transform: scale(0.97);
+}
+
+button.primary {
+  min-width: 5.5rem;
+  text-align: center;
+}
+
+input,
+select,
+textarea {
+  transition: border-color 140ms ease;
+}
+
+.sidebar nav a,
+.subnav a,
+.stat {
+  transition:
+    background-color 120ms ease,
+    color 120ms ease,
+    border-color 120ms ease;
+}
+
+tbody tr {
+  transition: background-color 120ms ease;
+}
+
+.badge {
+  transition:
+    background-color 200ms ease,
+    color 200ms ease;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  button.secondary:hover:not(:disabled),
+  a.secondary:hover {
+    background: var(--bg);
+  }
+
+  button.primary:hover:not(:disabled),
+  a.primary:hover {
+    opacity: 0.9;
+  }
+
+  button.danger:hover:not(:disabled),
+  a.danger:hover {
+    background: color-mix(in srgb, var(--danger) 10%, transparent);
+  }
+
+  tbody tr:hover {
+    background: color-mix(in srgb, var(--fg) 4%, transparent);
+  }
+}
+
+/* Indicador deslizante dos separadores (só transform). */
+.subnav {
+  position: relative;
+}
+
+.subnav a.active {
+  border-bottom-color: transparent;
+}
+
+.subnav-indicator {
+  position: absolute;
+  left: 0;
+  bottom: -1px;
+  width: 1px;
+  height: 2px;
+  background: var(--accent);
+  transform-origin: 0 0;
+  pointer-events: none;
+}
+
+.subnav-indicator.animated {
+  transition: transform 220ms var(--ease-in-out);
+}
+
+/* Materiais: sidebar e topbar translúcidas, modal com blur. */
+.sidebar {
+  background: color-mix(in srgb, var(--card) 80%, transparent);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+}
+
+.app-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: color-mix(in srgb, var(--bg) 75%, transparent);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+}
+
+.modal-backdrop {
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  animation: backdrop-in 200ms ease both;
+}
+
+.modal {
+  box-shadow: var(--shadow-lg);
+  animation: modal-in 220ms var(--ease-out) both;
+}
+
+.modal-backdrop.closing {
+  animation: backdrop-out 150ms ease both;
+}
+
+.modal-backdrop.closing .modal {
+  animation: modal-out 150ms ease-out both;
+}
+
+@keyframes backdrop-in {
+  from { opacity: 0; }
+}
+
+@keyframes backdrop-out {
+  to { opacity: 0; }
+}
+
+@keyframes modal-in {
+  from { opacity: 0; transform: scale(0.96) translateY(6px); }
+}
+
+@keyframes modal-out {
+  to { opacity: 0; transform: scale(0.98); }
+}
+
+/* Dashboard: cartões entram em cascata (só no carregamento da página). */
+.stat-grid > .stat {
+  animation: rise-in 360ms var(--ease-out) both;
+}
+
+.stat-grid > .stat:nth-child(2) { animation-delay: 40ms; }
+.stat-grid > .stat:nth-child(3) { animation-delay: 80ms; }
+.stat-grid > .stat:nth-child(4) { animation-delay: 120ms; }
+.stat-grid > .stat:nth-child(n + 5) { animation-delay: 160ms; }
+
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(8px); }
+}
+
+/* Skeletons. */
+.skeleton-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.skeleton {
+  height: 1.1rem;
+  border-radius: 6px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--fg) 7%, transparent) 25%,
+    color-mix(in srgb, var(--fg) 13%, transparent) 50%,
+    color-mix(in srgb, var(--fg) 7%, transparent) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+
+@keyframes shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+/* Toast (transição, para retomar bem se disparar duas vezes). */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 1.5rem;
+  z-index: 1000;
+  padding: 0.55rem 1rem;
+  border-radius: 999px;
+  background: var(--fg);
+  color: var(--bg);
+  font-size: 0.85rem;
+  font-weight: 500;
+  box-shadow: var(--shadow-lg);
+  opacity: 0;
+  transform: translate(-50%, 12px);
+  pointer-events: none;
+  transition:
+    opacity 180ms var(--ease-out),
+    transform 180ms var(--ease-out);
+}
+
+.toast.visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+/* Reduced motion: só fades, sem movimento. */
+@media (prefers-reduced-motion: reduce) {
+  button:active:not(:disabled),
+  a.primary:active,
+  a.secondary:active,
+  a.danger:active {
+    transform: none;
+  }
+
+  .modal {
+    animation-name: backdrop-in;
+  }
+
+  .modal-backdrop.closing .modal {
+    animation-name: backdrop-out;
+  }
+
+  .stat-grid > .stat {
+    animation-name: backdrop-in;
+  }
+
+  .skeleton {
+    animation: none;
+  }
+
+  .toast {
+    transform: translate(-50%, 0);
+  }
+
+  .subnav-indicator.animated {
+    transition: none;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .sidebar,
+  .app-topbar {
+    background: var(--card);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  .modal-backdrop {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}

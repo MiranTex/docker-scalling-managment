@@ -1,5 +1,6 @@
 "use client";
 
+import Loading from "@/components/Skeleton";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import Modal from "@/components/Modal";
@@ -66,7 +67,7 @@ export default function ProjectsClient({ canCreate }: { canCreate: boolean }) {
       <div className="card wide">
         {listError && <div className="error">{listError}</div>}
         {!projects ? (
-          <p className="muted">A carregar...</p>
+          <Loading />
         ) : projects.length === 0 ? (
           <p className="muted">{canCreate ? "Nenhum projeto ainda." : "Ainda não és membro de nenhum projeto -- pede a um administrador que te adicione."}</p>
         ) : (

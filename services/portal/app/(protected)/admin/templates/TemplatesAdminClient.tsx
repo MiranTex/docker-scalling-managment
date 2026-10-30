@@ -1,5 +1,6 @@
 "use client";
 
+import Loading from "@/components/Skeleton";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import type { ServiceTemplate } from "@/lib/templatesAdminClient";
@@ -71,7 +72,7 @@ export default function TemplatesAdminClient() {
         {deleteError && <div className="error">{deleteError}</div>}
 
         {!templates ? (
-          <p className="muted">A carregar...</p>
+          <Loading />
         ) : templates.length === 0 ? (
           <p className="muted">Nenhum modelo ainda.</p>
         ) : (

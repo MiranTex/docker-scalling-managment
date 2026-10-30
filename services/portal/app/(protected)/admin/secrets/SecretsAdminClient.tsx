@@ -1,5 +1,6 @@
 "use client";
 
+import Loading from "@/components/Skeleton";
 import { useEffect, useState } from "react";
 import Modal from "@/components/Modal";
 import type { SecretInfo } from "@/lib/secretsAdminClient";
@@ -112,7 +113,7 @@ export default function SecretsAdminClient() {
         {deleteError && <div className="error">{deleteError}</div>}
 
         {!secrets ? (
-          <p className="muted">A carregar...</p>
+          <Loading />
         ) : secrets.length === 0 ? (
           <p className="muted">Nenhum segredo ainda.</p>
         ) : (

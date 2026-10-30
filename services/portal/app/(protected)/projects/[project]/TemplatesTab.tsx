@@ -1,5 +1,6 @@
 "use client";
 
+import Loading from "@/components/Skeleton";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import Modal from "@/components/Modal";
@@ -68,7 +69,7 @@ export default function TemplatesTab({ project }: { project: string }) {
       </div>
       {!open && error && <div className="error">{error}</div>}
       {!list ? (
-        <p className="muted">A carregar...</p>
+        <Loading />
       ) : shown.length === 0 ? (
         <p className="muted">Ainda sem modelos.</p>
       ) : (

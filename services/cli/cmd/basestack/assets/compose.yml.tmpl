@@ -242,7 +242,10 @@ services:
       LAUNCHER_PORTAL_URL: "{{.PortalURL}}"
       LAUNCHER_CLUSTER: "{{.Cluster}}"
       LAUNCHER_ADVERTISE_ADDR: "{{.AdvertiseAddr}}"
-      LAUNCHER_TRAEFIK_CERTIFICATES: "/etc/traefik/tls/{{.TLS.RegistryCert}}:/etc/traefik/tls/{{.TLS.RegistryKey}}"
+      # Sem HTTPS automático, o certificado da CA da instalação para a api
+      # e o registry; com ele, valem os do Let's Encrypt (um certificado
+      # fixo aqui ganhava-lhes).
+      LAUNCHER_TRAEFIK_CERTIFICATES: "{{if not .TLSCertResolver}}/etc/traefik/tls/{{.TLS.RegistryCert}}:/etc/traefik/tls/{{.TLS.RegistryKey}}{{end}}"
     labels:
       base-stack.managed: "true"
       # A API de plataforma (CLI bs, CI) em api.<domínio> -- só /v1/projects

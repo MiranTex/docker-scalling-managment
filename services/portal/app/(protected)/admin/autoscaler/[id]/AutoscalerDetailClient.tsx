@@ -1,5 +1,6 @@
 "use client";
 
+import Loading from "@/components/Skeleton";
 import PageHeader from "@/components/PageHeader";
 import { useEffect, useState } from "react";
 import Link from "next/link";
@@ -182,7 +183,7 @@ export default function AutoscalerDetailClient({ id }: { id: string }) {
       <div className="card wide">
         <h1>Autoscaler-group</h1>
         {loadError && <div className="error">{loadError}</div>}
-        <p className="muted">A carregar...</p>
+        <Loading />
       </div>
     );
   }

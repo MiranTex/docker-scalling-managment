@@ -1,5 +1,6 @@
 "use client";
 
+import Loading from "@/components/Skeleton";
 import { useEffect, useState } from "react";
 import Modal from "@/components/Modal";
 import type { InstanceType } from "@/lib/templatesAdminClient";
@@ -163,7 +164,7 @@ export default function InstanceTypesClient() {
         {deleteError && <div className="error">{deleteError}</div>}
 
         {!types ? (
-          <p className="muted">A carregar...</p>
+          <Loading />
         ) : types.length === 0 ? (
           <p className="muted">Nenhum tipo definido.</p>
         ) : (

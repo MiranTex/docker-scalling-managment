@@ -1,5 +1,6 @@
 "use client";
 
+import Loading from "@/components/Skeleton";
 import { useEffect, useState } from "react";
 import { api, projectPath, type Member } from "@/lib/platformClient";
 import { useCan } from "@/lib/projectRole";
@@ -72,7 +73,7 @@ export default function MembersTab({ project }: { project: string }) {
       </p>
       {error && <div className="error">{error}</div>}
       {!members ? (
-        <p className="muted">A carregar...</p>
+        <Loading />
       ) : members.length === 0 ? (
         <p className="muted">Ainda sem membros.</p>
       ) : (

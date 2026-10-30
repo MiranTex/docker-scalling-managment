@@ -116,6 +116,9 @@ func offerTrust(apiURL, registry string) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		return // sem docker, não há o que configurar
 	}
+	if trust.PubliclyTrusted(registry) {
+		return // certificado público (ex: Let's Encrypt): nada a instalar
+	}
 	caPEM, hash, err := trust.Fetch(apiURL)
 	if err != nil {
 		// Ex: um domínio público com Let's Encrypt, sem CA própria a servir.

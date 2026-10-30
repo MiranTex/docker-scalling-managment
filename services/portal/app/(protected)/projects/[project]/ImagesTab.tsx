@@ -1,5 +1,6 @@
 "use client";
 
+import Loading from "@/components/Skeleton";
 import { useEffect, useState } from "react";
 import CopyCommand from "@/components/CopyCommand";
 import { api, formatBytes, projectPath, type ProjectImages } from "@/lib/platformClient";
@@ -32,7 +33,7 @@ export default function ImagesTab({ project }: { project: string }) {
         </button>
       </div>
       {error && <div className="error">{error}</div>}
-      {!data && !error && <p className="muted">A carregar...</p>}
+      {!data && !error && <Loading />}
       {data && !data.enabled && <p className="muted">O registry da plataforma não está ligado nesta instalação.</p>}
       {data?.enabled && data.images.length === 0 && <HowToPush host={data.host!} project={project} />}
       {data?.enabled && data.images.length > 0 && (

@@ -391,14 +391,21 @@ func (db *DB) RevokeFamily(ctx context.Context, familyID string, revokedAt time.
 	return nil
 }
 
-// SetUserPassword troca a password de uma conta (hash já calculado).
+// SetUserPassword define a password de uma conta (hash já calculado): a
+// credencial fica em password_credentials, que uma conta só de login
+// social ainda não tem -- daí criar ou atualizar.
 func (db *DB) SetUserPassword(ctx context.Context, id, passwordHash string) (bool, error) {
-	res, err := db.sql.ExecContext(ctx, `UPDATE auth.users SET password_hash = $2 WHERE id = $1`, id, passwordHash)
+	if _, found, err := db.FindUserByID(ctx, id); err != nil || !found {
+		return false, err
+	}
+	_, err := db.sql.ExecContext(ctx, `
+		INSERT INTO auth.password_credentials (user_id, password_hash, updated_at) VALUES ($1, $2, now())
+		ON CONFLICT (user_id) DO UPDATE SET password_hash = EXCLUDED.password_hash, updated_at = now()`,
+		id, passwordHash)
 	if err != nil {
 		return false, fmt.Errorf("store: trocando password: %w", err)
 	}
-	n, _ := res.RowsAffected()
-	return n > 0, nil
+	return true, nil
 }
 
 // RevokeUserSessions revoga todos os refresh tokens de uma conta: depois

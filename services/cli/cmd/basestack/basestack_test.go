@@ -248,3 +248,22 @@ func TestUfwScriptPerRole(t *testing.T) {
 		t.Error("a 2377 (manager) é só da plataforma")
 	}
 }
+
+// Com HTTPS automático, a api e o registry usam os certificados do Let's
+// Encrypt -- o da CA da instalação não pode ser imposto ao Traefik.
+func TestACMEDropsTheInstallationCertificate(t *testing.T) {
+	for _, acme := range []string{"", "admin@exemplo.pt"} {
+		dir := t.TempDir()
+		s := testSettings()
+		s.Domain = "exemplo.pt"
+		s.ACMEEmail = acme
+		if err := render(dir, s); err != nil {
+			t.Fatal(err)
+		}
+		raw, _ := os.ReadFile(filepath.Join(dir, "compose.yml"))
+		fixed := strings.Contains(string(raw), `LAUNCHER_TRAEFIK_CERTIFICATES: "/etc/traefik/tls/registry-`)
+		if fixed == (acme != "") {
+			t.Errorf("acme=%q: certificado fixo no routing = %v", acme, fixed)
+		}
+	}
+}

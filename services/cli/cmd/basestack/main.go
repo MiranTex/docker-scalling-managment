@@ -49,6 +49,8 @@ Nós (esta máquina a correr apps de uma plataforma noutra):
   basestack node join <url> --token bsj_... --ca sha256:...
                         o comando vem do portal (Nós > Adicionar nó)
   basestack node status | start | leave
+  basestack node set-api https://api.<domínio>
+                        a plataforma mudou de endereço: o nó segue-a
   basestack node token  (na máquina da plataforma) um token de entrada e o comando
 
 Os dados e a configuração ficam em ~/.basestack (Linux como root:

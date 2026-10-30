@@ -1,5 +1,6 @@
 "use client";
 
+import { copyText } from "@/lib/clipboard";
 import { useEffect, useState } from "react";
 import type { ProvisionedSchema, SchemaCredentials } from "@/lib/dbAdminClient";
 import Modal from "@/components/Modal";
@@ -99,7 +100,7 @@ export default function SchemasClient() {
 
   async function copyToClipboard(text: string) {
     try {
-      await navigator.clipboard.writeText(text);
+      await copyText(text);
     } catch {
       // O texto continua visível para seleção manual.
     }

@@ -1,5 +1,6 @@
 "use client";
 
+import { authError } from "@/lib/errors";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import PageHeader from "@/components/PageHeader";
@@ -28,7 +29,7 @@ export default function AccountPage() {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        setError(data.message ?? "não foi possível trocar a password");
+        setError(authError(data, "não foi possível trocar a password"));
         return;
       }
       // As sessões foram terminadas: entra de novo com a password nova.

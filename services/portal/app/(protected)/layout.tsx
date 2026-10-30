@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import Sidebar from "@/components/Sidebar";
 import Topbar from "@/components/Topbar";
+import Toaster from "@/components/Toast";
 import { decodeJwtPayload } from "@/lib/jwt";
 import { ACCESS_COOKIE, EMAIL_COOKIE } from "@/lib/session";
 
@@ -16,6 +17,7 @@ export default async function ProtectedLayout({ children }: { children: React.Re
         <Topbar email={email} />
         <div className="app-content">{children}</div>
       </div>
+      <Toaster />
     </div>
   );
 }

@@ -1,5 +1,6 @@
 "use client";
 
+import Loading from "@/components/Skeleton";
 import Breadcrumbs from "@/components/Breadcrumbs";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -157,7 +158,7 @@ export default function ServiceClient({ project, env, svc }: { project: string; 
     return (
       <div className="card full">
         <h1>{svc}</h1>
-        {error ? <div className="error">{error}</div> : <p className="muted">A carregar...</p>}
+        {error ? <div className="error">{error}</div> : <Loading />}
       </div>
     );
   }

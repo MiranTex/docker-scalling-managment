@@ -1,5 +1,7 @@
 "use client";
 
+import { copyText } from "@/lib/clipboard";
+import Loading from "@/components/Skeleton";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -124,7 +126,7 @@ function previewLaunchTemplateJSON(form: typeof EMPTY_FORM): string {
 
 async function copyToClipboard(text: string) {
   try {
-    await navigator.clipboard.writeText(text);
+    await copyText(text);
   } catch {
     // Clipboard API indisponível (ex: contexto não seguro) -- o texto já
     // está visível no <pre>, o utilizador ainda consegue selecionar e
@@ -240,7 +242,7 @@ export default function TemplateFormClient({ name }: { name?: string }) {
       <div className="card wide">
         {formError && <div className="error">{formError}</div>}
         {!loaded ? (
-          <p className="muted">A carregar...</p>
+          <Loading />
         ) : (
           <>
         <label htmlFor="tpl-name">Nome do modelo</label>

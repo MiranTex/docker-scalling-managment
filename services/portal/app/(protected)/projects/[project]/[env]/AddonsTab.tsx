@@ -1,5 +1,6 @@
 "use client";
 
+import Loading from "@/components/Skeleton";
 import { useEffect, useState } from "react";
 import Modal from "@/components/Modal";
 import TerminalModal from "@/components/TerminalModal";
@@ -137,7 +138,7 @@ export default function AddonsTab({ project, env }: { project: string; env: stri
       {!open && error && <div className="error">{error}</div>}
       {notice && <div className="notice">{notice}</div>}
       {!addons ? (
-        <p className="muted">A carregar...</p>
+        <Loading />
       ) : addons.length === 0 ? (
         <p className="muted">Sem addons.</p>
       ) : (

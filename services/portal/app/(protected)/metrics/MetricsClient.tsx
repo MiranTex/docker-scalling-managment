@@ -1,5 +1,6 @@
 "use client";
 
+import Loading from "@/components/Skeleton";
 import { useEffect, useState } from "react";
 import PageHeader from "@/components/PageHeader";
 import { api, projectPath, type Project } from "@/lib/platformClient";
@@ -66,7 +67,7 @@ export default function MetricsClient({ platformAdmin }: { platformAdmin: boolea
           </p>
         )}
         {!entries ? (
-          !error && <p className="muted">A carregar...</p>
+          !error && <Loading />
         ) : entries.length === 0 ? (
           <p className="muted">Ainda não és membro de nenhum projeto -- pede a um administrador que te adicione.</p>
         ) : (
