@@ -160,7 +160,13 @@ func (a *API) cliLoginGet(w http.ResponseWriter, r *http.Request, _ principal) {
 		writeError(w, http.StatusNotFound, "not_found", "código desconhecido ou expirado -- corre o login outra vez no terminal")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"name": l.name, "expiresAt": l.expires, "approved": l.apiKey != ""})
+	// A impressão digital da CA: o bs mostra a mesma ao oferecer-se para
+	// pôr o docker a confiar no registry.
+	caHash := ""
+	if a.agents != nil {
+		caHash = a.agents.caHash
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"name": l.name, "expiresAt": l.expires, "approved": l.apiKey != "", "caHash": caHash})
 }
 
 // cliLoginApprove recebe a API key que o portal criou para quem autorizou.

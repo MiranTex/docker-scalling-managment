@@ -131,7 +131,9 @@ type manifest struct {
 		Size   int64  `json:"size"`
 	} `json:"config"`
 	Layers []struct {
-		Size int64 `json:"size"`
+		Digest    string `json:"digest"`
+		MediaType string `json:"mediaType"`
+		Size      int64  `json:"size"`
 	} `json:"layers"`
 	Manifests []struct {
 		Digest   string `json:"digest"`
@@ -222,9 +224,9 @@ func (t *registryTokens) describe(ctx context.Context, repo string, m manifest, 
 	return platform, created, nil
 }
 
-// get faz um pedido ao registry com um token só para este scope e
-// descodifica o JSON para out.
-func (t *registryTokens) get(ctx context.Context, path string, scope registryAccess, accept []string, out any) (*http.Response, error) {
+// open faz um pedido ao registry com um token só para este scope; quem
+// chama fecha o corpo.
+func (t *registryTokens) open(ctx context.Context, path string, scope registryAccess, accept []string) (*http.Response, error) {
 	token, err := t.sign("basestack-portal", []registryAccess{scope})
 	if err != nil {
 		return nil, err
@@ -241,10 +243,20 @@ func (t *registryTokens) get(ctx context.Context, path string, scope registryAcc
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
 		return nil, fmt.Errorf("GET %s: %s", path, resp.Status)
 	}
+	return resp, nil
+}
+
+// get é o open de uma resposta JSON, descodificada para out.
+func (t *registryTokens) get(ctx context.Context, path string, scope registryAccess, accept []string, out any) (*http.Response, error) {
+	resp, err := t.open(ctx, path, scope, accept)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
 	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
 		return nil, errors.Join(fmt.Errorf("GET %s: resposta inválida", path), err)
 	}

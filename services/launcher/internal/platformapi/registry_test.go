@@ -159,6 +159,19 @@ func TestRegistryTokensFollowProjectRoles(t *testing.T) {
 	if got := grantedActions(t, cert, out["token"].(string), "basestack/launcher"); !reflect.DeepEqual(got, []string{"push"}) {
 		t.Errorf("admin nas imagens da plataforma: %v", got)
 	}
+	// A CLI (basestack upgrade) lê-a quem tem acesso; o resto da
+	// plataforma, não.
+	_, out = askToken(t, srv, "o@x.pt", "ak_outsider", "repository:basestack/cli:pull,push", "repository:basestack/launcher:pull")
+	if got := grantedActions(t, cert, out["token"].(string), "basestack/cli"); !reflect.DeepEqual(got, []string{"pull"}) {
+		t.Errorf("basestack/cli para qualquer conta: %v, queria só pull", got)
+	}
+	if got := grantedActions(t, cert, out["token"].(string), "basestack/launcher"); got != nil {
+		t.Errorf("basestack/launcher para qualquer conta: %v", got)
+	}
+	_, out = askToken(t, srv, "", "", "repository:basestack/cli:pull")
+	if got := grantedActions(t, cert, out["token"].(string), "basestack/cli"); got != nil {
+		t.Errorf("basestack/cli sem credenciais: %v", got)
+	}
 	// O catálogo (listar tudo) é só para admins da plataforma.
 	_, out = askToken(t, srv, "dev@x.pt", "ak_dev", "registry:catalog:*")
 	if got := grantedActions(t, cert, out["token"].(string), "catalog"); got != nil {

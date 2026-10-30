@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bs/internal/trust"
 	"bufio"
 	"errors"
 	"flag"
@@ -130,7 +131,7 @@ func cmdUp(args []string) error {
 		return err
 	}
 	if runtime.GOOS == "linux" {
-		if err := trustOnLinux(filepath.Join(dir, "tls", "ca.crt"), s.RegistryHost()); err != nil {
+		if err := trust.InstallLinux(filepath.Join(dir, "tls", "ca.crt"), s.RegistryHost()); err != nil {
 			return err
 		}
 		if s.Cluster && !s.FirewallApplied && ufwActive() {
@@ -175,48 +176,6 @@ Primeira vez?
   3. Entra de novo no portal.
 `, s.PortalURL(), s.AdminEmail)
 	return nil
-}
-
-// trustOnLinux instala a CA do registry (ver linuxTrust). Pede root: como
-// root corre logo; num terminal pergunta antes de usar o sudo; sem
-// terminal só mostra os comandos. Reinicia o Docker -- por isso corre
-// antes de arrancar a plataforma.
-func trustOnLinux(caPath, host string) error {
-	script, err := linuxTrust(caPath, host)
-	if err != nil || script == "" {
-		return err
-	}
-	fmt.Printf("\nPara o docker desta máquina confiar no registry (%s), é preciso como root:\n\n%s\n", host, indent(script))
-	var cmd *exec.Cmd
-	switch {
-	case os.Geteuid() == 0:
-		cmd = exec.Command("sh", "-c", script)
-	case isTerminal(os.Stdin):
-		fmt.Print("Correr agora com sudo (reinicia o Docker)? [s/N] ")
-		line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
-		if a := strings.ToLower(strings.TrimSpace(line)); a != "s" && a != "sim" && a != "y" && a != "yes" {
-			fmt.Println("Ficou por fazer: o docker vai recusar o registry até correres isto.")
-			return nil
-		}
-		cmd = exec.Command("sudo", "sh", "-c", script)
-	default:
-		fmt.Println("Ficou por fazer (sem terminal para pedir o sudo).")
-		return nil
-	}
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("instalando a CA: %w", err)
-	}
-	return nil
-}
-
-func indent(s string) string {
-	return "    " + strings.ReplaceAll(strings.TrimRight(s, "\n"), "\n", "\n    ")
-}
-
-func isTerminal(f *os.File) bool {
-	st, err := f.Stat()
-	return err == nil && st.Mode()&os.ModeCharDevice != 0
 }
 
 func allImagesExist(s Settings) bool {
