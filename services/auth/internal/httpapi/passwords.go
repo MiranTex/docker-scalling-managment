@@ -57,11 +57,19 @@ func (h *Handler) handleChangeOwnPassword(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusUnauthorized, "unauthorized", "conta não encontrada")
 		return
 	}
+	// Adivinhar a password atual com uma sessão roubada também abranda.
+	account := accountKey(user.Email)
+	if wait := h.limiter.wait(account); wait > 0 {
+		tooManyAttempts(w, wait)
+		return
+	}
 	_, hash, err := h.users.FindUserByEmailWithPassword(r.Context(), user.Email)
 	if err != nil || hash == "" || password.Verify(req.CurrentPassword, hash) != nil {
+		h.limiter.fail(map[string]int{account: accountFreeFailures})
 		writeError(w, http.StatusForbidden, "wrong_password", "a password atual não está certa")
 		return
 	}
+	h.limiter.reset(account)
 	if !h.setPassword(w, r, userID, req.NewPassword) {
 		return
 	}

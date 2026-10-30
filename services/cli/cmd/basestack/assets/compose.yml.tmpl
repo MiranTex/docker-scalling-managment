@@ -73,13 +73,23 @@ services:
       - --providers.file.watch=true
       - --entrypoints.web.address=:80
       - --entrypoints.websecure.address=:443
+{{- if .TLSCertResolver}}
+      # Com HTTPS automático, o HTTP só redireciona para HTTPS (passwords e
+      # API keys nunca em claro); o desafio do Let's Encrypt continua a
+      # passar -- o Traefik trata dele antes.
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+{{- end}}
       - --certificatesresolvers.le.acme.email={{.ACMEEmail}}
       - --certificatesresolvers.le.acme.storage=/letsencrypt/acme.json
       - --certificatesresolvers.le.acme.httpchallenge.entrypoint=web
       - --certificatesresolvers.le.acme.caserver={{.ACMECAServer}}
       - --accesslog=true
       - --accesslog.format=json
-      - --entrypoints.metrics.address=:8082
+      # As métricas só na rede de observabilidade (o nome traefik-metrics só
+      # existe lá): o Traefik está também nas redes dos projetos, e as apps
+      # leriam o tráfego de todos.
+      - --entrypoints.metrics.address=traefik-metrics:8082
       - --metrics.prometheus=true
       - --metrics.prometheus.entrypoint=metrics
     ports:
@@ -95,14 +105,16 @@ services:
       base-stack.managed: "true"
       prometheus.scrape: "true"
       prometheus.port: "8082"
+      prometheus.host: traefik-metrics
     mem_limit: 128m
     cpus: 0.25
     depends_on:
       - docker-api-ro
     networks:
-      - platform
-      - docker-api-ro
-      - observability
+      platform: {}
+      docker-api-ro: {}
+      observability:
+        aliases: [traefik-metrics]
 
   database:
     restart: unless-stopped
@@ -260,12 +272,19 @@ services:
       traefik.http.routers.platform-api-tls.service: platform-api
       traefik.http.routers.platform-api-tls.tls: "true"
       traefik.http.routers.platform-api-tls.tls.certresolver: "{{.TLSCertResolver}}"
+{{- if .TLSCertResolver}}
+      # HSTS: o browser passa a usar só HTTPS neste nome (6 meses).
+      traefik.http.middlewares.bs-hsts-api.headers.stsSeconds: "15552000"
+{{- end}}
+{{- if .TLSCertResolver}}
+      traefik.http.routers.platform-api-tls.middlewares: bs-hsts-api
+{{- end}}
       traefik.http.services.platform-api.loadbalancer.server.port: "8094"
       # registry.<domínio>/token -> o servidor de tokens do registry.
       traefik.http.routers.registry-token.rule: "Host(`{{.RegistryHost}}`) && Path(`/token`)"
       traefik.http.routers.registry-token.entrypoints: websecure
       traefik.http.routers.registry-token.service: platform-api
-      traefik.http.routers.registry-token.middlewares: registry-token-path
+      traefik.http.routers.registry-token.middlewares: "registry-token-path{{if .TLSCertResolver}},bs-hsts-api{{end}}"
       traefik.http.routers.registry-token.tls: "true"
       traefik.http.routers.registry-token.tls.certresolver: "{{.TLSCertResolver}}"
       traefik.http.middlewares.registry-token-path.replacepath.path: /v1/registry/token
@@ -276,6 +295,9 @@ services:
       traefik.http.routers.platform-agent.service: platform-api
       traefik.http.routers.platform-agent.tls: "true"
       traefik.http.routers.platform-agent.tls.certresolver: "{{.TLSCertResolver}}"
+{{- if .TLSCertResolver}}
+      traefik.http.routers.platform-agent.middlewares: bs-hsts-api
+{{- end}}
     volumes:
       # O único serviço com o socket do Docker direto: é quem cria os
       # containers dos projetos.
@@ -322,6 +344,13 @@ services:
       traefik.http.routers.portal-tls.service: portal
       traefik.http.routers.portal-tls.tls: "true"
       traefik.http.routers.portal-tls.tls.certresolver: "{{.TLSCertResolver}}"
+{{- if .TLSCertResolver}}
+      # HSTS: o browser passa a usar só HTTPS neste nome (6 meses).
+      traefik.http.middlewares.bs-hsts-portal.headers.stsSeconds: "15552000"
+{{- end}}
+{{- if .TLSCertResolver}}
+      traefik.http.routers.portal-tls.middlewares: bs-hsts-portal
+{{- end}}
       traefik.http.services.portal.loadbalancer.server.port: "3000"
     ports:
       - "{{.PortalPort}}:3000"
@@ -362,6 +391,13 @@ services:
       traefik.http.routers.registry.service: registry
       traefik.http.routers.registry.tls: "true"
       traefik.http.routers.registry.tls.certresolver: "{{.TLSCertResolver}}"
+{{- if .TLSCertResolver}}
+      # HSTS: o browser passa a usar só HTTPS neste nome (6 meses).
+      traefik.http.middlewares.bs-hsts-registry.headers.stsSeconds: "15552000"
+{{- end}}
+{{- if .TLSCertResolver}}
+      traefik.http.routers.registry.middlewares: bs-hsts-registry
+{{- end}}
       traefik.http.services.registry.loadbalancer.server.port: "5000"
     volumes:
       - registry-data:/var/lib/registry
@@ -381,14 +417,19 @@ services:
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.retention.time=6h
+      # Só escuta na rede de observabilidade (o nome prometheus-obs só
+      # existe lá): o launcher liga-o às redes dos projetos para recolher
+      # métricas, e as apps não podem ler as dos outros projetos.
+      - --web.listen-address=prometheus-obs:9090
     volumes:
       - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
     depends_on:
       - docker-api-ro
     networks:
-      - observability
-      - docker-api-ro
+      observability:
+        aliases: [prometheus-obs]
+      docker-api-ro: {}
     mem_limit: 256m
     cpus: 0.5
 

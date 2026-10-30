@@ -267,3 +267,30 @@ func TestACMEDropsTheInstallationCertificate(t *testing.T) {
 		}
 	}
 }
+
+// Com HTTPS automático: o HTTP redireciona para HTTPS e as rotas da
+// plataforma levam HSTS; sem ele, nada disto (é tudo HTTP na rede local).
+func TestACMEForcesHTTPS(t *testing.T) {
+	for _, acme := range []string{"", "admin@exemplo.pt"} {
+		dir := t.TempDir()
+		s := testSettings()
+		s.Domain = "exemplo.pt"
+		s.ACMEEmail = acme
+		if err := render(dir, s); err != nil {
+			t.Fatal(err)
+		}
+		raw, _ := os.ReadFile(filepath.Join(dir, "compose.yml"))
+		c := string(raw)
+		for _, want := range []string{
+			"--entrypoints.web.http.redirections.entrypoint.to=websecure",
+			"traefik.http.routers.portal-tls.middlewares: bs-hsts-portal",
+			"traefik.http.routers.platform-api-tls.middlewares: bs-hsts-api",
+			`traefik.http.routers.registry-token.middlewares: "registry-token-path,bs-hsts-api"`,
+			"traefik.http.routers.registry.middlewares: bs-hsts-registry",
+		} {
+			if strings.Contains(c, want) != (acme != "") {
+				t.Errorf("acme=%q: %q presente = %v", acme, want, !(acme != ""))
+			}
+		}
+	}
+}

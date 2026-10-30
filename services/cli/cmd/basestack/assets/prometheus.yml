@@ -31,6 +31,14 @@ scrape_configs:
         regex: "/(.*);(.*)"
         target_label: __address__
         replacement: "${1}:${2}"
+      # Um endereço próprio para as métricas (label prometheus.host), quando
+      # o nome do container resolve também em redes onde elas não escutam
+      # (ex: o Traefik, também nas redes dos projetos).
+      - source_labels: [__meta_docker_container_label_prometheus_host, __meta_docker_container_label_prometheus_port]
+        separator: ";"
+        regex: "(.+);(.+)"
+        target_label: __address__
+        replacement: "${1}:${2}"
       # Caminho das métricas por container (label prometheus.path). Sem a
       # label fica o default do Prometheus, /metrics -- tudo o que já era
       # recolhido antes continua igual.

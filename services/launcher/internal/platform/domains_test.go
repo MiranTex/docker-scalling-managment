@@ -110,7 +110,7 @@ func TestRoutingWithTLSRedirects(t *testing.T) {
 	waitDeploy(t, svc, "web", dep.ID)
 	b, _ := os.ReadFile(filepath.Join(dir, routingFile))
 	got := string(b)
-	for _, want := range []string{`"certResolver": "le"`, `"websecure"`, `"bs-redirect-https"`, `"scheme": "https"`} {
+	for _, want := range []string{`"certResolver": "le"`, `"websecure"`, `"bs-redirect-https"`, `"scheme": "https"`, `"bs-hsts"`, `"stsSeconds": 15552000`} {
 		if !strings.Contains(got, want) {
 			t.Errorf("routing com TLS não tem %s:\n%s", want, got)
 		}

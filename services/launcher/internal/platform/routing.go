@@ -58,7 +58,16 @@ type traefikMiddleware struct {
 		Scheme    string `json:"scheme"`
 		Permanent bool   `json:"permanent"`
 	} `json:"redirectScheme,omitempty"`
-	Retry *traefikRetry `json:"retry,omitempty"`
+	Retry   *traefikRetry   `json:"retry,omitempty"`
+	Headers *traefikHeaders `json:"headers,omitempty"`
+}
+
+// hstsMiddleware: com HTTPS, o browser passa a usar só HTTPS nos domínios
+// das apps (6 meses).
+const hstsMiddleware = "bs-hsts"
+
+type traefikHeaders struct {
+	STSSeconds int `json:"stsSeconds"`
 }
 
 // retryMiddleware: um pedido que não consegue ligar a uma réplica (ex: o
@@ -227,7 +236,7 @@ func (s *Service) buildRouting(ctx context.Context) (traefikConfig, error) {
 		httpRouter := traefikRouter{Rule: rule, EntryPoints: []string{"web"}, Service: name, Middlewares: []string{retryMiddleware}}
 		if s.cfg.TLSCertResolver != "" {
 			httpRouter.Middlewares = []string{redirectMiddleware}
-			cfg.HTTP.Routers[name+"-tls"] = traefikRouter{Rule: rule, EntryPoints: []string{"websecure"}, Service: name, Middlewares: []string{retryMiddleware}, TLS: &traefikTLS{CertResolver: s.cfg.TLSCertResolver}}
+			cfg.HTTP.Routers[name+"-tls"] = traefikRouter{Rule: rule, EntryPoints: []string{"websecure"}, Service: name, Middlewares: []string{retryMiddleware, hstsMiddleware}, TLS: &traefikTLS{CertResolver: s.cfg.TLSCertResolver}}
 		}
 		cfg.HTTP.Routers[name] = httpRouter
 	}
@@ -241,6 +250,7 @@ func (s *Service) buildRouting(ctx context.Context) (traefikConfig, error) {
 			Permanent bool   `json:"permanent"`
 		}{Scheme: "https", Permanent: true}
 		cfg.HTTP.Middlewares[redirectMiddleware] = mw
+		cfg.HTTP.Middlewares[hstsMiddleware] = traefikMiddleware{Headers: &traefikHeaders{STSSeconds: 15552000}}
 	}
 	if len(cfg.HTTP.Routers) == 0 {
 		cfg.HTTP = nil
