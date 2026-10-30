@@ -61,8 +61,22 @@ var platformImages = []struct{ name, dir string }{
 	{"launcher", "services/launcher"},
 	{"portal", "services/portal"},
 	{"autoscaler-group", "services/autoscaler"},
-	// Não corre aqui: é o que os nós remotos buscam ao registry.
+	// Não correm aqui: o agente é o que os nós buscam ao registry; o cli
+	// transporta o basestack e o bs (basestack upgrade).
 	{"agent", "services/agent"},
+	{"cli", "services/cli"},
+}
+
+// labelVersion: a versão (commit do git) com que uma imagem foi construída.
+const labelVersion = "org.opencontainers.image.version"
+
+// imageVersion lê a versão de uma imagem local ("" se não tiver).
+func imageVersion(ref string) string {
+	v, err := dockerOutput("image", "inspect", "--format", `{{index .Config.Labels "`+labelVersion+`"}}`, ref)
+	if err != nil || v == "<no value>" {
+		return ""
+	}
+	return v
 }
 
 // foreignPublishers lista containers fora desta instalação que publicam

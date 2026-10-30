@@ -237,6 +237,7 @@ func (c config) platformConfig() platform.Config {
 		TLSCertResolver:       c.tlsCertResolver,
 		PublicIPs:             c.publicIPs,
 		Cluster:               c.cluster,
+		AgentImage:            c.agentImage,
 		AdvertiseAddr:         c.advertiseAddr,
 	}
 }

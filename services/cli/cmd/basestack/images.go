@@ -76,6 +76,26 @@ func pushImages(s Settings, only map[string]bool) error {
 	})
 }
 
+// pushImagesTo envia as imagens para o registry de outra plataforma, com
+// o docker login de quem corre (um admin dessa plataforma pode escrever em
+// basestack/). O docker desta máquina tem de confiar nesse registry
+// (basestack trust).
+func pushImagesTo(s Settings, registry string, only map[string]bool) error {
+	for _, img := range selected(only) {
+		remote := registry + "/basestack/" + img.name + ":" + s.Version
+		fmt.Printf("==> %s\n", remote)
+		if _, err := dockerOutput("tag", s.image(img.name), remote); err != nil {
+			return err
+		}
+		cmd := exec.Command("docker", "push", "--quiet", remote)
+		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("enviando %s (fizeste \"docker login %s\"? o docker daqui confia nele? basestack trust): %w", img.name, registry, err)
+		}
+	}
+	return nil
+}
+
 // pushQuiet envia imagens já construídas para o registry desta
 // instalação sem o progresso do push (é um passo do up).
 func pushQuiet(s Settings, names ...string) error {
@@ -94,26 +114,34 @@ func pushQuiet(s Settings, names ...string) error {
 }
 
 // pullImages busca as imagens da plataforma de ImageSource e dá-lhes o
-// nome local que o compose usa. Usa o login do docker de quem corre
-// (docker login <registry>).
+// nome local que o compose usa. Do registry da própria plataforma, com a
+// credencial interna; de outro, com o docker login de quem corre.
 func pullImages(s Settings) error {
 	if s.ImageSource == "" {
 		return errors.New("sem origem das imagens -- basestack set images-from <registry>/basestack, ou constrói-as: basestack dev build")
 	}
-	for _, img := range platformImages {
-		local := s.image(img.name)
-		remote := strings.TrimRight(s.ImageSource, "/") + "/" + img.name + ":" + s.Version
-		fmt.Printf("==> %s\n", remote)
-		cmd := exec.Command("docker", "pull", "--quiet", remote)
-		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("buscando %s (fizeste \"docker login %s\"?): %w", remote, strings.SplitN(s.ImageSource, "/", 2)[0], err)
+	source := strings.TrimRight(s.ImageSource, "/")
+	pull := func(docker func(args ...string) error) error {
+		for _, img := range platformImages {
+			remote := source + "/" + img.name + ":" + s.Version
+			fmt.Printf("==> %s\n", remote)
+			if err := docker("pull", "--quiet", remote); err != nil {
+				return fmt.Errorf("buscando %s (fizeste \"docker login %s\"?): %w", remote, strings.SplitN(source, "/", 2)[0], err)
+			}
+			if _, err := dockerOutput("tag", remote, s.image(img.name)); err != nil {
+				return err
+			}
 		}
-		if _, err := dockerOutput("tag", remote, local); err != nil {
-			return err
-		}
+		return nil
 	}
-	return nil
+	if strings.SplitN(source, "/", 2)[0] == s.RegistryHost() {
+		return withRegistryLogin(s, pull)
+	}
+	return pull(func(args ...string) error {
+		cmd := exec.Command("docker", args...)
+		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+		return cmd.Run()
+	})
 }
 
 func selected(only map[string]bool) []struct{ name, dir string } {

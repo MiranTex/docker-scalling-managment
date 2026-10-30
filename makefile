@@ -4,16 +4,20 @@ DEMO_COMPOSE ?= demo/docker-compose.yml
 PGUSER ?= app
 PGDATABASE ?= app
 
+# VERSION: o commit do git, carimbado nos binários (basestack version).
+VERSION ?= $(shell git describe --always --dirty 2>/dev/null || echo dev)
+LDFLAGS := -ldflags "-X main.version=$(VERSION)"
+
 # cli compila a CLI da plataforma (bs) para esta máquina, em bin/bs --
 # ver services/cli/README.md.
 cli:
-	cd services/cli && go build -o ../../bin/bs ./cmd/bs
+	cd services/cli && go build $(LDFLAGS) -o ../../bin/bs ./cmd/bs
 
 # cli-linux compila o bs para servidores Linux (Intel/AMD e ARM), em bin/.
 # Copia o que servir (uname -m: x86_64 -> amd64, aarch64 -> arm64).
 cli-linux:
-	cd services/cli && GOOS=linux GOARCH=amd64 go build -o ../../bin/bs-linux-amd64 ./cmd/bs
-	cd services/cli && GOOS=linux GOARCH=arm64 go build -o ../../bin/bs-linux-arm64 ./cmd/bs
+	cd services/cli && GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o ../../bin/bs-linux-amd64 ./cmd/bs
+	cd services/cli && GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o ../../bin/bs-linux-arm64 ./cmd/bs
 
 # install-cli põe o bs no PATH (por defeito /usr/local/bin; usa sudo só se
 # não der para escrever lá). Outro sítio: make install-cli PREFIX=~/.local
@@ -27,7 +31,7 @@ install-cli: cli
 # basestack instala e gere a plataforma numa máquina (ver
 # services/cli/README.md); é para quem opera, o bs para quem usa.
 basestack:
-	cd services/cli && go build -o ../../bin/basestack ./cmd/basestack
+	cd services/cli && go build $(LDFLAGS) -o ../../bin/basestack ./cmd/basestack
 
 install-basestack: basestack
 	@if [ -w "$(PREFIX)/bin" ]; then install -m 0755 bin/basestack "$(PREFIX)/bin/basestack"; \
@@ -39,7 +43,7 @@ install-basestack: basestack
 release:
 	@for os in darwin linux; do for arch in amd64 arm64; do \
 		for cmd in basestack bs; do \
-			(cd services/cli && CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -o ../../bin/release/$$cmd-$$os-$$arch ./cmd/$$cmd) || exit 1; \
+			(cd services/cli && CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build $(LDFLAGS) -o ../../bin/release/$$cmd-$$os-$$arch ./cmd/$$cmd) || exit 1; \
 		done; done; done
 	@ls -1 bin/release
 

@@ -17,6 +17,9 @@ type ImageInspect struct {
 	ID           string `json:"Id"`
 	Os           string `json:"Os"`
 	Architecture string `json:"Architecture"`
+	Config       struct {
+		Labels map[string]string `json:"Labels"`
+	} `json:"Config"`
 }
 
 // InspectImage verifica se uma imagem já existe localmente no daemon.
