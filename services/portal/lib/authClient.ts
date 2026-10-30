@@ -46,8 +46,14 @@ async function authFetch(path: string, init?: RequestInit): Promise<Response> {
   });
 }
 
-export function login(email: string, password: string) {
-  return authFetch("/v1/login", { method: "POST", body: JSON.stringify({ email, password }) });
+// login passa ao auth o IP de quem tenta entrar (o limite de tentativas
+// é por conta e por IP).
+export function login(email: string, password: string, clientIP?: string) {
+  return authFetch("/v1/login", {
+    method: "POST",
+    headers: clientIP ? { "X-Forwarded-For": clientIP } : {},
+    body: JSON.stringify({ email, password }),
+  });
 }
 
 export function register(email: string, password: string) {

@@ -111,6 +111,8 @@ type Handler struct {
 	// primeiro arranque), já como super-admin.
 	openRegistration bool
 	bootstrapEmail   string
+	// limiter abranda quem erra passwords (ver loginlimit.go).
+	limiter *loginLimiter
 }
 
 // NewHandler monta o Handler. accessTTL é usado só para reportar
@@ -123,7 +125,7 @@ func NewHandler(users UserStore, userAdmin UserAdmin, tokens TokenIssuer, refres
 	return &Handler{
 		users: users, userAdmin: userAdmin, tokens: tokens, refresh: refreshTokens, apiKeys: apiKeys,
 		oauth: oauthLogin, verification: emailVerifier, db: db, accessTTL: accessTTL, logger: logger,
-		openRegistration: true,
+		openRegistration: true, limiter: newLoginLimiter(),
 	}
 }
 
@@ -402,11 +404,19 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	account, ip := accountKey(req.Email), ipKey(clientIP(r))
+	if wait := h.limiter.wait(account, ip); wait > 0 {
+		tooManyAttempts(w, wait)
+		return
+	}
+
 	user, hash, err := h.users.FindUserByEmailWithPassword(r.Context(), req.Email)
 	// Mesma mensagem/status para "utilizador não existe" e "senha errada"
 	// -- de propósito. Distinguir os dois numa API pública deixa um
-	// atacante enumerar e-mails registados (username enumeration).
+	// atacante enumerar e-mails registados (username enumeration). As
+	// duas contam para o limite de tentativas.
 	invalidCredentials := func() {
+		h.limiter.fail(map[string]int{account: accountFreeFailures, ip: ipFreeFailures})
 		writeError(w, http.StatusUnauthorized, "invalid_credentials", "e-mail ou senha inválidos")
 	}
 	if errors.Is(err, store.ErrUserNotFound) {
@@ -421,6 +431,8 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		invalidCredentials()
 		return
 	}
+
+	h.limiter.reset(account)
 
 	pair, err := h.issueTokenPair(r.Context(), user.ID, user.Role)
 	if err != nil {
