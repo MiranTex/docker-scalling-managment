@@ -8,12 +8,15 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
 const usage = `bs -- CLI da plataforma base-stack
 
 Uso:
-  bs login                                  guarda o URL da API e a API key
+  bs login [url da API]                     entra pelo browser (--api-key: colar uma key);
+                                            também põe o docker a usar a sessão no
+                                            registry da plataforma
   bs projects                               lista os teus projetos e ambientes
   bs exec <projeto>/<ambiente>/<nome>       terminal num serviço ou addon
        [--replica <container>] [--debug]
@@ -25,6 +28,14 @@ sobrepõem-se a ela (útil em scripts).
 `
 
 func main() {
+	// Chamado pelo docker como credential helper (ver login.go).
+	if filepath.Base(os.Args[0]) == "docker-credential-"+helperName {
+		if err := credentialHelper(os.Args[1:]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) < 2 {
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)

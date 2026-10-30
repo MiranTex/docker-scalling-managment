@@ -4,6 +4,13 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
+// safeFrom: a página de onde o login foi pedido (?from=), só se for deste
+// site -- um "//outro.site" ou "https://..." era um redirecionamento aberto.
+function safeFrom(): string | null {
+  const from = new URLSearchParams(window.location.search).get("from");
+  return from && from.startsWith("/") && !from.startsWith("//") ? from : null;
+}
+
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
@@ -26,7 +33,7 @@ export default function LoginPage() {
         setError(data.message ?? "e-mail ou senha inválidos");
         return;
       }
-      router.push("/dashboard");
+      router.push(safeFrom() ?? "/dashboard");
       router.refresh();
     } finally {
       setLoading(false);
