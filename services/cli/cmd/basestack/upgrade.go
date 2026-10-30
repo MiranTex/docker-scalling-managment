@@ -145,11 +145,6 @@ func cmdUpgrade(args []string) error {
 		return fmt.Errorf("o binário novo não corre nesta máquina: %w", err)
 	}
 	newVersion := strings.TrimSpace(string(out))
-	if newVersion == version && !*force {
-		fmt.Printf("Já está na versão %s.\n", version)
-		return nil
-	}
-
 	exe, err := os.Executable()
 	if err != nil {
 		return err
@@ -157,17 +152,25 @@ func cmdUpgrade(args []string) error {
 	if exe, err = filepath.EvalSymlinks(exe); err != nil {
 		return err
 	}
+	if newVersion == version && !*force && fileExists(filepath.Join(filepath.Dir(exe), "bs")) {
+		fmt.Printf("Já está na versão %s.\n", version)
+		return nil
+	}
 	if err := replaceBinary(filepath.Join(tmp, "basestack"), exe); err != nil {
 		return err
 	}
 	fmt.Printf("basestack: %s -> %s (%s)\n", version, newVersion, exe)
-	// O bs, se estiver ao lado.
-	if bsPath := filepath.Join(filepath.Dir(exe), "bs"); fileExists(bsPath) {
-		if err := replaceBinary(filepath.Join(tmp, "bs"), bsPath); err != nil {
-			return err
-		}
-		fmt.Printf("bs:        %s\n", bsPath)
+	// O bs fica ao lado do basestack -- instalado se ainda não existia
+	// (vem na mesma imagem e não há outra forma de o ter).
+	bsPath := filepath.Join(filepath.Dir(exe), "bs")
+	verb := "atualizado"
+	if !fileExists(bsPath) {
+		verb = "instalado"
 	}
+	if err := replaceBinary(filepath.Join(tmp, "bs"), bsPath); err != nil {
+		return err
+	}
+	fmt.Printf("bs:        %s (%s)\n", bsPath, verb)
 
 	if src.node {
 		// O binário novo recria o agente com a imagem atual.
