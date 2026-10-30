@@ -212,6 +212,14 @@ func (a *API) registryAllowed(ctx context.Context, g registryGrantee, typ, name 
 		}
 	case typ != "repository" || !strings.Contains(name, "/"):
 		// Só imagens com projeto: <projeto>/<nome>.
+	case name == "basestack/cli" && g.subject != "anonymous":
+		// A CLI (basestack upgrade): quem tem acesso à plataforma lê-a --
+		// os binários já são públicos pelo install.sh. Escrever continua a
+		// ser só da plataforma (abaixo).
+		can = []string{"pull"}
+		if g.internal || g.platformAdmin {
+			can = append(can, "push")
+		}
 	case g.internal:
 		can = []string{"pull"}
 		if project == "basestack" {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bs/internal/trust"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -67,8 +68,13 @@ func findUpgradeSource(from string) (upgradeSource, error) {
 	}
 	s, _, err := loadSettings()
 	if errors.Is(err, errNotInstalled) {
+		// Uma máquina de quem só usa a plataforma: o registry da sessão do
+		// bs (bs login), com o credential helper que ele configurou.
 		if from == "" {
-			return upgradeSource{}, errors.New("esta máquina não tem a plataforma nem é um nó: diz de onde, com --from <registry>/basestack")
+			from = bsRegistry()
+		}
+		if from == "" {
+			return upgradeSource{}, errors.New("esta máquina não tem a plataforma, não é um nó e não tem sessão do bs: faz bs login <url>, ou diz de onde com --from <registry>/basestack")
 		}
 		return upgradeSource{image: from + "/cli:dev"}, nil
 	}
@@ -85,6 +91,30 @@ func findUpgradeSource(from string) (upgradeSource, error) {
 		src.user, src.pass = "basestack-internal", s.Secrets.RegistryPullPassword
 	}
 	return src, nil
+}
+
+// bsRegistry: <registry>/basestack da plataforma da sessão do bs
+// (~/.config/bs/config.json), ou "".
+func bsRegistry() string {
+	h, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	raw, err := os.ReadFile(filepath.Join(h, ".config", "bs", "config.json"))
+	if err != nil {
+		return ""
+	}
+	var c struct {
+		APIURL string `json:"apiUrl"`
+	}
+	if json.Unmarshal(raw, &c) != nil {
+		return ""
+	}
+	u, err := url.Parse(c.APIURL)
+	if err != nil || !strings.HasPrefix(u.Hostname(), "api.") {
+		return ""
+	}
+	return "registry." + strings.TrimPrefix(u.Hostname(), "api.") + "/basestack"
 }
 
 func cmdUpgrade(args []string) error {
