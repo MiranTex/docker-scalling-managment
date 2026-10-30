@@ -26,7 +26,7 @@ Na primeira vez: regista-te no portal com o email do admin e corre
 | `basestack logs <componente> [-f]` | ex.: `launcher`, `auth`, `portal`, `grafana` |
 | `basestack restart [componente]` | |
 | `basestack set <chave> <valor>` | muda `domain`, `portal-port`, `admin-email`, `acme-email` ou `images-from` (os segredos ficam); aplica com `up` |
-| `basestack pull` | volta a buscar as imagens da plataforma a `images-from` (o `up` só busca as que faltam) |
+| `basestack pull` | busca as imagens da plataforma a `images-from` sem as aplicar (o `up` também as busca, sempre) |
 | `basestack up` | também aplica mudanças feitas em `settings.json` |
 | `basestack down` | pára a plataforma; os dados ficam e as apps dos projetos continuam a correr |
 | `basestack down --all` | pára também as apps e bases de dados dos projetos (os dados ficam); no `up` seguinte o launcher volta a ligá-las |
@@ -100,7 +100,11 @@ sozinho, e a rede de cada ambiente passa a overlay cifrada -- as apps de
 um nó chegam aos addons e o Traefik chega a elas como se estivessem todas
 na mesma máquina. As redes dos ambientes que já existiam são migradas no
 `up` (um corte curto). Entre as máquinas têm de estar abertas as portas
-2377/tcp (só a da plataforma), 7946/tcp+udp e 4789/udp.
+2377/tcp (só a da plataforma), 7946/tcp+udp, 4789/udp e o protocolo ESP
+(a overlay é cifrada com IPsec). Com a ufw ativa, o `up` (em modo
+cluster) e o `node join` oferecem-se para as abrir, só para a rede local
+da máquina; `basestack firewall` faz o mesmo a qualquer altura. Outra
+firewall (a do router, firewalld): o `basestack firewall` diz o que abrir.
 
 Os addons ficam sempre na máquina da plataforma (os dados estão lá).
 

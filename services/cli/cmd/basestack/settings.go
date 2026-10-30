@@ -28,6 +28,9 @@ type Settings struct {
 	// Cluster: esta máquina é manager de um swarm e as redes dos ambientes
 	// são overlay -- os nós remotos recebem apps. Só Linux.
 	Cluster bool `json:"cluster,omitempty"`
+	// FirewallApplied: as regras da ufw para o cluster já foram aplicadas
+	// (basestack firewall) -- o up deixa de as oferecer.
+	FirewallApplied bool `json:"firewallApplied,omitempty"`
 
 	Domain     string `json:"domain"`
 	HTTPPort   int    `json:"httpPort"`
@@ -72,6 +75,37 @@ func lanIP() string {
 	defer conn.Close()
 	return conn.LocalAddr().(*net.UDPAddr).IP.String()
 }
+
+// privateDomain: um domínio que só existe na rede local (<ip privado>.nip.io,
+// localhost, .local) -- o Let's Encrypt nunca lá chega para validar, por
+// isso o HTTPS automático não pode funcionar.
+func privateDomain(domain string) bool {
+	d := strings.ToLower(strings.TrimSuffix(domain, "."))
+	if d == "localhost" || strings.HasSuffix(d, ".localhost") || strings.HasSuffix(d, ".local") {
+		return true
+	}
+	for _, suffix := range []string{".nip.io", ".sslip.io"} {
+		host, ok := strings.CutSuffix(d, suffix)
+		if !ok {
+			continue
+		}
+		// O IP são os últimos rótulos (app.192.168.1.10.nip.io) ou o
+		// último com hífenes (app.192-168-1-10.nip.io).
+		labels := strings.Split(host, ".")
+		candidates := []string{strings.ReplaceAll(labels[len(labels)-1], "-", ".")}
+		if len(labels) >= 4 {
+			candidates = append(candidates, strings.Join(labels[len(labels)-4:], "."))
+		}
+		for _, c := range candidates {
+			if ip := net.ParseIP(c); ip != nil {
+				return ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast()
+			}
+		}
+	}
+	return false
+}
+
+var errACMEPrivate = errors.New("o HTTPS automático (Let's Encrypt) não funciona com um domínio da rede local: o Let's Encrypt precisa de chegar a esta máquina pela internet. Deixa o email vazio (o registry e os nós continuam em HTTPS com a CA da instalação)")
 
 // AdvertiseAddr: o IP pelo qual os nós chegam a esta máquina (swarm).
 func (s Settings) AdvertiseAddr() string { return lanIP() }

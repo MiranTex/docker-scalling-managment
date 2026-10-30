@@ -37,6 +37,8 @@ type nodeFile struct {
 	NodeToken  string `json:"nodeToken"`
 	Registry   string `json:"registry"`
 	AgentImage string `json:"agentImage"`
+	// Firewall: as regras da ufw para o cluster já foram aplicadas.
+	Firewall bool `json:"firewall,omitempty"`
 }
 
 // nodeHome: ~/.basestack-node (como root, /var/lib/basestack-node);
@@ -170,17 +172,27 @@ func nodeJoin(args []string) error {
 	if err := writeFile(filepath.Join(dir, "ca.crt"), caPEM, 0o644); err != nil {
 		return err
 	}
-	saved, _ := json.MarshalIndent(n, "", "  ")
-	if err := writeFile(filepath.Join(dir, "node.json"), saved, 0o600); err != nil {
+	if err := saveNode(dir, n); err != nil {
 		return err
 	}
 	fmt.Printf("Registado como o nó %q. Credencial guardada em %s.\n", n.Node, dir)
 
 	// 3. O Docker daqui tem de confiar no registry da plataforma (para
-	// buscar o agente e, mais tarde, as apps).
+	// buscar o agente e, mais tarde, as apps), e a firewall tem de deixar
+	// passar a rede do cluster.
 	if runtime.GOOS == "linux" {
 		if err := trustOnLinux(filepath.Join(dir, "ca.crt"), n.Registry); err != nil {
 			return err
+		}
+		if ufwActive() {
+			if applied, err := offerFirewall(roleNode); err != nil {
+				return err
+			} else if applied {
+				n.Firewall = true
+				if err := saveNode(dir, n); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	return startAgent(n, dir)
