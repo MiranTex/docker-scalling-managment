@@ -33,6 +33,10 @@ type Token struct {
 	TokenHash string
 	ExpiresAt time.Time
 	RevokedAt *time.Time
+	// RotatedAt/RotatedIP: quando e de onde foi rodado (nil se foi revogado
+	// de outra forma, ou ainda vale).
+	RotatedAt *time.Time
+	RotatedIP string
 }
 
 // Store é a persistência necessária pro Manager — implementada pelo
@@ -44,7 +48,19 @@ type Store interface {
 	FindByHash(ctx context.Context, tokenHash string) (Token, bool, error)
 	Revoke(ctx context.Context, id string, revokedAt time.Time) error
 	RevokeFamily(ctx context.Context, familyID string, revokedAt time.Time) error
+	// MarkRotated revoga o token por rotação, só se ainda valia; false =
+	// outro pedido rodou-o primeiro.
+	MarkRotated(ctx context.Context, id string, at time.Time, ip string) (bool, error)
+	// FamilyActive: a sessão ainda tem algum token válido (não houve
+	// logout nem revogação da sessão).
+	FamilyActive(ctx context.Context, familyID string, now time.Time) (bool, error)
 }
+
+// RotationGrace: quanto tempo depois de rodado um token ainda é aceite do
+// mesmo IP. O browser faz vários pedidos em paralelo quando o access token
+// expira, todos com o mesmo refresh token; sem margem, o segundo parecia
+// roubo e a sessão era revogada (logout ao fim de 15 minutos).
+const RotationGrace = 30 * time.Second
 
 // ErrInvalid é devolvido quando o token apresentado não existe, expirou, ou
 // tem formato inválido.
@@ -61,12 +77,13 @@ var ErrReuseDetected = errors.New("refresh: reuso detectado, sessão revogada")
 type Manager struct {
 	store Store
 	ttl   time.Duration
+	now   func() time.Time
 }
 
 // NewManager cria um Manager que persiste em store e emite tokens válidos
 // por ttl.
 func NewManager(store Store, ttl time.Duration) *Manager {
-	return &Manager{store: store, ttl: ttl}
+	return &Manager{store: store, ttl: ttl, now: time.Now}
 }
 
 // Issue cria a primeira geração de refresh token de uma nova sessão (ex:
@@ -96,7 +113,7 @@ func (m *Manager) issueInFamily(ctx context.Context, userID, familyID string) (s
 		UserID:    userID,
 		FamilyID:  familyID,
 		TokenHash: hashToken(secret),
-		ExpiresAt: time.Now().Add(m.ttl),
+		ExpiresAt: m.now().Add(m.ttl),
 	}
 	if err := m.store.Create(ctx, t); err != nil {
 		return "", fmt.Errorf("refresh: persistindo token: %w", err)
@@ -106,9 +123,10 @@ func (m *Manager) issueInFamily(ctx context.Context, userID, familyID string) (s
 
 // Rotate troca um refresh token válido por um novo, revogando o
 // apresentado no mesmo golpe -- é assim que se pede um novo access token
-// quando o antigo expira. Devolve ErrReuseDetected (e revoga toda a
-// família) se o token apresentado já tinha sido rodado antes.
-func (m *Manager) Rotate(ctx context.Context, presented string) (newPlaintext string, userID string, err error) {
+// quando o antigo expira. Um token já rodado só volta a servir dentro da
+// RotationGrace e do mesmo IP (pedidos em paralelo); fora disso devolve
+// ErrReuseDetected e revoga toda a família.
+func (m *Manager) Rotate(ctx context.Context, presented, clientIP string) (newPlaintext string, userID string, err error) {
 	found, ok, err := m.store.FindByHash(ctx, hashToken(presented))
 	if err != nil {
 		return "", "", fmt.Errorf("refresh: procurando token: %w", err)
@@ -116,20 +134,28 @@ func (m *Manager) Rotate(ctx context.Context, presented string) (newPlaintext st
 	if !ok {
 		return "", "", ErrInvalid
 	}
-	if found.RevokedAt != nil {
-		if revokeErr := m.store.RevokeFamily(ctx, found.FamilyID, time.Now()); revokeErr != nil {
+	now := m.now()
+	if found.RevokedAt == nil {
+		if now.After(found.ExpiresAt) {
+			return "", "", ErrInvalid
+		}
+		won, err := m.store.MarkRotated(ctx, found.ID, now, clientIP)
+		if err != nil {
+			return "", "", fmt.Errorf("refresh: revogando token usado: %w", err)
+		}
+		if !won {
+			// Outro pedido rodou-o entre a leitura e agora: decide a margem.
+			if found, _, err = m.store.FindByHash(ctx, hashToken(presented)); err != nil {
+				return "", "", fmt.Errorf("refresh: procurando token: %w", err)
+			}
+		}
+	}
+	if found.RevokedAt != nil && !m.inGrace(ctx, found, clientIP, now) {
+		if revokeErr := m.store.RevokeFamily(ctx, found.FamilyID, now); revokeErr != nil {
 			return "", "", fmt.Errorf("refresh: revogando família após reuso: %w", revokeErr)
 		}
 		return "", "", ErrReuseDetected
 	}
-	if time.Now().After(found.ExpiresAt) {
-		return "", "", ErrInvalid
-	}
-
-	if err := m.store.Revoke(ctx, found.ID, time.Now()); err != nil {
-		return "", "", fmt.Errorf("refresh: revogando token usado: %w", err)
-	}
-
 	next, err := m.issueInFamily(ctx, found.UserID, found.FamilyID)
 	if err != nil {
 		return "", "", err
@@ -137,19 +163,34 @@ func (m *Manager) Rotate(ctx context.Context, presented string) (newPlaintext st
 	return next, found.UserID, nil
 }
 
+// inGrace: o token foi revogado por uma rotação (não por logout ou
+// revogação da sessão) há menos de RotationGrace, do mesmo IP, e a sessão
+// continua viva.
+func (m *Manager) inGrace(ctx context.Context, t Token, clientIP string, now time.Time) bool {
+	if t.RotatedAt == nil || !t.RevokedAt.Equal(*t.RotatedAt) || now.Sub(*t.RotatedAt) > RotationGrace {
+		return false
+	}
+	if clientIP == "" || t.RotatedIP != clientIP {
+		return false
+	}
+	active, err := m.store.FamilyActive(ctx, t.FamilyID, now)
+	return err == nil && active
+}
+
 // Revoke encerra a sessão associada ao token apresentado (ex: logout) --
-// não é erro chamar com um token já inválido/inexistente, o resultado
-// final (sessão terminada) é o mesmo.
+// a família inteira, porque a margem da rotação pode ter deixado mais de
+// um token válido na mesma sessão. Não é erro chamar com um token já
+// inválido/inexistente, o resultado final (sessão terminada) é o mesmo.
 func (m *Manager) Revoke(ctx context.Context, presented string) error {
 	found, ok, err := m.store.FindByHash(ctx, hashToken(presented))
 	if err != nil {
 		return fmt.Errorf("refresh: procurando token: %w", err)
 	}
-	if !ok || found.RevokedAt != nil {
+	if !ok {
 		return nil
 	}
-	if err := m.store.Revoke(ctx, found.ID, time.Now()); err != nil {
-		return fmt.Errorf("refresh: revogando token: %w", err)
+	if err := m.store.RevokeFamily(ctx, found.FamilyID, m.now()); err != nil {
+		return fmt.Errorf("refresh: revogando sessão: %w", err)
 	}
 	return nil
 }

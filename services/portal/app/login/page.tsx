@@ -26,6 +26,7 @@ export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [remember, setRemember] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [step, setStep] = useState<Step>({ kind: "password" });
@@ -40,7 +41,7 @@ export default function LoginPage() {
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, password, remember }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -93,7 +94,7 @@ export default function LoginPage() {
       const res = await fetch("/api/auth/login/mfa", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mfaToken: step.mfaToken, code: code.trim(), email }),
+        body: JSON.stringify({ mfaToken: step.mfaToken, code: code.trim(), email, remember }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -112,7 +113,7 @@ export default function LoginPage() {
     const res = await fetch("/api/auth/login/mfa/confirm", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mfaToken: step.mfaToken, code: c, email }),
+      body: JSON.stringify({ mfaToken: step.mfaToken, code: c, email, remember }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -200,6 +201,10 @@ export default function LoginPage() {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
           />
+          <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: "normal" }}>
+            <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} style={{ width: "auto", margin: 0 }} />
+            Manter sessão iniciada neste computador (14 dias)
+          </label>
           <button className="primary" type="submit" disabled={loading}>
             {loading ? "A entrar..." : "Entrar"}
           </button>

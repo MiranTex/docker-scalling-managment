@@ -314,7 +314,7 @@ func (f *fakeRefresh) Issue(_ context.Context, userID string) (string, error) {
 	return tok, nil
 }
 
-func (f *fakeRefresh) Rotate(ctx context.Context, presented string) (string, string, error) {
+func (f *fakeRefresh) Rotate(ctx context.Context, presented, _ string) (string, string, error) {
 	f.mu.Lock()
 	userID, ok := f.owner[presented]
 	if !ok {

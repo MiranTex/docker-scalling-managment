@@ -78,7 +78,7 @@ type APIKeyIssuer interface {
 // *refresh.Manager.
 type RefreshIssuer interface {
 	Issue(ctx context.Context, userID string) (string, error)
-	Rotate(ctx context.Context, presented string) (newPlaintext, userID string, err error)
+	Rotate(ctx context.Context, presented, clientIP string) (newPlaintext, userID string, err error)
 	Revoke(ctx context.Context, presented string) error
 }
 
@@ -477,7 +477,7 @@ func (h *Handler) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	newRefresh, userID, err := h.refresh.Rotate(r.Context(), req.RefreshToken)
+	newRefresh, userID, err := h.refresh.Rotate(r.Context(), req.RefreshToken, clientIP(r))
 	if errors.Is(err, refresh.ErrReuseDetected) {
 		// A sessão inteira já foi revogada pelo Rotate -- do ponto de
 		// vista do cliente, o efeito é o mesmo de um token inválido; quem

@@ -348,13 +348,13 @@ func (db *DB) Create(ctx context.Context, t refresh.Token) error {
 // FindByHash implementa refresh.Store.
 func (db *DB) FindByHash(ctx context.Context, tokenHash string) (refresh.Token, bool, error) {
 	var t refresh.Token
-	var revokedAt sql.NullTime
+	var revokedAt, rotatedAt sql.NullTime
 	err := db.sql.QueryRowContext(ctx, `
-		SELECT id, user_id, family_id, token_hash, expires_at, revoked_at
+		SELECT id, user_id, family_id, token_hash, expires_at, revoked_at, rotated_at, rotated_ip
 		FROM auth.refresh_tokens
 		WHERE token_hash = $1`,
 		tokenHash,
-	).Scan(&t.ID, &t.UserID, &t.FamilyID, &t.TokenHash, &t.ExpiresAt, &revokedAt)
+	).Scan(&t.ID, &t.UserID, &t.FamilyID, &t.TokenHash, &t.ExpiresAt, &revokedAt, &rotatedAt, &t.RotatedIP)
 	if errors.Is(err, sql.ErrNoRows) {
 		return refresh.Token{}, false, nil
 	}
@@ -364,7 +364,37 @@ func (db *DB) FindByHash(ctx context.Context, tokenHash string) (refresh.Token, 
 	if revokedAt.Valid {
 		t.RevokedAt = &revokedAt.Time
 	}
+	if rotatedAt.Valid {
+		t.RotatedAt = &rotatedAt.Time
+	}
 	return t, true, nil
+}
+
+// MarkRotated implementa refresh.Store: o UPDATE condicional decide qual
+// de dois pedidos em paralelo rodou o token.
+func (db *DB) MarkRotated(ctx context.Context, id string, at time.Time, ip string) (bool, error) {
+	res, err := db.sql.ExecContext(ctx,
+		`UPDATE auth.refresh_tokens SET revoked_at = $2, rotated_at = $2, rotated_ip = $3 WHERE id = $1 AND revoked_at IS NULL`,
+		id, at, ip,
+	)
+	if err != nil {
+		return false, fmt.Errorf("store: rodando refresh token: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n == 1, nil
+}
+
+// FamilyActive implementa refresh.Store.
+func (db *DB) FamilyActive(ctx context.Context, familyID string, now time.Time) (bool, error) {
+	var active bool
+	err := db.sql.QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM auth.refresh_tokens WHERE family_id = $1 AND revoked_at IS NULL AND expires_at > $2)`,
+		familyID, now,
+	).Scan(&active)
+	if err != nil {
+		return false, fmt.Errorf("store: sessão de refresh tokens: %w", err)
+	}
+	return active, nil
 }
 
 // Revoke implementa refresh.Store.
