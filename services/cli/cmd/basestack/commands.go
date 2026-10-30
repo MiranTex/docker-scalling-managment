@@ -170,10 +170,9 @@ func cmdUp(args []string) error {
 	}
 	printAddresses(s)
 	fmt.Printf(`
-Primeira vez?
-  1. Regista-te em %s/register com %s
-  2. basestack restart auth   (promove essa conta a super-admin)
-  3. Entra de novo no portal.
+Primeira vez? Regista-te em %s/register com %s -- fica logo administrador.
+O registo fica fechado a todos os outros: as contas criam-se no portal
+(Administração > Utilizadores). Sem acesso à conta: basestack reset-password <email>
 `, s.PortalURL(), s.AdminEmail)
 	return nil
 }
@@ -418,6 +417,20 @@ func cmdPull(args []string) error {
 	}
 	fmt.Println("Imagens atualizadas. Aplica com: basestack up")
 	return nil
+}
+
+// cmdResetPassword dá uma password temporária a uma conta (ex: o
+// administrador esqueceu a dele e o registo está fechado). Corre-se na
+// máquina da plataforma -- ter acesso a ela é a autorização.
+func cmdResetPassword(args []string) error {
+	if len(args) != 1 {
+		return errors.New("uso: basestack reset-password <email>")
+	}
+	_, dir, err := loadSettings()
+	if err != nil {
+		return err
+	}
+	return compose(dir, "exec", "-T", "auth", "/usr/local/bin/authd", "reset-password", args[0]).Run()
 }
 
 func cmdUninstall(args []string) error {

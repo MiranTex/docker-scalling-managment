@@ -50,7 +50,11 @@ export default function RegisterPage() {
   return (
     <main className="page">
       <div className="card">
-        <h1>Criar conta</h1>
+        <h1>Primeiro administrador</h1>
+        <p className="muted">
+          Só para a instalação nova: regista aqui o e-mail de administrador que configuraste no <code>basestack init</code>.
+          Todas as outras contas são criadas por um administrador, no portal.
+        </p>
         {error && <div className="error">{error}</div>}
         <form onSubmit={handleSubmit}>
           <label htmlFor="email">E-mail</label>

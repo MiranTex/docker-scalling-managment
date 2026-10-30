@@ -32,6 +32,8 @@ type fakeUsers struct {
 	nextID  int
 	byEmail map[string]store.User
 	hashes  map[string]string // por userID
+	// revokedSessions: contas cujas sessões foram revogadas.
+	revokedSessions map[string]bool
 }
 
 func newFakeUsers() *fakeUsers {
@@ -117,6 +119,40 @@ func (f *fakeUsers) UpdateUserRole(_ context.Context, id, role string) (bool, er
 		}
 	}
 	return false, nil
+}
+
+func (f *fakeUsers) CountUsersByRole(_ context.Context, role string) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for _, u := range f.byEmail {
+		if u.Role == role {
+			n++
+		}
+	}
+	return n, nil
+}
+
+func (f *fakeUsers) SetUserPassword(_ context.Context, id, hash string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, u := range f.byEmail {
+		if u.ID == id {
+			f.hashes[id] = hash
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (f *fakeUsers) RevokeUserSessions(_ context.Context, userID string, _ time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.revokedSessions == nil {
+		f.revokedSessions = map[string]bool{}
+	}
+	f.revokedSessions[userID] = true
+	return nil
 }
 
 // setRole é um atalho só de teste para preparar um utilizador já

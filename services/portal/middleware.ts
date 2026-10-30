@@ -54,6 +54,8 @@ export const config = {
     "/projects/:path*",
     "/metrics/:path*",
     "/cli-login",
+    "/account",
+    "/api/account/:path*",
     "/api/tokens/:path*",
     "/api/admin/:path*",
     "/api/platform/:path*",

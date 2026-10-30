@@ -391,6 +391,28 @@ func (db *DB) RevokeFamily(ctx context.Context, familyID string, revokedAt time.
 	return nil
 }
 
+// SetUserPassword troca a password de uma conta (hash já calculado).
+func (db *DB) SetUserPassword(ctx context.Context, id, passwordHash string) (bool, error) {
+	res, err := db.sql.ExecContext(ctx, `UPDATE auth.users SET password_hash = $2 WHERE id = $1`, id, passwordHash)
+	if err != nil {
+		return false, fmt.Errorf("store: trocando password: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// RevokeUserSessions revoga todos os refresh tokens de uma conta: depois
+// de trocar a password, as sessões abertas (noutros browsers, por quem a
+// roubou) deixam de renovar.
+func (db *DB) RevokeUserSessions(ctx context.Context, userID string, revokedAt time.Time) error {
+	_, err := db.sql.ExecContext(ctx,
+		`UPDATE auth.refresh_tokens SET revoked_at = $2 WHERE user_id = $1 AND revoked_at IS NULL`, userID, revokedAt)
+	if err != nil {
+		return fmt.Errorf("store: revogando sessões: %w", err)
+	}
+	return nil
+}
+
 // isUniqueViolation reconhece o erro de constraint UNIQUE do Postgres
 // (SQLSTATE 23505) sem depender de importar os tipos internos do driver
 // pgx — checar o texto é frágil em geral, mas o código de erro do Postgres

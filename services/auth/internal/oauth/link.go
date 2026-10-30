@@ -37,6 +37,19 @@ var ErrEmailNotVerified = errors.New("oauth: provider não confirma que o e-mail
 type Manager struct {
 	providers map[string]Provider
 	store     Store
+	// signupClosed: sem conta com o e-mail, o login social não cria uma
+	// (o registo está fechado -- as contas cria-as um administrador).
+	signupClosed bool
+}
+
+// ErrSignupClosed: o login social não encontrou conta e o registo está
+// fechado.
+var ErrSignupClosed = errors.New("oauth: sem conta e o registo está fechado")
+
+// CloseSignup impede o login social de criar contas novas.
+func (m *Manager) CloseSignup() *Manager {
+	m.signupClosed = true
+	return m
 }
 
 // NewManager cria um Manager com os providers informados, indexados pelo
@@ -117,6 +130,9 @@ func (m *Manager) Login(ctx context.Context, providerName, code string) (store.U
 		return user, nil
 	}
 
+	if m.signupClosed {
+		return store.User{}, ErrSignupClosed
+	}
 	user, err := m.store.CreateUserWithoutPassword(ctx, identity.Email, identity.EmailVerified)
 	if err != nil {
 		return store.User{}, fmt.Errorf("oauth: criando conta nova: %w", err)

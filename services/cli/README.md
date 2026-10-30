@@ -17,8 +17,12 @@ basestack init              # domínio, porta do portal, email do admin; gera os
 basestack up                # arranca tudo: plataforma + métricas e logs
 ```
 
-Na primeira vez: regista-te no portal com o email do admin e corre
-`basestack restart auth` -- essa conta passa a super-admin.
+Na primeira vez: regista-te no portal (`/register`) com o email do admin --
+essa conta fica logo super-admin. O registo fica fechado a todos os
+outros: as contas criam-se no portal (Administração > Utilizadores), onde
+também se define uma password nova a quem a esqueceu. Se for o próprio
+admin a esquecê-la: `basestack reset-password <email>` nesta máquina dá-lhe
+uma temporária.
 
 | Comando | |
 |---|---|

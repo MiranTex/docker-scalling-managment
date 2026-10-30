@@ -7,7 +7,10 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -21,6 +24,7 @@ import (
 	"auth/internal/httpapi"
 	"auth/internal/keystore"
 	"auth/internal/oauth"
+	"auth/internal/password"
 	"auth/internal/refresh"
 	"auth/internal/store"
 	"auth/internal/token"
@@ -44,14 +48,24 @@ func main() {
 	db := connectWithRetry(ctx, cfg.databaseURL, logger)
 	defer db.Close()
 
+	// "authd reset-password <email>" (via "basestack reset-password" na
+	// máquina da plataforma): recuperar o acesso sem registo nem e-mail.
+	if len(os.Args) > 1 && os.Args[1] == "reset-password" {
+		os.Exit(resetPassword(ctx, db, os.Args[2:]))
+	}
+
 	promoteBootstrapSuperAdmin(ctx, db, cfg, logger)
 
 	tokens := token.NewManager(cfg.issuer, cfg.audience, cfg.accessTokenTTL, signingKey)
 	refreshTokens := refresh.NewManager(db, cfg.refreshTokenTTL)
 	apiKeys := apikey.NewManager(db.APIKeyStore())
 	oauthLogin := oauth.NewManager(db, oauthProviders(cfg, logger)...)
+	if !cfg.openRegistration {
+		oauthLogin.CloseSignup()
+	}
 	emailVerifier := verification.NewManager(db.EmailVerificationStore(), cfg.emailVerificationTTL)
-	handler := httpapi.NewHandler(db, db, tokens, refreshTokens, apiKeys, oauthLogin, emailVerifier, db, cfg.accessTokenTTL, logger)
+	handler := httpapi.NewHandler(db, db, tokens, refreshTokens, apiKeys, oauthLogin, emailVerifier, db, cfg.accessTokenTTL, logger).
+		WithRegistration(cfg.openRegistration, cfg.bootstrapSuperAdminEmail)
 
 	srv := &http.Server{
 		Addr:    cfg.listenAddr,
@@ -159,4 +173,44 @@ func connectWithRetry(ctx context.Context, dsn string, logger *slog.Logger) *sto
 	logger.Error("não foi possível conectar à base de dados", "attempts", maxAttempts, "err", lastErr)
 	os.Exit(1)
 	return nil
+}
+
+// resetPassword dá uma password temporária a uma conta e revoga as sessões
+// dela. Quem corre isto tem acesso à máquina da plataforma -- é esse o
+// controlo.
+func resetPassword(ctx context.Context, db *store.DB, args []string) int {
+	if len(args) != 1 {
+		fmt.Fprintln(os.Stderr, "uso: authd reset-password <email>")
+		return 2
+	}
+	user, found, err := db.FindUserByEmail(ctx, args[0])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	if !found {
+		fmt.Fprintf(os.Stderr, "não há conta com o e-mail %s\n", args[0])
+		return 1
+	}
+	raw := make([]byte, 12)
+	if _, err := rand.Read(raw); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	temp := base64.RawURLEncoding.EncodeToString(raw)
+	hash, err := password.Hash(temp)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	if _, err := db.SetUserPassword(ctx, user.ID, hash); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	if err := db.RevokeUserSessions(ctx, user.ID, time.Now()); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	fmt.Printf("Password temporária de %s: %s\nEntra no portal com ela e troca-a (menu da conta > Alterar password).\n", user.Email, temp)
+	return 0
 }

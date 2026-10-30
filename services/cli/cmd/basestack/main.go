@@ -30,6 +30,8 @@ Uso:
   basestack down        pára a plataforma (as apps dos projetos continuam)
   basestack down --all  pára a plataforma e as apps e bases de dados dos projetos
   basestack doctor      verifica os requisitos desta máquina
+  basestack reset-password <email>
+                        password temporária para uma conta (ex: o admin esqueceu a dele)
   basestack firewall    abre na ufw a rede do cluster (só para a rede local)
   basestack dev build   constrói as imagens a partir do código (desenvolvimento)
   basestack dev build --platform linux/amd64,linux/arm64 --push
@@ -76,6 +78,8 @@ func main() {
 		err = cmdDown(args)
 	case "doctor":
 		err = cmdDoctor(args)
+	case "reset-password":
+		err = cmdResetPassword(args)
 	case "firewall":
 		err = cmdFirewall(args)
 	case "node":
