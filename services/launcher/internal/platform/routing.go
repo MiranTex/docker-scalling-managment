@@ -190,12 +190,24 @@ func (s *Service) buildRouting(ctx context.Context) (traefikConfig, error) {
 		if err != nil {
 			continue
 		}
-		var servers []traefikServer
+		// As réplicas de um nó perdido só servem enquanto não houver outra
+		// pronta (ex: o túnel caiu mas a máquina está viva, e as substitutas
+		// ainda estão a arrancar).
+		var servers, fallback []traefikServer
 		for _, c := range byService[svc.ID+"/"+rev.ID] {
-			if s.rt.isReady(containerName(c)) {
-				// Pelo IP na rede do ambiente (ver replicaAddr).
-				servers = append(servers, traefikServer{URL: fmt.Sprintf("http://%s:%d", replicaAddr(c), rev.Port)})
+			if !s.rt.isReady(containerName(c)) {
+				continue
 			}
+			// Pelo IP na rede do ambiente (ver replicaAddr).
+			server := traefikServer{URL: fmt.Sprintf("http://%s:%d", replicaAddr(c), rev.Port)}
+			if isLostPhantom(c) {
+				fallback = append(fallback, server)
+			} else {
+				servers = append(servers, server)
+			}
+		}
+		if len(servers) == 0 {
+			servers = fallback
 		}
 		if len(servers) == 0 {
 			continue

@@ -26,8 +26,16 @@ import (
 
 const (
 	nodeLossGrace = 60 * time.Second
-	// LabelPhantom marca, só em memória, uma réplica de um nó sem sinal.
-	LabelPhantom = "base-stack.phantom"
+	// LabelPhantom marca, só em memória, uma réplica de um nó sem sinal
+	// (phantomSilent: conta) ou perdido (phantomLost: já não conta -- as
+	// substitutas são criadas -- mas, se ainda responder pela overlay, serve
+	// até haver uma substituta pronta; ver buildRouting).
+	LabelPhantom  = "base-stack.phantom"
+	phantomSilent = "silent"
+	phantomLost   = "lost"
+	// lostKeep: quanto tempo depois de perdido um nó ainda se guardam as
+	// réplicas dele para o routing.
+	lostKeep = 10 * time.Minute
 )
 
 type liveness int
@@ -102,31 +110,39 @@ func (s *Service) appReplicas(ctx context.Context, all bool) (out []dockerclient
 			since = w.started
 		}
 		seen, known := w.seen[n.Name]
+		ghosts := func(kind string) {
+			for _, c := range seen {
+				ghost := c
+				ghost.Labels = maps.Clone(c.Labels)
+				ghost.Labels[LabelPhantom] = kind
+				out = append(out, ghost)
+			}
+		}
 		switch {
+		case now.Sub(since) >= nodeLossGrace+lostKeep:
+			// Já houve tempo de sobra para as substitutas: esquece-as.
+			for _, c := range seen {
+				s.rt.forget(containerName(c))
+			}
+			delete(w.seen, n.Name)
 		case now.Sub(since) >= nodeLossGrace:
 			if !w.lost[n.Name] {
 				w.lost[n.Name] = true
 				s.logger.Warn("nó perdido -- as réplicas dele vão ser substituídas", "node", n.Name, "replicas", len(seen))
-				for _, c := range seen {
-					s.rt.forget(containerName(c))
-				}
-				delete(w.seen, n.Name)
 			}
+			ghosts(phantomLost)
 		case !known:
 			unknown = true
 		default:
-			for _, c := range seen {
-				ghost := c
-				ghost.Labels = maps.Clone(c.Labels)
-				ghost.Labels[LabelPhantom] = "true"
-				out = append(out, ghost)
-			}
+			ghosts(phantomSilent)
 		}
 	}
 	return out, unknown, nil
 }
 
-func isPhantom(c dockerclient.Container) bool { return c.Labels[LabelPhantom] == "true" }
+func isPhantom(c dockerclient.Container) bool { return c.Labels[LabelPhantom] != "" }
+
+func isLostPhantom(c dockerclient.Container) bool { return c.Labels[LabelPhantom] == phantomLost }
 
 // probePhantom: o health check de uma réplica de um nó sem sinal, só pela
 // rede (o Docker dela não se alcança). Um worker não tem como ser

@@ -254,3 +254,31 @@ func TestDetachedReplicaIsReplaced(t *testing.T) {
 		t.Errorf("réplicas depois de substituir: %d, queria 2", total)
 	}
 }
+
+// Um nó perdido cujas réplicas ainda respondem (o túnel caiu, a máquina
+// não) continua a servir enquanto não houver outra réplica pronta.
+func TestLostNodeServesUntilReplacementsAreReady(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := twoRemoteNodes(t)
+	svc.reconcileOnce(ctx)
+	for _, n := range []string{"node-1", "node-2"} {
+		svc.agents.drop(n, nil)
+		svc.agents.mu.Lock()
+		svc.agents.watch.down[n] = time.Now().Add(-2 * nodeLossGrace)
+		svc.agents.mu.Unlock()
+	}
+	// Sem nós para as substitutas (o local está em manutenção).
+	svc.reconcileOnce(ctx)
+	cfg, err := svc.buildRouting(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.HTTP == nil || len(cfg.HTTP.Services) != 1 {
+		t.Fatalf("sem substitutas, as réplicas dos nós perdidos deviam continuar no routing: %+v", cfg.HTTP)
+	}
+	for _, svcCfg := range cfg.HTTP.Services {
+		if n := len(svcCfg.LoadBalancer.Servers); n != 2 {
+			t.Errorf("servidores = %d, queria as 2 réplicas antigas", n)
+		}
+	}
+}

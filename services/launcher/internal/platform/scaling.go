@@ -139,9 +139,14 @@ func (s *Service) reconcileService(ctx context.Context, p store.Project, e store
 	for _, c := range containers {
 		name := containerName(c)
 		if isPhantom(c) {
-			// Nó sem sinal: conta, mas não se lhe mexe (ver liveness.go).
+			// Nó sem sinal: conta, mas não se lhe mexe; nó perdido: já não
+			// conta, mas continua a ser verificada (ver liveness.go).
 			if c.Labels[LabelRevision] == rev.ID {
-				current = append(current, c)
+				if isLostPhantom(c) {
+					s.probePhantom(ctx, c, rev)
+				} else {
+					current = append(current, c)
+				}
 			}
 			continue
 		}
