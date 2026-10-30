@@ -88,6 +88,18 @@ func desktopPath(host string) (string, error) {
 	return filepath.Join(h, ".docker", "certs.d", host, "ca.crt"), nil
 }
 
+// PubliclyTrusted: o host tem um certificado em que o sistema já confia
+// (ex: Let's Encrypt, num domínio público) -- não há CA a instalar.
+func PubliclyTrusted(host string) bool {
+	c := &http.Client{Timeout: 10 * time.Second}
+	resp, err := c.Get("https://" + host + "/v2/")
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return true
+}
+
 // Trusted diz se o docker desta máquina já confia nesta CA para o host.
 func Trusted(caPEM []byte, host string) bool {
 	switch {
