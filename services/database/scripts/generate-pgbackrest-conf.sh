@@ -40,10 +40,16 @@ repo1-path=${PGBACKREST_REPO_PATH}
 EOF
     ;;
   s3)
-    # Mesmo bloco serve para qualquer storage S3-compatible, incluindo
-    # MinIO -- só o endpoint muda. Ver README "Trocar o storage de
-    # backup" para as variáveis exigidas aqui.
-    : "${PGBACKREST_S3_VERIFY_TLS:=y}"
+    # Mesmo bloco serve para qualquer storage S3-compatible -- só o
+    # endpoint muda. Ver README "Trocar o storage de backup" para as
+    # variáveis exigidas aqui. Chamam-se BACKUP_S3_* e não PGBACKREST_*:
+    # o pgBackRest lê toda variável PGBACKREST_X como a opção X e avisa
+    # em cada comando das que não conhece.
+    : "${BACKUP_S3_VERIFY_TLS:=y}"
+    # host = o bucket é um subdomínio do endpoint (AWS); path = vai no
+    # caminho -- o storage interno da basestack só tem um nome ("storage").
+    : "${BACKUP_S3_URI_STYLE:=host}"
+    : "${BACKUP_S3_PORT:=443}"
     cat > /etc/pgbackrest/pgbackrest.conf <<EOF
 [global]
 repo1-retention-full=${PGBACKREST_RETENTION_FULL}
@@ -51,13 +57,19 @@ process-max=${PGBACKREST_PROCESS_MAX}
 log-level-console=info
 log-level-file=detail
 repo1-type=s3
-repo1-s3-bucket=${PGBACKREST_S3_BUCKET:?PGBACKREST_S3_BUCKET obrigatório quando PGBACKREST_REPO_TYPE=s3}
-repo1-s3-endpoint=${PGBACKREST_S3_ENDPOINT:?PGBACKREST_S3_ENDPOINT obrigatório quando PGBACKREST_REPO_TYPE=s3}
-repo1-s3-region=${PGBACKREST_S3_REGION:?PGBACKREST_S3_REGION obrigatório quando PGBACKREST_REPO_TYPE=s3}
-repo1-s3-key=${PGBACKREST_S3_KEY:?PGBACKREST_S3_KEY obrigatório quando PGBACKREST_REPO_TYPE=s3}
-repo1-s3-key-secret=${PGBACKREST_S3_KEY_SECRET:?PGBACKREST_S3_KEY_SECRET obrigatório quando PGBACKREST_REPO_TYPE=s3}
-repo1-storage-verify-tls=${PGBACKREST_S3_VERIFY_TLS}
+repo1-s3-bucket=${BACKUP_S3_BUCKET:?BACKUP_S3_BUCKET obrigatório quando PGBACKREST_REPO_TYPE=s3}
+repo1-s3-endpoint=${BACKUP_S3_ENDPOINT:?BACKUP_S3_ENDPOINT obrigatório quando PGBACKREST_REPO_TYPE=s3}
+repo1-s3-region=${BACKUP_S3_REGION:?BACKUP_S3_REGION obrigatório quando PGBACKREST_REPO_TYPE=s3}
+repo1-s3-key=${BACKUP_S3_KEY:?BACKUP_S3_KEY obrigatório quando PGBACKREST_REPO_TYPE=s3}
+repo1-s3-key-secret=${BACKUP_S3_KEY_SECRET:?BACKUP_S3_KEY_SECRET obrigatório quando PGBACKREST_REPO_TYPE=s3}
+repo1-storage-verify-tls=${BACKUP_S3_VERIFY_TLS}
+repo1-s3-uri-style=${BACKUP_S3_URI_STYLE}
+repo1-storage-port=${BACKUP_S3_PORT}
 EOF
+    # Uma CA própria (ex: a da instalação basestack) em vez das do sistema.
+    if [[ -n "${BACKUP_S3_CA_FILE:-}" ]]; then
+      echo "repo1-storage-ca-file=${BACKUP_S3_CA_FILE}" >> /etc/pgbackrest/pgbackrest.conf
+    fi
     ;;
   *)
     echo "[generate-pgbackrest-conf] PGBACKREST_REPO_TYPE inválido: '$PGBACKREST_REPO_TYPE' (use 'posix' ou 's3')" >&2

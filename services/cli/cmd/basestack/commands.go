@@ -162,6 +162,13 @@ func cmdUp(args []string) error {
 	if err := waitForRoutes(dir, s); err != nil {
 		fmt.Printf("\nAviso: %v\n", err)
 	}
+	// A configuração e as chaves só existem nesta máquina: uma cópia
+	// cifrada vai para o storage sempre que mudam.
+	if s.BackupRecipient == "" {
+		fmt.Print("\nAviso: a configuração e as chaves desta instalação não têm cópia.\n  Liga-a com: basestack backup init\n")
+	} else if err := uploadConfig(dir, s, false); err != nil {
+		fmt.Printf("\nAviso: a cópia da configuração falhou (%v).\n", err)
+	}
 	// Os nós remotos buscam o agente ao registry desta plataforma.
 	if imageExists(s.image("agent")) {
 		if err := pushQuiet(s, "agent"); err != nil {

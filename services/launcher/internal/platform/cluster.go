@@ -158,6 +158,10 @@ func (c *clusterDocker) ContainerLogs(ctx context.Context, id string, tail int) 
 	return c.locate(ctx, id).ContainerLogs(ctx, id, tail)
 }
 
+func (c *clusterDocker) CopyFromContainer(ctx context.Context, id, path string) (io.ReadCloser, error) {
+	return c.locate(ctx, id).CopyFromContainer(ctx, id, path)
+}
+
 func (c *clusterDocker) ContainerStats(ctx context.Context, id string) (*dockerclient.Stats, error) {
 	return c.locate(ctx, id).ContainerStats(ctx, id)
 }

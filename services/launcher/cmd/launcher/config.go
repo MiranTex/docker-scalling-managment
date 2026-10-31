@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"launcher/internal/httpapi"
+	"launcher/internal/objstore"
 	"launcher/internal/platform"
 )
 
@@ -95,6 +96,12 @@ type config struct {
 	// domínios próprios (LAUNCHER_PUBLIC_IPS, separados por vírgula).
 	publicIPs []string
 
+	// O storage da plataforma, para as cópias dos backups (vazio desliga).
+	backupStorageURL       string
+	backupStorageAccessKey string
+	backupStorageSecretKey string
+	backupStorageCA        string
+
 	// grafana: sincronização de organizações/membros com o Grafana (ver
 	// internal/grafanasync). GRAFANA_URL vazio desliga.
 	grafanaURL, grafanaUser, grafanaPassword, grafanaDashboards string
@@ -168,6 +175,11 @@ func loadConfig() config {
 
 		traefikDynamicDir: os.Getenv("LAUNCHER_TRAEFIK_DYNAMIC_DIR"),
 		publicIPs:         envList("LAUNCHER_PUBLIC_IPS"),
+
+		backupStorageURL:       os.Getenv("LAUNCHER_BACKUP_STORAGE_URL"),
+		backupStorageAccessKey: os.Getenv("LAUNCHER_BACKUP_STORAGE_ACCESS_KEY"),
+		backupStorageSecretKey: os.Getenv("LAUNCHER_BACKUP_STORAGE_SECRET_KEY"),
+		backupStorageCA:        os.Getenv("LAUNCHER_BACKUP_STORAGE_CA"),
 
 		grafanaURL:        os.Getenv("GRAFANA_URL"),
 		grafanaUser:       envString("GRAFANA_ADMIN_USER", "admin"),
@@ -324,4 +336,13 @@ func envList(key string) []string {
 		}
 	}
 	return out
+}
+
+// backupStore é o cliente do storage da plataforma; nil sem
+// LAUNCHER_BACKUP_STORAGE_URL.
+func (c config) backupStore() (*objstore.Client, error) {
+	if c.backupStorageURL == "" {
+		return nil, nil
+	}
+	return objstore.New(c.backupStorageURL, "us-east-1", c.backupStorageAccessKey, c.backupStorageSecretKey, c.backupStorageCA)
 }

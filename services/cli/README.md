@@ -146,6 +146,28 @@ scripts/cluster-dind.sh reload launcher  # depois de reconstruir uma imagem
 scripts/cluster-dind.sh down
 ```
 
+## Backups
+
+A plataforma tem um storage próprio (`storage`, SeaweedFS com a API do S3),
+só na rede interna e por HTTPS com a CA da instalação. Lá ficam:
+
+- `database` -- o pgBackRest da base da plataforma (completo ao domingo,
+  incremental nos outros dias, e o WAL contínuo);
+- `addon-backups` -- uma cópia de cada dump diário dos addons Postgres
+  (`<projeto>/<ambiente>/<addon>/`, as 30 mais recentes);
+- `config` -- `settings.json`, `tls/` e a chave de assinatura do auth,
+  cifrados com [age](https://age-encryption.org). O servidor só tem a chave
+  pública: sem a privada, ninguém abre a cópia.
+
+```sh
+basestack backup init      # gera o par de chaves; a privada aparece uma vez -- guarda-a fora do servidor
+basestack backup status    # o que está no storage e o estado do pgBackRest
+basestack backup now       # backup da base e da configuração agora (--full para completo)
+```
+
+O `up` manda uma cópia da configuração sempre que ela muda. Tudo isto
+continua nesta máquina: a cópia para fora dela é o passo seguinte.
+
 ## Registry de imagens
 
 `basestack up` arranca também um registry em `registry.<domínio>` (HTTPS

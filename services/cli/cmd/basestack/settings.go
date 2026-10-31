@@ -44,6 +44,10 @@ type Settings struct {
 	// ExtraTerminalOrigins: outros host:porta de onde um portal abre o
 	// terminal (ex: um portal de desenvolvimento noutra porta).
 	ExtraTerminalOrigins []string `json:"extraTerminalOrigins,omitempty"`
+	// BackupRecipient: a chave pública (age) com que se cifra a cópia da
+	// configuração no storage. A privada fica com quem opera, fora daqui
+	// (basestack backup init). Vazio = sem cópia da configuração.
+	BackupRecipient string `json:"backupRecipient,omitempty"`
 
 	Secrets Secrets `json:"secrets"`
 }
@@ -65,6 +69,11 @@ type Secrets struct {
 	// MFAKey cifra os segredos do 2FA na base (AES-256, base64). Perdê-la
 	// obriga a reconfigurar o 2FA de todas as contas.
 	MFAKey string `json:"mfaKey"`
+	// O storage da plataforma (backups): a credencial S3 de quem lá
+	// escreve, e a base das chaves JWT das portas internas dele.
+	StorageAccessKey string `json:"storageAccessKey"`
+	StorageSecretKey string `json:"storageSecretKey"`
+	StorageJWTKey    string `json:"storageJwtKey"`
 }
 
 // lanIP é o IP desta máquina na rede local (o da interface que sai para
@@ -136,6 +145,7 @@ func generateSecrets() Secrets {
 		TemplatesadminDBPassword: password(), LauncherDBPassword: password(),
 		SecretsMasterKey: key(), LauncherSecretsKey: key(), GrafanaAdminPassword: password(),
 		RegistryPullPassword: password(), RegistryHTTPSecret: password(), MFAKey: key(),
+		StorageAccessKey: accessKey(), StorageSecretKey: password(), StorageJWTKey: password(),
 	}
 }
 
@@ -151,7 +161,17 @@ func (s *Settings) fillMissingSecrets() bool {
 	fill(&s.Secrets.RegistryPullPassword, fresh.RegistryPullPassword)
 	fill(&s.Secrets.RegistryHTTPSecret, fresh.RegistryHTTPSecret)
 	fill(&s.Secrets.MFAKey, fresh.MFAKey)
+	fill(&s.Secrets.StorageAccessKey, fresh.StorageAccessKey)
+	fill(&s.Secrets.StorageSecretKey, fresh.StorageSecretKey)
+	fill(&s.Secrets.StorageJWTKey, fresh.StorageJWTKey)
 	return changed
+}
+
+// accessKey: o "utilizador" S3, no formato das chaves da AWS.
+func accessKey() string {
+	b := make([]byte, 10)
+	mustRead(b)
+	return strings.ToUpper(hex.EncodeToString(b))
 }
 
 func mustRead(b []byte) {

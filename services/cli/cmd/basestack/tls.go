@@ -33,6 +33,10 @@ type tlsFiles struct {
 	// certificado -- mudar de certificado muda o nome, e isso faz o
 	// launcher reescrever o routing e o Traefik recarregá-lo.
 	RegistryCert, RegistryKey string
+	// StorageCert/Key: o HTTPS do storage da plataforma (tls/storage/),
+	// também com o hash -- um certificado novo muda a montagem no compose
+	// e o container é recriado com ele.
+	StorageCert, StorageKey string
 }
 
 func ensureTLS(dir string, s Settings) (tlsFiles, error) {
@@ -47,7 +51,61 @@ func ensureTLS(dir string, s Settings) (tlsFiles, error) {
 	if err := ensureTokenKey(tdir); err != nil {
 		return tlsFiles{}, err
 	}
-	return ensureRegistryCert(tdir, []string{s.RegistryHost(), "api." + s.Domain}, caCert, caKey)
+	files, err := ensureRegistryCert(tdir, []string{s.RegistryHost(), "api." + s.Domain}, caCert, caKey)
+	if err != nil {
+		return tlsFiles{}, err
+	}
+	files.StorageCert, files.StorageKey, err = ensureServerCert(tdir, "storage", []string{"storage"}, caCert, caKey)
+	return files, err
+}
+
+// ensureServerCert emite (ou reaproveita) um certificado da CA da
+// instalação para um serviço interno (tls/<nome>.crt) e copia-o para
+// tls/<nome>/ com o hash no nome. Renova-se como o do registry.
+func ensureServerCert(tdir, name string, hosts []string, ca *x509.Certificate, caKey *ecdsa.PrivateKey) (cert, key string, err error) {
+	certPath, keyPath := filepath.Join(tdir, name+".crt"), filepath.Join(tdir, name+".key")
+	der, err := readPEM(certPath)
+	if c, perr := x509.ParseCertificate(der); err != nil || perr != nil || !coversAll(c, hosts) || time.Until(c.NotAfter) < 30*24*time.Hour {
+		k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			return "", "", err
+		}
+		tmpl := &x509.Certificate{
+			SerialNumber: serial(), Subject: pkix.Name{CommonName: hosts[0]}, DNSNames: hosts,
+			NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().AddDate(2, 0, 0),
+			KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		}
+		if der, err = x509.CreateCertificate(rand.Reader, tmpl, ca, &k.PublicKey, caKey); err != nil {
+			return "", "", err
+		}
+		kder, _ := x509.MarshalECPrivateKey(k)
+		if err := writePEM(keyPath, "EC PRIVATE KEY", kder, 0o600); err != nil {
+			return "", "", err
+		}
+		if err := writePEM(certPath, "CERTIFICATE", der, 0o644); err != nil {
+			return "", "", err
+		}
+	}
+	keyDER, err := readPEM(keyPath)
+	if err != nil {
+		return "", "", err
+	}
+	sum := sha256.Sum256(der)
+	tag := hex.EncodeToString(sum[:6])
+	cert, key = name+"-"+tag+".crt", name+"-"+tag+".key"
+	dir := filepath.Join(tdir, name)
+	old, _ := filepath.Glob(filepath.Join(dir, name+"-*"))
+	for _, o := range old {
+		if b := filepath.Base(o); b != cert && b != key {
+			_ = os.Remove(o)
+		}
+	}
+	if err := writePEM(filepath.Join(dir, cert), "CERTIFICATE", der, 0o644); err != nil {
+		return "", "", err
+	}
+	// O serviço corre no seu container, com outro utilizador, e tem de a
+	// ler -- como a do Traefik.
+	return cert, key, writePEM(filepath.Join(dir, key), "EC PRIVATE KEY", keyDER, 0o644)
 }
 
 func writePEM(path, typ string, der []byte, mode os.FileMode) error {

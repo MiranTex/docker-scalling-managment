@@ -42,8 +42,15 @@ func main() {
 	_ = godotenv.Load()
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	cfg := loadConfig()
-	if len(os.Args) > 1 && os.Args[1] == "join-token" {
-		os.Exit(joinToken(cfg))
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "join-token":
+			os.Exit(joinToken(cfg))
+		case "backup-config":
+			os.Exit(backupConfig(cfg, os.Args[2:]))
+		case "backup-status":
+			os.Exit(backupStatus(cfg))
+		}
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -66,7 +73,14 @@ func main() {
 			os.Exit(1)
 		}
 	}
-	platformSvc := platform.New(db, docker, box, cfg.platformConfig(), logger)
+	pc := cfg.platformConfig()
+	backups, err := cfg.backupStore()
+	if err != nil {
+		logger.Error("configuração inválida do storage dos backups", "err", err)
+		os.Exit(1)
+	}
+	pc.Backups = backups
+	platformSvc := platform.New(db, docker, box, pc, logger)
 	go platformSvc.Run(ctx)
 
 	mux := handler.Routes()

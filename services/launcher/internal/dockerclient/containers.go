@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -407,4 +410,24 @@ func (s *Stats) CPUPercent() float64 {
 		cpus = 1
 	}
 	return cpuDelta / systemDelta * cpus * 100
+}
+
+// CopyFromContainer devolve um tar com o caminho pedido, como "docker cp"
+// -- funciona com o container parado (os volumes dele incluídos). Quem
+// chama fecha-o.
+func (c *Client) CopyFromContainer(ctx context.Context, id, path string) (io.ReadCloser, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/containers/"+id+"/archive?"+url.Values{"path": {path}}.Encode(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("dockerclient: building request: %w", err)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("dockerclient: request failed: %w", err)
+	}
+	if resp.StatusCode >= 400 {
+		defer resp.Body.Close()
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("dockerclient: copiando %s de %s: status %d: %s", path, id, resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+	return resp.Body, nil
 }
