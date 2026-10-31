@@ -243,3 +243,91 @@ func TestReconcilerRemovesOrphanAddonContainers(t *testing.T) {
 		t.Error("container de addon sem linha na base devia ter sido removido")
 	}
 }
+
+func TestStorageAddon(t *testing.T) {
+	ctx := context.Background()
+	svc, docker := newTestService(t)
+	svc.cfg.StorageImage = "chrislusf/seaweedfs:4.50"
+	setupEnv(t, svc)
+
+	a, err := svc.CreateAddon(ctx, "loja", "prod", CreateAddonInput{Slug: "files", Kind: "storage"}, "t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.EnvVar != "STORAGE" || a.Host != "files:8333" || a.BackupEnabled || len(a.EnvVars) != 6 {
+		t.Errorf("addon = %+v", a)
+	}
+	req := docker.created["bs-loja-prod-files"]
+	if req.Image != "chrislusf/seaweedfs:4.50" || req.Cmd[0] != "mini" || req.HostConfig.Binds[0] != "bs-loja-prod-files-data:/data" {
+		t.Errorf("pedido de criação = %+v", req)
+	}
+	containerEnv := map[string]string{}
+	for _, kv := range req.Env {
+		k, v, _ := strings.Cut(kv, "=")
+		containerEnv[k] = v
+	}
+	key, secret := containerEnv["AWS_ACCESS_KEY_ID"], containerEnv["AWS_SECRET_ACCESS_KEY"]
+	if len(key) != 20 || secret == "" || containerEnv["WEED_JWT_FILER_SIGNING_KEY"] == "" {
+		t.Errorf("env do container = %v", req.Env)
+	}
+
+	// Os serviços do ambiente recebem todas as variáveis, com as mesmas
+	// credenciais do container.
+	_, env, _ := svc.Scope(ctx, "loja", "prod")
+	got, err := svc.containerEnv(ctx, env, store.Revision{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"STORAGE_URL=http://" + key + ":" + secret + "@files:8333/app",
+		"STORAGE_ENDPOINT=http://files:8333",
+		"STORAGE_BUCKET=app",
+		"STORAGE_REGION=us-east-1",
+		"STORAGE_ACCESS_KEY_ID=" + key,
+		"STORAGE_SECRET_ACCESS_KEY=" + secret,
+	}
+	for _, w := range want {
+		if !contains(got, w) {
+			t.Errorf("env dos serviços sem %s: %v", w, got)
+		}
+	}
+
+	creds, err := svc.AddonCredentials(ctx, "loja", "prod", "files")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if creds.User != key || creds.Password != secret || creds.Database != "app" || creds.Port != 8333 || creds.Region != "us-east-1" {
+		t.Errorf("credenciais = %+v", creds)
+	}
+
+	// Recriado pelo reconciliador, mantém as credenciais.
+	if err := docker.RemoveContainer(ctx, "bs-loja-prod-files", true); err != nil {
+		t.Fatal(err)
+	}
+	svc.reconcileOnce(ctx)
+	if !contains(docker.created["bs-loja-prod-files"].Env, "AWS_ACCESS_KEY_ID="+key) {
+		t.Error("o container recriado mudou de credenciais")
+	}
+
+	// Um segundo storage precisa de outro prefixo.
+	if _, err := svc.CreateAddon(ctx, "loja", "prod", CreateAddonInput{Slug: "media", Kind: "storage"}, "t"); !errors.Is(err, ErrConflict) {
+		t.Errorf("prefixo repetido: err = %v", err)
+	}
+	if _, err := svc.CreateAddon(ctx, "loja", "prod", CreateAddonInput{Slug: "media", Kind: "storage", EnvVar: "MEDIA"}, "t"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Apagar leva todos os segredos do addon.
+	if err := svc.DeleteAddon(ctx, "loja", "prod", "files", false); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = svc.containerEnv(ctx, env, store.Revision{})
+	for _, kv := range got {
+		if strings.HasPrefix(kv, "STORAGE_") {
+			t.Errorf("segredo ficou depois de apagar: %s", kv)
+		}
+	}
+	if !contains(got, "MEDIA_BUCKET=app") {
+		t.Errorf("o outro storage perdeu as variáveis: %v", got)
+	}
+}

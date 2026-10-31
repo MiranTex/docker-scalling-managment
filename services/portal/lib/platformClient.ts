@@ -66,9 +66,12 @@ export function envPath(project: string, env: string, ...rest: string[]): string
 export type Addon = {
   id: string;
   slug: string;
-  kind: "postgres" | "redis";
+  kind: "postgres" | "redis" | "storage";
   image: string;
+  // No storage é o prefixo (STORAGE -> STORAGE_URL, STORAGE_BUCKET...).
   envVar: string;
+  // As variáveis que o addon injeta nos serviços do ambiente.
+  envVars: string[];
   vcpu: number;
   memoryMb: number;
   backupEnabled: boolean;

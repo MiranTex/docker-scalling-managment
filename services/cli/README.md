@@ -226,7 +226,11 @@ bs exec gymapp/dev/web --debug                # busybox ao lado (imagens sem she
 bs exec gymapp/dev/gymapp-database            # shell no addon (psql -U app -d app)
 bs port-forward gymapp/dev/gymapp-database    # túnel em 127.0.0.1:5432
 bs port-forward gymapp/dev/cache --port 16379 # outra porta local
+bs port-forward gymapp/dev/files              # storage em 127.0.0.1:8333
 ```
+
+Num addon storage, `port-forward` mostra o endpoint, o bucket e as chaves
+-- o que se põe no aws cli, rclone ou Cyberduck.
 
 `port-forward` mostra a ligação pronta a usar -- o URL, o JDBC e os campos
 um a um (com a password do addon -- fica registado na auditoria do

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, servicePath, splitArgs, type Service } from "@/lib/platformClient";
+import { api, envPath, servicePath, splitArgs, type Addon, type Service } from "@/lib/platformClient";
 import { useCan } from "@/lib/projectRole";
 import { formatLabels, parseLabels } from "@/lib/labels";
 
@@ -46,6 +46,16 @@ export default function ServiceConfig({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [addons, setAddons] = useState<Addon[]>([]);
+
+  // As variáveis que os addons injetam não estão no formulário -- mostram-se
+  // à parte, para se saber que existem.
+  useEffect(() => {
+    api<Addon[]>(envPath(project, env, "addons"))
+      .then(setAddons)
+      .catch(() => setAddons([]));
+  }, [project, env]);
+  const ownVars = new Set(form.env.split("\n").map((l) => l.split("=")[0].trim()));
 
   // A página recarrega o serviço a cada 3s; só se repõe o formulário se
   // ninguém o estiver a editar.
@@ -167,8 +177,20 @@ export default function ServiceConfig({
       <label htmlFor="cfg-env">Variáveis de ambiente (NOME=valor, uma por linha; segredos com {"${secret:NOME}"})</label>
       <textarea id="cfg-env" rows={6} value={form.env} onChange={(e) => set("env", e.target.value)} />
       <p className="muted">
-        As URLs dos addons do ambiente (ex: DATABASE_URL) e PORT são injetadas automaticamente; uma variável aqui com o
-        mesmo nome sobrepõe-se.
+        Injetadas automaticamente: <code>PORT</code>
+        {addons.map((a) => (
+          <span key={a.id}>
+            {" · "}
+            {(a.envVars ?? [a.envVar]).map((v, i) => (
+              <span key={v}>
+                {i > 0 && ", "}
+                <code style={ownVars.has(v) ? { textDecoration: "line-through" } : undefined}>{v}</code>
+              </span>
+            ))}{" "}
+            ({a.slug})
+          </span>
+        ))}
+        . Uma variável aqui com o mesmo nome sobrepõe-se{addons.some((a) => (a.envVars ?? [a.envVar]).some((v) => ownVars.has(v))) && " (riscadas)"}.
       </p>
 
       <h2>Scaling (aplica-se já)</h2>

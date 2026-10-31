@@ -214,13 +214,13 @@ func (s *Service) reconcileAddons(ctx context.Context) {
 		info, err := s.docker.InspectContainer(ctx, name)
 		switch {
 		case isNotFound(err):
-			pw, err := s.addonPassword(ctx, e.ID, a)
+			user, pw, err := s.addonLogin(ctx, e.ID, a)
 			if err != nil {
 				s.logger.Error("reconciliador: password do addon", "addon", name, "err", err)
 				continue
 			}
 			s.logger.Warn("reconciliador: container do addon desapareceu, a recriar", "addon", name)
-			if err := s.startAddonContainer(ctx, p, e, a, pw); err != nil {
+			if err := s.startAddonContainer(ctx, p, e, a, user, pw); err != nil {
 				s.logger.Error("reconciliador: recriando addon", "addon", name, "err", err)
 			}
 		case err != nil:

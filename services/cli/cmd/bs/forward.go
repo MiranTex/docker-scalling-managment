@@ -23,14 +23,18 @@ type credentials struct {
 	Password string `json:"password"`
 	Database string `json:"database"`
 	Port     int    `json:"port"`
+	Region   string `json:"region,omitempty"`
 }
 
 // connectionURL é o que se cola no cliente (psql, DBeaver, a app local).
 func (c credentials) connectionURL(port int) string {
 	u := url.URL{Host: "127.0.0.1:" + strconv.Itoa(port), User: url.UserPassword(c.User, c.Password), Path: "/" + c.Database}
-	if c.Kind == "redis" {
+	switch c.Kind {
+	case "redis":
 		u.Scheme = "redis"
-	} else {
+	case "storage":
+		u.Scheme = "http"
+	default:
 		u.Scheme, u.RawQuery = "postgres", "sslmode=disable"
 	}
 	return u.String()
@@ -40,6 +44,14 @@ func (c credentials) connectionURL(port int) string {
 // campos (ex: DBeaver, "Connect by: Host"), cada valor à parte.
 func (c credentials) clientSettings(port int) string {
 	var b strings.Builder
+	if c.Kind == "storage" {
+		// Os clientes do S3 (aws cli, rclone, Cyberduck) pedem os campos à
+		// parte, não um URL.
+		fmt.Fprintf(&b, "  Endpoint:   http://127.0.0.1:%d\n  Bucket:     %s\n  Região:     %s\n", port, c.Database, c.Region)
+		fmt.Fprintf(&b, "  Access key: %s\n  Secret key: %s\n", c.User, c.Password)
+		fmt.Fprintf(&b, "  Ex:         AWS_ACCESS_KEY_ID=%s AWS_SECRET_ACCESS_KEY=%s aws --endpoint-url http://127.0.0.1:%d s3 ls s3://%s\n", c.User, c.Password, port, c.Database)
+		return b.String()
+	}
 	fmt.Fprintf(&b, "  URL:        %s\n", c.connectionURL(port))
 	if c.Kind != "redis" {
 		fmt.Fprintf(&b, "  JDBC:       jdbc:postgresql://127.0.0.1:%d/%s  (DBeaver, DataGrip)\n", port, c.Database)
@@ -56,7 +68,7 @@ func (c credentials) clientSettings(port int) string {
 
 func cmdPortForward(args []string) error {
 	fs := flag.NewFlagSet("port-forward", flag.ContinueOnError)
-	port := fs.Int("port", 0, "porta local (por defeito a do addon: 5432 ou 6379)")
+	port := fs.Int("port", 0, "porta local (por defeito a do addon: 5432, 6379 ou 8333)")
 	if err := fs.Parse(reorder(args)); err != nil {
 		return err
 	}
