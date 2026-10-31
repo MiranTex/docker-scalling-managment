@@ -1,8 +1,10 @@
 package platform
 
 import (
+	"archive/tar"
 	"context"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"time"
@@ -28,6 +30,8 @@ type fakeDocker struct {
 	// exitCode/logs: o que WaitContainer/ContainerLogs devolvem a jobs.
 	exitCode int
 	logs     string
+	// copied: os ficheiros que entraram em containers (CopyToContainer).
+	copied map[string]bool
 	// lastJobCmd é o cmd do último container de job criado.
 	lastJobCmd []string
 	// pulls regista cada pull (imagem e utilizador das credenciais).
@@ -185,6 +189,27 @@ func (f *fakeDocker) WaitContainer(ctx context.Context, _ string) (int, error) {
 }
 
 func (f *fakeDocker) ContainerLogs(context.Context, string, int) (string, error) { return f.logs, nil }
+
+// CopyToContainer guarda os nomes dos ficheiros que entraram, por
+// container ("<id>:<dir>/<nome>").
+func (f *fakeDocker) CopyToContainer(_ context.Context, id, dir string, archive io.Reader) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.copied == nil {
+		f.copied = map[string]bool{}
+	}
+	tr := tar.NewReader(archive)
+	for {
+		h, err := tr.Next()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		f.copied[id+":"+dir+"/"+h.Name] = true
+	}
+}
 
 func (f *fakeDocker) CreateVolume(_ context.Context, name string, labels map[string]string) error {
 	f.mu.Lock()

@@ -225,6 +225,8 @@ func (s *Service) reconcileAddons(ctx context.Context) {
 			}
 		case err != nil:
 			s.logger.Error("reconciliador: inspecionando addon", "addon", name, "err", err)
+		case a.Kind == store.AddonPostgres && info.Config.Labels[LabelAddonTLS] != "1":
+			s.enableAddonTLS(ctx, p, e, a, name)
 		case !info.State.Running && info.State.Status != "restarting":
 			s.logger.Warn("reconciliador: addon parado, a arrancar", "addon", name, "state", info.State.Status)
 			if err := s.docker.StartContainer(ctx, name); err != nil {
@@ -289,5 +291,27 @@ func (s *Service) runDueBackups(ctx context.Context) {
 		if job.Status != store.JobSucceeded {
 			s.logger.Error("backups: backup agendado falhou", "addon", a.Slug, "job_id", job.ID)
 		}
+	}
+}
+
+// enableAddonTLS passa um addon Postgres de antes do TLS para o container
+// com TLS: pára-o com calma, recria-o (os dados ficam no volume) e põe o
+// URL do segredo em sslmode=require -- os serviços recebem-no no próximo
+// deploy. O servidor continua a aceitar ligações sem TLS, por isso os que
+// ainda têm o URL antigo não param.
+func (s *Service) enableAddonTLS(ctx context.Context, p store.Project, e store.Environment, a store.Addon, name string) {
+	user, pw, err := s.addonLogin(ctx, e.ID, a)
+	if err != nil {
+		s.logger.Error("reconciliador: password do addon", "addon", name, "err", err)
+		return
+	}
+	s.logger.Info("reconciliador: a ligar o TLS do addon (fica uns segundos em baixo)", "addon", name)
+	_ = s.docker.StopContainer(ctx, name, 30)
+	if err := s.startAddonContainer(ctx, p, e, a, user, pw); err != nil {
+		s.logger.Error("reconciliador: recriando addon com TLS", "addon", name, "err", err)
+		return
+	}
+	if err := s.putSecret(ctx, e.ID, addonURLVar(a), addonURL(a, user, pw), "addon:"+a.Slug, "platform"); err != nil {
+		s.logger.Error("reconciliador: URL do addon com TLS", "addon", name, "err", err)
 	}
 }

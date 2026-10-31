@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -110,7 +111,7 @@ func addonURL(a store.Addon, user, password string) string {
 	case store.AddonStorage:
 		return fmt.Sprintf("http://%s:%s@%s:8333/%s", user, password, a.Slug, storageBucket)
 	}
-	return fmt.Sprintf("postgres://%s:%s@%s:5432/%s?sslmode=disable", addonPGUser, password, a.Slug, addonPGDatabase)
+	return fmt.Sprintf("postgres://%s:%s@%s:5432/%s?sslmode=require", addonPGUser, password, a.Slug, addonPGDatabase)
 }
 
 // addonURLVar é o segredo com a URL (e a password) do addon. No storage,
@@ -333,6 +334,8 @@ func (s *Service) startAddonContainer(ctx context.Context, p store.Project, e st
 			return fmt.Errorf("criando volume %s: %w", backupVol, err)
 		}
 		req.Env = []string{"POSTGRES_USER=" + addonPGUser, "POSTGRES_PASSWORD=" + password, "POSTGRES_DB=" + addonPGDatabase}
+		req.Cmd = postgresTLSCmd
+		req.Labels[LabelAddonTLS] = "1"
 		req.HostConfig.Binds = []string{dataVol + ":/var/lib/postgresql/data"}
 		req.Healthcheck = &dockerclient.Healthcheck{
 			Test:     []string{"CMD-SHELL", "pg_isready -U " + addonPGUser + " -d " + addonPGDatabase},
@@ -385,6 +388,15 @@ func (s *Service) startAddonContainer(ctx context.Context, p store.Project, e st
 	id, err := s.docker.CreateContainer(ctx, name, req)
 	if err != nil {
 		return fmt.Errorf("criando container do addon: %w", err)
+	}
+	if a.Kind == store.AddonPostgres {
+		archive, err := addonTLSArchive(a.Slug)
+		if err != nil {
+			return fmt.Errorf("certificado do addon: %w", err)
+		}
+		if err := s.docker.CopyToContainer(ctx, id, "/etc", bytes.NewReader(archive)); err != nil {
+			return fmt.Errorf("certificado do addon: %w", err)
+		}
 	}
 	if err := s.docker.StartContainer(ctx, id); err != nil {
 		return fmt.Errorf("arrancando addon: %w", err)

@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -407,4 +410,24 @@ func (s *Stats) CPUPercent() float64 {
 		cpus = 1
 	}
 	return cpuDelta / systemDelta * cpus * 100
+}
+
+// CopyToContainer extrai um tar em dir dentro do container (como "docker
+// cp" no sentido contrário) -- serve antes de o arrancar.
+func (c *Client) CopyToContainer(ctx context.Context, id, dir string, archive io.Reader) error {
+	req, err := http.NewRequestWithContext(ctx, "PUT", c.baseURL+"/containers/"+id+"/archive?"+url.Values{"path": {dir}}.Encode(), archive)
+	if err != nil {
+		return fmt.Errorf("dockerclient: building request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-tar")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("dockerclient: request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("dockerclient: copiando para %s:%s: status %d: %s", id, dir, resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+	return nil
 }
