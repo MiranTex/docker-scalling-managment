@@ -504,7 +504,7 @@ services:
 
   prometheus:
     restart: unless-stopped
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.15.1
     # O launcher liga-o a cada rede de ambiente (métricas das apps).
     container_name: basestack-prometheus
     command:
@@ -528,7 +528,7 @@ services:
 
   loki:
     restart: unless-stopped
-    image: grafana/loki:latest
+    image: grafana/loki:3.7.9
     command: -config.file=/etc/loki/loki-config.yml
     volumes:
       - ./config/loki-config.yml:/etc/loki/loki-config.yml:ro
@@ -540,7 +540,7 @@ services:
 
   promtail:
     restart: unless-stopped
-    image: grafana/promtail:latest
+    image: grafana/promtail:3.6.8
     command: -config.file=/etc/promtail/promtail-config.yml
     volumes:
       - ./config/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
@@ -571,7 +571,7 @@ services:
 
   grafana:
     restart: unless-stopped
-    image: grafana/grafana:latest
+    image: grafana/grafana:13.2.4
     container_name: basestack-grafana
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "false"
