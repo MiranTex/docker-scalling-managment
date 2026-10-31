@@ -1,5 +1,6 @@
 "use client";
 
+import { writeClipboard } from "@/lib/clipboard";
 import Loading from "@/components/Skeleton";
 import { useEffect, useState } from "react";
 import Modal from "@/components/Modal";
@@ -320,7 +321,7 @@ function JoinModal({ join, onClose }: { join: NodeJoinToken; onClose: () => void
 
   async function copy() {
     try {
-      await navigator.clipboard.writeText(join.command);
+      await writeClipboard(join.command);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {

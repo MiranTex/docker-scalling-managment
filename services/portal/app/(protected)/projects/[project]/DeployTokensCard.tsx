@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Modal from "@/components/Modal";
 import { api, projectPath, type DeployToken, type Environment } from "@/lib/platformClient";
 import { useCan } from "@/lib/projectRole";
 
@@ -19,6 +20,7 @@ export default function DeployTokensCard({
   const [name, setName] = useState("");
   const [env, setEnv] = useState("");
   const [created, setCreated] = useState<{ token: string; env: string } | null>(null);
+  const [creating, setCreating] = useState(false);
 
   async function load() {
     try {
@@ -41,6 +43,7 @@ export default function DeployTokensCard({
       });
       setCreated({ token: res.token, env: env || environments[0]?.slug || "production" });
       setName("");
+      setCreating(false);
       await load();
     } catch (e) {
       setError((e as Error).message);
@@ -62,12 +65,19 @@ export default function DeployTokensCard({
 
   return (
     <div className="card wide">
-      <h2>Tokens de deploy (CI)</h2>
+      <div className="page-header">
+        <h2>Tokens de deploy (CI)</h2>
+        {canEdit && (
+          <button className="primary" onClick={() => setCreating(true)}>
+            Novo token
+          </button>
+        )}
+      </div>
       <p className="muted">
         Um token só consegue fazer deploy e ver o estado dos deploys deste projeto -- não mexe em configuração, segredos
         nem dados.
       </p>
-      {error && <div className="error">{error}</div>}
+      {!creating && error && <div className="error">{error}</div>}
       {created && (
         <div className="notice">
           <p>
@@ -119,9 +129,10 @@ export default function DeployTokensCard({
           </tbody>
         </table>
       )}
-      {canEdit && (
-        <>
-<div className="form-grid">
+      {creating && (
+        <Modal title="Novo token de deploy" onClose={() => setCreating(false)}>
+          {error && <div className="error">{error}</div>}
+          <div className="form-grid">
         <div>
           <label htmlFor="tok-name">Nome</label>
           <input id="tok-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="github-actions" />
@@ -138,10 +149,10 @@ export default function DeployTokensCard({
           </select>
         </div>
       </div>
-      <button className="secondary" disabled={!name.trim()} onClick={create}>
-        Criar token
-      </button>
-        </>
+          <button className="primary" disabled={!name.trim()} onClick={create}>
+            Criar token
+          </button>
+        </Modal>
       )}
     </div>
   );

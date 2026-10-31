@@ -1,6 +1,7 @@
 "use client";
 
 import Loading from "@/components/Skeleton";
+import Modal from "@/components/Modal";
 import { useEffect, useState } from "react";
 import { api, projectPath, type Member } from "@/lib/platformClient";
 import { useCan } from "@/lib/projectRole";
@@ -18,6 +19,7 @@ export default function MembersTab({ project }: { project: string }) {
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<Member["role"]>("developer");
   const [saving, setSaving] = useState(false);
+  const [adding, setAdding] = useState(false);
 
   async function load() {
     try {
@@ -38,6 +40,7 @@ export default function MembersTab({ project }: { project: string }) {
     try {
       await api(projectPath(project, "members"), { method: "POST", body: JSON.stringify({ email: email.trim(), role }) });
       setEmail("");
+      setAdding(false);
       await load();
     } catch (e) {
       setError((e as Error).message);
@@ -67,11 +70,18 @@ export default function MembersTab({ project }: { project: string }) {
 
   return (
     <div className="card wide">
-      <p className="muted">
-        Quem pode ver ou mexer neste projeto. Os administradores da plataforma (infra-admin) veem e gerem todos os
-        projetos sem precisarem de estar aqui.
-      </p>
-      {error && <div className="error">{error}</div>}
+      <div className="page-header">
+        <p className="muted" style={{ margin: 0 }}>
+          Quem pode ver ou mexer neste projeto. Os administradores da plataforma (infra-admin) veem e gerem todos os
+          projetos sem precisarem de estar aqui.
+        </p>
+        {canManage && (
+          <button className="primary" onClick={() => setAdding(true)}>
+            Adicionar membro
+          </button>
+        )}
+      </div>
+      {!adding && error && <div className="error">{error}</div>}
       {!members ? (
         <Loading />
       ) : members.length === 0 ? (
@@ -117,9 +127,9 @@ export default function MembersTab({ project }: { project: string }) {
         </table>
       )}
 
-      {canManage && (
-        <>
-          <h2>Adicionar membro</h2>
+      {adding && (
+        <Modal title="Adicionar membro" onClose={() => setAdding(false)}>
+          {error && <div className="error">{error}</div>}
           <p className="muted">A pessoa tem de já ter conta (registo no portal).</p>
           <div className="form-grid">
             <div>
@@ -140,7 +150,7 @@ export default function MembersTab({ project }: { project: string }) {
           <button className="primary" disabled={saving || !email.trim()} onClick={add}>
             {saving ? "A adicionar..." : "Adicionar"}
           </button>
-        </>
+        </Modal>
       )}
     </div>
   );

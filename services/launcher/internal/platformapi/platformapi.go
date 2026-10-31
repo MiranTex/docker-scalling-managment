@@ -151,6 +151,13 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+bucket+"/domains", developer(a.addBucketDomain))
 	mux.HandleFunc("POST "+bucket+"/domains/{hostname}/verify", developer(a.verifyBucketDomain))
 	mux.HandleFunc("DELETE "+bucket+"/domains/{hostname}", developer(a.deleteBucketDomain))
+	// Os ficheiros de um bucket, pelo portal -- developer também para ler:
+	// podem ter dados dos clientes.
+	mux.HandleFunc("GET "+bucket+"/files", developer(a.listFiles))
+	mux.HandleFunc("GET "+bucket+"/files/{key...}", developer(a.downloadFile))
+	mux.HandleFunc("PUT "+bucket+"/files/{key...}", developer(a.uploadFile))
+	mux.HandleFunc("DELETE "+bucket+"/files/{key...}", developer(a.deleteFile))
+	mux.HandleFunc("GET "+bucket+"/link", developer(a.fileLink))
 	mux.HandleFunc("GET /v1/projects/{project}/tunnel/ws", a.tunnelSocket)
 
 	const services = "/v1/projects/{project}/environments/{env}/services"

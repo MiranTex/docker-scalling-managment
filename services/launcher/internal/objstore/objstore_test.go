@@ -26,6 +26,20 @@ func TestSignMatchesAWSExample(t *testing.T) {
 	}
 }
 
+// O exemplo de link assinado da documentação da AWS (GET test.txt,
+// válido 86400 s).
+func TestPresignMatchesAWSExample(t *testing.T) {
+	c := &Client{Endpoint: "https://examplebucket.s3.amazonaws.com", Region: "us-east-1", AccessKey: "AKIAIOSFODNN7EXAMPLE",
+		SecretKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", now: func() time.Time { return time.Date(2013, 5, 24, 0, 0, 0, 0, time.UTC) }}
+	got, err := c.PresignGet("", "test.txt", 86400*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "X-Amz-Signature=aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404") {
+		t.Errorf("link = %s", got)
+	}
+}
+
 func TestEscaping(t *testing.T) {
 	if got := escapePath("/b/a b/ç+x"); got != "/b/a%20b/%C3%A7%2Bx" {
 		t.Errorf("escapePath = %s", got)

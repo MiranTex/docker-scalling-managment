@@ -439,6 +439,23 @@ button:disabled {
   cursor: not-allowed;
 }
 
+/* Um botão com ar de link (ex: as pastas no explorador de ficheiros). */
+button.link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font-weight: 400;
+}
+
+button.link:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+.error-text {
+  color: var(--danger);
+}
+
 .error {
   background: #fef2f2;
   border: 1px solid #fecaca;

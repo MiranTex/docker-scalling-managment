@@ -2,7 +2,11 @@ package platformapi
 
 import (
 	"fmt"
+	"io"
+	"mime"
 	"net/http"
+	"path"
+	"strconv"
 
 	"launcher/internal/platform"
 )
@@ -239,4 +243,74 @@ func (a *API) cancelJob(w http.ResponseWriter, r *http.Request, who principal) {
 		return
 	}
 	w.WriteHeader(http.StatusAccepted)
+}
+
+func bucketTarget(r *http.Request) string {
+	return r.PathValue("project") + "/" + r.PathValue("env") + "/" + r.PathValue("addon") + "/" + r.PathValue("bucket")
+}
+
+func (a *API) listFiles(w http.ResponseWriter, r *http.Request, _ principal) {
+	p, e, addon := addonPath(r)
+	files, err := a.svc.ListFiles(r.Context(), p, e, addon, r.PathValue("bucket"), r.URL.Query().Get("prefix"))
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, files)
+}
+
+// downloadFile serve o ficheiro como anexo, em streaming.
+func (a *API) downloadFile(w http.ResponseWriter, r *http.Request, _ principal) {
+	p, e, addon := addonPath(r)
+	key := r.PathValue("key")
+	body, size, contentType, err := a.svc.OpenFile(r.Context(), p, e, addon, r.PathValue("bucket"), key)
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	defer body.Close()
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	w.Header().Set("Content-Type", contentType)
+	if size >= 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+	}
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": path.Base(key)}))
+	_, _ = io.Copy(w, body)
+}
+
+// uploadFile: o corpo é o ficheiro, com Content-Length (o storage precisa
+// do tamanho) e o Content-Type com que fica guardado.
+func (a *API) uploadFile(w http.ResponseWriter, r *http.Request, who principal) {
+	p, e, addon := addonPath(r)
+	key := r.PathValue("key")
+	body := http.MaxBytesReader(w, r.Body, platform.MaxUploadBytes+1)
+	if err := a.svc.UploadFile(r.Context(), p, e, addon, r.PathValue("bucket"), key, body, r.ContentLength, r.Header.Get("Content-Type")); err != nil {
+		a.fail(w, err)
+		return
+	}
+	a.audit.Log(who.Subject, "bucket.file_upload", bucketTarget(r)+"/"+key, fmt.Sprintf("%d bytes", r.ContentLength))
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *API) deleteFile(w http.ResponseWriter, r *http.Request, who principal) {
+	p, e, addon := addonPath(r)
+	key := r.PathValue("key")
+	if err := a.svc.DeleteFile(r.Context(), p, e, addon, r.PathValue("bucket"), key); err != nil {
+		a.fail(w, err)
+		return
+	}
+	a.audit.Log(who.Subject, "bucket.file_delete", bucketTarget(r)+"/"+key, "")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *API) fileLink(w http.ResponseWriter, r *http.Request, _ principal) {
+	p, e, addon := addonPath(r)
+	link, err := a.svc.FileLink(r.Context(), p, e, addon, r.PathValue("bucket"), r.URL.Query().Get("key"))
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"url": link})
 }
