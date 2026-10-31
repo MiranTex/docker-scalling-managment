@@ -116,6 +116,15 @@ type Terminal struct {
 	debugID string // container de debug a remover no fim
 }
 
+// debugBanner avisa ao abrir o modo debug: o env e os ficheiros que se
+// veem são os do busybox, não os do serviço.
+const debugBanner = `printf '%s\n' \
+  'Modo debug: busybox ao lado do serviço (mesma rede e processos; env e ficheiros próprios).' \
+  "  env do serviço:       tr '\\0' '\\n' < /proc/1/environ" \
+  '  ficheiros do serviço: /proc/1/root/' \
+  ''
+`
+
 // OpenTerminal abre uma shell com pseudo-terminal no alvo. Em modo debug
 // arranca primeiro um container temporário que partilha a rede e os
 // processos do alvo, e a shell abre nele -- serve imagens sem shell, e os
@@ -128,7 +137,7 @@ func (s *Service) OpenTerminal(ctx context.Context, t TerminalTarget, debug bool
 		if err != nil {
 			return nil, err
 		}
-		term.debugID, target, cmd = id, id, []string{"sh"}
+		term.debugID, target, cmd = id, id, []string{"sh", "-c", debugBanner + "exec sh"}
 	}
 	execID, err := s.docker.CreateExec(ctx, target, dockerclient.ExecConfig{Cmd: cmd, Env: []string{"TERM=xterm-256color"}, Tty: true})
 	if err == nil {
