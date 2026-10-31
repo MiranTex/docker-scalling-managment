@@ -229,6 +229,10 @@ type CreateHostConfig struct {
 	RestartPolicy *RestartPolicy `json:"RestartPolicy,omitempty"`
 	// SecurityOpt, ex: "no-new-privileges" -- ver AppSecurityOpt.
 	SecurityOpt []string `json:"SecurityOpt,omitempty"`
+	// CapDrop/CapAdd: as capabilities do Linux do container -- ver
+	// HardenApp.
+	CapDrop []string `json:"CapDrop,omitempty"`
+	CapAdd  []string `json:"CapAdd,omitempty"`
 	// PidMode "container:<id>" partilha os processos de outro container
 	// (o container de debug do terminal vê os do serviço).
 	PidMode string `json:"PidMode,omitempty"`
@@ -242,6 +246,32 @@ type CreateHostConfig struct {
 // utilizador) continua a funcionar.
 func AppSecurityOpt() []string {
 	return []string{"no-new-privileges:true"}
+}
+
+// appCapabilities são as que um container de aplicação mantém: as que os
+// entrypoints comuns usam para arrancar como root e passar a outro
+// utilizador (gosu, su-exec, nginx, php-fpm) e abrir portas baixas. Das
+// que o Docker dá por omissão saem NET_RAW (sockets raw: falsificar
+// pacotes na rede do ambiente), MKNOD, SYS_CHROOT, SETPCAP, SETFCAP e
+// AUDIT_WRITE.
+var appCapabilities = []string{"CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID", "KILL", "SETUID", "SETGID", "NET_BIND_SERVICE"}
+
+// AppPidsLimit: processos e threads por container de aplicação -- trava um
+// fork bomb sem apertar apps com muitas threads (JVM, Node).
+const AppPidsLimit = 4096
+
+// HardenApp aplica a um container de APLICAÇÃO (réplicas, addons, jobs)
+// o mesmo endurecimento: no-new-privileges, só appCapabilities e o limite
+// de processos (se ainda não tiver um).
+func HardenApp(h *CreateHostConfig) *CreateHostConfig {
+	h.SecurityOpt = AppSecurityOpt()
+	h.CapDrop = []string{"ALL"}
+	h.CapAdd = append([]string(nil), appCapabilities...)
+	if h.PidsLimit == nil {
+		limit := int64(AppPidsLimit)
+		h.PidsLimit = &limit
+	}
+	return h
 }
 
 // RestartPolicy segue o formato de HostConfig.RestartPolicy da API do Docker.

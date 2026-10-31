@@ -170,16 +170,15 @@ func (s *Service) createReplica(ctx context.Context, p store.Project, e store.En
 		Cmd:    rev.Cmd,
 		Env:    envVars,
 		Labels: labels,
-		HostConfig: &dockerclient.CreateHostConfig{
+		HostConfig: dockerclient.HardenApp(&dockerclient.CreateHostConfig{
 			NetworkMode:   e.Network,
 			RestartPolicy: dockerclient.UnlessStopped(),
-			SecurityOpt:   dockerclient.AppSecurityOpt(),
 			Resources: dockerclient.Resources{
 				NanoCPUs:   int64(rev.VCPU * 1e9),
 				Memory:     memory,
 				MemorySwap: memory,
 			},
-		},
+		}),
 		// O slug como alias: os outros serviços do ambiente chegam a este
 		// por http://<slug>:<porta>, com round-robin de DNS entre réplicas.
 		NetworkingConfig: dockerclient.WithAliases(e.Network, svc.Slug),

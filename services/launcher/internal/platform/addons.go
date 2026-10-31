@@ -340,16 +340,15 @@ func (s *Service) startAddonContainer(ctx context.Context, p store.Project, e st
 	req := dockerclient.CreateContainerRequest{
 		Image:  a.Image,
 		Labels: labels,
-		HostConfig: &dockerclient.CreateHostConfig{
+		HostConfig: dockerclient.HardenApp(&dockerclient.CreateHostConfig{
 			NetworkMode:   e.Network,
 			RestartPolicy: dockerclient.UnlessStopped(),
-			SecurityOpt:   dockerclient.AppSecurityOpt(),
 			Resources: dockerclient.Resources{
 				NanoCPUs:   int64(a.VCPU * 1e9),
 				Memory:     memory,
 				MemorySwap: memory,
 			},
-		},
+		}),
 		NetworkingConfig: dockerclient.WithAliases(e.Network, a.Slug),
 	}
 	second := int64(time.Second)

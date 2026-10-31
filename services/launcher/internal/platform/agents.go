@@ -277,10 +277,9 @@ func (s *Service) CheckNode(ctx context.Context, name string) (string, error) {
 		Image:  image,
 		Cmd:    []string{"sh", "-c", `echo "olá do nó $(hostname): $(uname -srm)"`},
 		Labels: map[string]string{dockerclient.PlatformLabel: dockerclient.PlatformLabelValue, LabelNode: name, LabelRole: RoleJob},
-		HostConfig: &dockerclient.CreateHostConfig{
-			SecurityOpt: dockerclient.AppSecurityOpt(),
-			Resources:   dockerclient.Resources{NanoCPUs: 250_000_000, Memory: 64 << 20, MemorySwap: 64 << 20},
-		},
+		HostConfig: dockerclient.HardenApp(&dockerclient.CreateHostConfig{
+			Resources: dockerclient.Resources{NanoCPUs: 250_000_000, Memory: 64 << 20, MemorySwap: 64 << 20},
+		}),
 	})
 	if err != nil {
 		return "", fmt.Errorf("criando o container de teste: %w", err)
