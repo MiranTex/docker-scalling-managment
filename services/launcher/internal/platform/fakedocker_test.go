@@ -2,9 +2,11 @@ package platform
 
 import (
 	"archive/tar"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -32,8 +34,10 @@ type fakeDocker struct {
 	logs     string
 	// copied: os ficheiros que entraram em containers (CopyToContainer).
 	copied map[string]bool
-	// lastJobCmd é o cmd do último container de job criado.
+	// lastJobCmd/Env: os do último container de job criado (os de cópia,
+	// sem cmd, não contam).
 	lastJobCmd []string
+	lastJobEnv []string
 	// pulls regista cada pull (imagem e utilizador das credenciais).
 	pulls []string
 	// cpuPercent é o que ContainerStats reporta para todos.
@@ -137,8 +141,8 @@ func (f *fakeDocker) CreateContainer(_ context.Context, name string, req dockerc
 	f.created[name] = req
 	id := "cid-" + name
 	f.containers[id] = dockerclient.Container{ID: id, Names: []string{"/" + name}, Image: req.Image, State: "created", Labels: req.Labels, Created: time.Now().UnixNano()}
-	if req.Labels[LabelRole] == RoleJob {
-		f.lastJobCmd = req.Cmd
+	if req.Labels[LabelRole] == RoleJob && req.Cmd != nil {
+		f.lastJobCmd, f.lastJobEnv = req.Cmd, req.Env
 	}
 	return id, nil
 }
@@ -209,6 +213,17 @@ func (f *fakeDocker) CopyToContainer(_ context.Context, id, dir string, archive 
 		}
 		f.copied[id+":"+dir+"/"+h.Name] = true
 	}
+}
+
+// CopyFromContainer devolve um tar com um ficheiro: o nome pedido, com o
+// caminho como conteúdo.
+func (f *fakeDocker) CopyFromContainer(_ context.Context, _, path string) (io.ReadCloser, error) {
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	_ = tw.WriteHeader(&tar.Header{Name: filepath.Base(path), Mode: 0o644, Size: int64(len(path))})
+	_, _ = tw.Write([]byte(path))
+	_ = tw.Close()
+	return io.NopCloser(&buf), nil
 }
 
 func (f *fakeDocker) CreateVolume(_ context.Context, name string, labels map[string]string) error {

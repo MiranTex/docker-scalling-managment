@@ -47,12 +47,12 @@ services:
       PGBACKREST_REPO_TYPE: posix
       PGBACKREST_REPO_PATH: /var/lib/pgbackrest
       # Quando PGBACKREST_REPO_TYPE=s3, descomenta e preenche:
-      # PGBACKREST_S3_BUCKET: ""
-      # PGBACKREST_S3_ENDPOINT: ""
-      # PGBACKREST_S3_REGION: ""
-      # PGBACKREST_S3_KEY: ""
-      # PGBACKREST_S3_KEY_SECRET: ""
-      # PGBACKREST_S3_VERIFY_TLS: "y" # usa "n" só se for MinIO com TLS auto-assinado
+      # BACKUP_S3_BUCKET: ""
+      # BACKUP_S3_ENDPOINT: ""
+      # BACKUP_S3_REGION: ""
+      # BACKUP_S3_KEY: ""
+      # BACKUP_S3_KEY_SECRET: ""
+      # BACKUP_S3_VERIFY_TLS: "y" # usa "n" só se for MinIO com TLS auto-assinado
       PGBACKREST_RETENTION_FULL: "2"
       PGBACKREST_PROCESS_MAX: "1"
       # Cron (5 campos, UTC): default é full aos domingos 02:00 e

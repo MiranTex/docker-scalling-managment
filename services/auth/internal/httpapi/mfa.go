@@ -51,9 +51,17 @@ func (h *Handler) WithMFA(st MFAStore, box *mfa.Box, issuer string) *Handler {
 
 func (h *Handler) mfaOn() bool { return h.mfaStore != nil && h.mfaBox != nil }
 
-// mfaMandatory: os administradores da plataforma têm de ter 2FA.
-func mfaMandatory(role string) bool {
-	return role == store.RoleSuperAdmin || role == store.RoleInfraAdmin
+// WithMFAOptional deixa o 2FA à escolha de cada um, administradores
+// incluídos (ex: uma instalação de desenvolvimento).
+func (h *Handler) WithMFAOptional() *Handler {
+	h.mfaOptional = true
+	return h
+}
+
+// mfaMandatory: os administradores da plataforma têm de ter 2FA (a não ser
+// que a instalação o deixe opcional).
+func (h *Handler) mfaMandatory(role string) bool {
+	return !h.mfaOptional && (role == store.RoleSuperAdmin || role == store.RoleInfraAdmin)
 }
 
 // Os mfa_token vivem em memória: minutos, e um restart só obriga a voltar
@@ -119,7 +127,7 @@ func (h *Handler) mfaStep(w http.ResponseWriter, r *http.Request, u store.User) 
 	case found && t.Confirmed:
 		writeJSON(w, http.StatusOK, map[string]any{"mfa_required": true, "mfa_token": h.challenges.issue(u, purposeVerify)})
 		return true
-	case mfaMandatory(u.Role):
+	case h.mfaMandatory(u.Role):
 		writeJSON(w, http.StatusOK, map[string]any{"mfa_setup_required": true, "mfa_token": h.challenges.issue(u, purposeSetup)})
 		return true
 	}
@@ -318,7 +326,7 @@ func (h *Handler) handleGetMyMFA(w http.ResponseWriter, r *http.Request, userID 
 	if on && t.Confirmed {
 		left, _ = h.mfaStore.RemainingRecoveryCodes(r.Context(), userID)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"enabled": on && t.Confirmed, "required": mfaMandatory(u.Role), "recovery_codes_left": left})
+	writeJSON(w, http.StatusOK, map[string]any{"enabled": on && t.Confirmed, "required": h.mfaMandatory(u.Role), "recovery_codes_left": left})
 }
 
 func (h *Handler) handleStartMyMFA(w http.ResponseWriter, r *http.Request, userID string) {
@@ -403,7 +411,7 @@ func (h *Handler) handleDisableMyMFA(w http.ResponseWriter, r *http.Request, use
 		writeError(w, http.StatusUnauthorized, "unauthorized", "conta não encontrada")
 		return
 	}
-	if mfaMandatory(u.Role) {
+	if h.mfaMandatory(u.Role) {
 		writeError(w, http.StatusForbidden, "mfa_required", "o 2FA é obrigatório para administradores da plataforma")
 		return
 	}

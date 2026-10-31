@@ -221,3 +221,16 @@ func TestNoMFAKeyMeansNoMFA(t *testing.T) {
 		t.Errorf("sem chave de 2FA, o admin devia entrar: %v", body)
 	}
 }
+
+// Com o 2FA opcional (ex: uma instalação de desenvolvimento), o admin entra
+// sem o ativar e pode desligá-lo como qualquer conta.
+func TestMFAOptionalLetsAdminsIn(t *testing.T) {
+	deps, _ := mfaDeps(t)
+	mux := deps.handler.WithMFAOptional().Routes()
+	doRequest(t, mux, http.MethodPost, "/v1/register", registerRequest{Email: "admin@x.pt", Password: "senha-forte"})
+	deps.users.setRole("admin@x.pt", store.RoleSuperAdmin)
+	body := decodeBody[map[string]any](t, doRequest(t, mux, http.MethodPost, "/v1/login", loginRequest{Email: "admin@x.pt", Password: "senha-forte"}))
+	if body["access_token"] == nil || body["mfa_setup_required"] != nil {
+		t.Errorf("com o 2FA opcional, o admin devia entrar: %v", body)
+	}
+}

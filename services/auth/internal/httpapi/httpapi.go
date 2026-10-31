@@ -119,6 +119,8 @@ type Handler struct {
 	mfaBox     *mfa.Box
 	mfaIssuer  string
 	challenges *mfaChallenges
+	// mfaOptional: o 2FA não é obrigatório para ninguém (WithMFAOptional).
+	mfaOptional bool
 }
 
 // NewHandler monta o Handler. accessTTL é usado só para reportar
@@ -991,7 +993,7 @@ func (h *Handler) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	// entra com e-mail e password.
 	if h.mfaOn() {
 		t, on, _ := h.mfaStore.GetTOTP(r.Context(), user.ID)
-		if (on && t.Confirmed) || mfaMandatory(user.Role) {
+		if (on && t.Confirmed) || h.mfaMandatory(user.Role) {
 			writeError(w, http.StatusForbidden, "mfa_required", "esta conta usa 2FA: entra com e-mail e password")
 			return
 		}

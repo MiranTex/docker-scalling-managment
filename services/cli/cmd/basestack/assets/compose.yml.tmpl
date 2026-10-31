@@ -30,7 +30,10 @@ networks:
 
 volumes:
   database-data:
+  # Os backups antigos do pgBackRest, de antes de irem para o storage --
+  # ficam aqui intocados.
   database-backups:
+  storage-data:
   auth-signing-key:
   traefik-acme:
   traefik-dynamic:
@@ -116,6 +119,50 @@ services:
       observability:
         aliases: [traefik-metrics]
 
+  # O storage da plataforma (SeaweedFS, API do S3): os backups da base e
+  # dos addons e a cópia cifrada da configuração. Só na rede da plataforma,
+  # por HTTPS com a CA da instalação -- o pgBackRest só fala S3 por HTTPS.
+  storage:
+    restart: unless-stopped
+    image: chrislusf/seaweedfs:4.50
+    command:
+      - mini
+      - -dir=/data
+      - -ip=127.0.0.1
+      - -ip.bind=0.0.0.0
+      - -admin.ui=false
+      - -master.telemetry=false
+      - -s3.port.https=8443
+      - -s3.cert.file=/etc/storage/tls.crt
+      - -s3.key.file=/etc/storage/tls.key
+    environment:
+      AWS_ACCESS_KEY_ID: "{{.Secrets.StorageAccessKey}}"
+      AWS_SECRET_ACCESS_KEY: "{{.Secrets.StorageSecretKey}}"
+      S3_BUCKET: "database,addon-backups,config"
+      # As portas internas (filer, volumes) só com tokens assinados.
+      WEED_JWT_SIGNING_KEY: "{{.Secrets.StorageJWTKey}}-volume"
+      WEED_JWT_SIGNING_READ_KEY: "{{.Secrets.StorageJWTKey}}-volume-read"
+      WEED_JWT_FILER_SIGNING_KEY: "{{.Secrets.StorageJWTKey}}-filer"
+      WEED_JWT_FILER_SIGNING_READ_KEY: "{{.Secrets.StorageJWTKey}}-filer-read"
+      GOMEMLIMIT: 300MiB
+    labels:
+      base-stack.managed: "true"
+    volumes:
+      - storage-data:/data
+      - ./tls/storage/{{.TLS.StorageCert}}:/etc/storage/tls.crt:ro
+      - ./tls/storage/{{.TLS.StorageKey}}:/etc/storage/tls.key:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8333/healthz >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
+    mem_limit: 384m
+    cpus: 0.5
+    networks:
+      platform:
+        aliases: [basestack-storage]
+
   database:
     restart: unless-stopped
     image: {{image "database"}}
@@ -124,6 +171,16 @@ services:
       POSTGRES_USER: app
       POSTGRES_PASSWORD: "{{.Secrets.DatabasePassword}}"
       PGBACKREST_STANZA: basestack
+      # Os backups (e o WAL) vão para o bucket database do storage.
+      PGBACKREST_REPO_TYPE: s3
+      BACKUP_S3_ENDPOINT: storage
+      BACKUP_S3_PORT: "8443"
+      BACKUP_S3_URI_STYLE: path
+      BACKUP_S3_BUCKET: database
+      BACKUP_S3_REGION: us-east-1
+      BACKUP_S3_KEY: "{{.Secrets.StorageAccessKey}}"
+      BACKUP_S3_KEY_SECRET: "{{.Secrets.StorageSecretKey}}"
+      BACKUP_S3_CA_FILE: /etc/basestack/ca.crt
       AUTH_SERVICE_URL: "http://auth:8080"
       AUTH_ISSUER: "auth.base-stack.local"
       AUTH_AUDIENCE: "base-stack"
@@ -136,6 +193,10 @@ services:
       - database-data:/var/lib/postgresql/data
       - database-backups:/var/lib/pgbackrest
       - ./config/db-init:/docker-entrypoint-initdb.d:ro
+      - ./tls/ca.crt:/etc/basestack/ca.crt:ro
+    depends_on:
+      storage:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U app"]
       interval: 5s
@@ -163,6 +224,8 @@ services:
       # que cifra os segredos, e o nome que aparece na app autenticadora.
       AUTH_MFA_KEY: "{{.Secrets.MFAKey}}"
       AUTH_MFA_ISSUER: "base-stack ({{.Domain}})"
+      # false: o 2FA fica opcional também para os admins (desenvolvimento).
+      AUTH_MFA_REQUIRED: "{{if .MFAOptional}}false{{else}}true{{end}}"
     labels:
       base-stack.managed: "true"
     volumes:
@@ -269,6 +332,21 @@ services:
       # e o registry; com ele, valem os do Let's Encrypt (um certificado
       # fixo aqui ganhava-lhes).
       LAUNCHER_TRAEFIK_CERTIFICATES: "{{if not .TLSCertResolver}}/etc/traefik/tls/{{.TLS.RegistryCert}}:/etc/traefik/tls/{{.TLS.RegistryKey}}{{end}}"
+      # O storage da plataforma: cada dump dos addons ganha lá uma cópia.
+      LAUNCHER_BACKUP_STORAGE_URL: https://basestack-storage:8443
+      LAUNCHER_BACKUP_STORAGE_ACCESS_KEY: "{{.Secrets.StorageAccessKey}}"
+      LAUNCHER_BACKUP_STORAGE_SECRET_KEY: "{{.Secrets.StorageSecretKey}}"
+      LAUNCHER_BACKUP_STORAGE_CA: /etc/base-stack/ca.crt
+{{- with .BackupTarget}}
+      # A cópia fora desta máquina, cifrada com a chave pública de backup.
+      LAUNCHER_BACKUP_TARGET_URL: "{{.URL}}"
+      LAUNCHER_BACKUP_TARGET_BUCKET: "{{.Bucket}}"
+      LAUNCHER_BACKUP_TARGET_REGION: "{{.Region}}"
+      LAUNCHER_BACKUP_TARGET_PREFIX: "{{.Prefix}}"
+      LAUNCHER_BACKUP_TARGET_ACCESS_KEY: "{{.AccessKey}}"
+      LAUNCHER_BACKUP_TARGET_SECRET_KEY: "{{.SecretKey}}"
+      LAUNCHER_BACKUP_RECIPIENT: "{{$.BackupRecipient}}"
+{{- end}}
     labels:
       base-stack.managed: "true"
       # A API de plataforma (CLI bs, CI) em api.<domínio> -- só /v1/projects
@@ -320,6 +398,8 @@ services:
       - ./tls/token.crt:/etc/base-stack/registry/token.crt:ro
     depends_on:
       database:
+        condition: service_healthy
+      storage:
         condition: service_healthy
     mem_limit: 128m
     cpus: 0.25

@@ -100,6 +100,9 @@ type jobRequest struct {
 	serviceID  *string
 	revisionID *string
 	by         string
+	// after corre quando o container acaba bem (ex: copiar o backup para
+	// o storage); o que devolve vai para o output, e um erro falha o job.
+	after func(ctx context.Context) (string, error)
 }
 
 // runJob regista o job, corre-o até ao fim e grava o resultado. Devolve o
@@ -182,6 +185,15 @@ func (s *Service) executeJob(ctx context.Context, job *store.Job, req jobRequest
 		output += "\n[plataforma] " + err.Error()
 	case code != 0:
 		job.Status = store.JobFailed
+	case req.after != nil:
+		msg, afterErr := req.after(ctx)
+		if afterErr != nil {
+			job.Status = store.JobFailed
+			msg = afterErr.Error()
+		}
+		if msg != "" {
+			output += "\n[plataforma] " + msg
+		}
 	}
 	job.Output = output
 	var exit *int

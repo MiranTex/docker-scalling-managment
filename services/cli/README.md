@@ -146,6 +146,48 @@ scripts/cluster-dind.sh reload launcher  # depois de reconstruir uma imagem
 scripts/cluster-dind.sh down
 ```
 
+## Backups
+
+A plataforma tem um storage próprio (`storage`, SeaweedFS com a API do S3),
+só na rede interna e por HTTPS com a CA da instalação. Lá ficam:
+
+- `database` -- o pgBackRest da base da plataforma (completo ao domingo,
+  incremental nos outros dias, e o WAL contínuo);
+- `addon-backups` -- uma cópia de cada dump diário dos addons Postgres
+  (`<projeto>/<ambiente>/<addon>/`, as 30 mais recentes);
+- `config` -- `settings.json`, `tls/` e a chave de assinatura do auth,
+  cifrados com [age](https://age-encryption.org). O servidor só tem a chave
+  pública: sem a privada, ninguém abre a cópia.
+
+```sh
+basestack backup init      # gera o par de chaves; a privada aparece uma vez -- guarda-a fora do servidor
+basestack backup status    # o que está no storage e o estado do pgBackRest
+basestack backup now       # backup da base e da configuração agora (--full para completo)
+```
+
+O `up` manda uma cópia da configuração sempre que ela muda.
+
+### Cópia para fora desta máquina
+
+Com um destino -- qualquer serviço com a API do S3 (Backblaze B2, Hetzner,
+Wasabi, outro SeaweedFS) --, o launcher espelha os três buckets para lá de
+hora a hora, **cada objeto cifrado com a chave de backup**: o fornecedor
+não vê os dados. O que roda cá (backups expirados, dumps antigos) é
+apagado lá, mas nunca em massa: se uma passagem fosse apagar mais de metade
+do destino, ou o storage local aparecer vazio, não apaga nada e avisa.
+
+```sh
+basestack backup target set https://s3.eu-central-003.backblazeb2.com --bucket <nome> --access-key <k>
+                           # a secret key é pedida (não fica no histórico); depois: basestack up
+basestack backup target    # o destino atual (off: deixa de copiar)
+basestack backup verify    # ensaio de restauro a partir do destino -- pede a chave privada
+```
+
+O `verify` decifra a última configuração, o último dump de cada addon (e
+lista-o com `pg_restore --list`), confirma que os backups da base que o
+pgBackRest conhece estão no destino e corre o `pgbackrest verify` local.
+A chave privada passa pelo stdin e só vive durante o comando.
+
 ## Registry de imagens
 
 `basestack up` arranca também um registry em `registry.<domínio>` (HTTPS

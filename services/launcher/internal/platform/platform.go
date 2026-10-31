@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"launcher/internal/dockerclient"
+	"launcher/internal/objstore"
 	"launcher/internal/secretbox"
 	"launcher/internal/store"
 )
@@ -102,6 +103,7 @@ type Docker interface {
 	WaitContainer(ctx context.Context, id string) (int, error)
 	ContainerLogs(ctx context.Context, id string, tail int) (string, error)
 	CopyToContainer(ctx context.Context, id, dir string, archive io.Reader) error
+	CopyFromContainer(ctx context.Context, id, path string) (io.ReadCloser, error)
 	CreateVolume(ctx context.Context, name string, labels map[string]string) error
 	RemoveVolume(ctx context.Context, name string) error
 	ListVolumesByLabel(ctx context.Context, label string) ([]dockerclient.Volume, error)
@@ -180,6 +182,10 @@ type Config struct {
 	// PublicIPs são os IPs públicos deste servidor -- um domínio próprio só
 	// fica ativo quando o DNS dele resolve para um destes.
 	PublicIPs []string
+
+	// Backups é o storage da plataforma: cada dump de um addon ganha lá
+	// uma cópia (bucket addon-backups). nil = só no volume do addon.
+	Backups *objstore.Client
 
 	// Só para testes: encurtam as esperas do deploy.
 	readyPoll        time.Duration

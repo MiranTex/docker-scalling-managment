@@ -41,8 +41,11 @@ cliente nenhum na tua máquina.
 | `PGBACKREST_STANZA` | `shared` | Nome da stanza pgBackRest (um cluster Postgres = uma stanza). |
 | `PGBACKREST_REPO_TYPE` | `posix` | `posix` (volume local) ou `s3` (qualquer storage S3-compatible, incluindo MinIO). |
 | `PGBACKREST_REPO_PATH` | `/var/lib/pgbackrest` | Só usado quando `PGBACKREST_REPO_TYPE=posix`. |
-| `PGBACKREST_S3_BUCKET` / `_ENDPOINT` / `_REGION` / `_KEY` / `_KEY_SECRET` | *(obrigatórias se `PGBACKREST_REPO_TYPE=s3`)* | Credenciais/endereço do bucket. Para MinIO, `_ENDPOINT` é o host:porta do MinIO. |
-| `PGBACKREST_S3_VERIFY_TLS` | `y` | Usa `n` só se for MinIO local com TLS auto-assinado (nunca em produção). |
+| `BACKUP_S3_BUCKET` / `_ENDPOINT` / `_REGION` / `_KEY` / `_KEY_SECRET` | *(obrigatórias se `PGBACKREST_REPO_TYPE=s3`)* | Credenciais/endereço do bucket. Para MinIO, `_ENDPOINT` é o host:porta do MinIO. |
+| `BACKUP_S3_VERIFY_TLS` | `y` | Usa `n` só se for MinIO local com TLS auto-assinado (nunca em produção). |
+| `BACKUP_S3_PORT` | `443` | Porta HTTPS do endpoint (o pgBackRest só fala S3 por HTTPS). |
+| `BACKUP_S3_URI_STYLE` | `host` | `path` quando o endpoint é um nome só (ex: o `storage` interno da basestack). |
+| `BACKUP_S3_CA_FILE` | *(vazio)* | CA que assina o certificado do endpoint, em vez das do sistema. |
 | `PGBACKREST_RETENTION_FULL` | `2` | Quantos backups full manter (os incrementais/diff de um full expirado são removidos junto). |
 | `PGBACKREST_PROCESS_MAX` | `1` | Paralelismo do backup/restore. Sobe se tiveres CPU sobrando. |
 | `BACKUP_SCHEDULE_FULL` | `0 2 * * 0` | Cron (UTC) do backup full -- default domingo 02:00. |
@@ -218,11 +221,11 @@ Não precisas trocar de ferramenta nem de scripts -- só as variáveis de
 ambiente do serviço `postgres` no `docker-compose.yml`:
 ```yaml
 PGBACKREST_REPO_TYPE: s3
-PGBACKREST_S3_BUCKET: meu-bucket
-PGBACKREST_S3_ENDPOINT: minio.exemplo.local:9000
-PGBACKREST_S3_REGION: us-east-1     # MinIO aceita qualquer valor aqui
-PGBACKREST_S3_KEY: ...
-PGBACKREST_S3_KEY_SECRET: ...
+BACKUP_S3_BUCKET: meu-bucket
+BACKUP_S3_ENDPOINT: minio.exemplo.local:9000
+BACKUP_S3_REGION: us-east-1     # MinIO aceita qualquer valor aqui
+BACKUP_S3_KEY: ...
+BACKUP_S3_KEY_SECRET: ...
 ```
 Depois de trocar, precisas recriar a stanza contra o novo repo (o
 pgBackRest não migra backups antigos de um repo pro outro sozinho):

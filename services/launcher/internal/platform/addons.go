@@ -1,12 +1,14 @@
 package platform
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
 	"net/url"
+	"path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -35,6 +37,10 @@ const (
 	storageRegion = "us-east-1"
 
 	backupKeep = 7
+	// No storage da plataforma guardam-se mais: lá não ocupam o disco do
+	// addon.
+	remoteBackupKeep   = 30
+	addonBackupsBucket = "addon-backups"
 )
 
 var envVarRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,127}$`)
@@ -476,7 +482,7 @@ func (s *Service) SetAddonBackups(ctx context.Context, projectSlug, envSlug, add
 // backupJob monta o job de pg_dump: corre com a própria imagem do addon
 // (pg_dump da mesma versão do servidor), fala com ele pela rede do
 // ambiente, e escreve no volume de backups, mantendo os backupKeep mais
-// recentes.
+// recentes. Com o storage da plataforma, o dump ganha lá uma cópia.
 func (s *Service) backupJob(ctx context.Context, p store.Project, e store.Environment, a store.Addon, by string) (jobRequest, error) {
 	if a.Kind != store.AddonPostgres {
 		return jobRequest{}, invalid("backups só existem para addons postgres")
@@ -485,8 +491,9 @@ func (s *Service) backupJob(ctx context.Context, p store.Project, e store.Enviro
 	if err != nil {
 		return jobRequest{}, err
 	}
+	file := time.Now().UTC().Format("20060102T150405Z") + ".dump"
 	script := fmt.Sprintf(`set -e
-f=/backups/$(date -u +%%Y%%m%%dT%%H%%M%%SZ).dump
+f="/backups/$BACKUP_FILE"
 pg_dump -Fc -h "$PGHOST" -U %s -d %s -f "$f"
 echo "backup: $(basename "$f") ($(stat -c %%s "$f") bytes)"
 ls -1t /backups/*.dump | tail -n +%d | xargs -r rm -f --`, addonPGUser, addonPGDatabase, backupKeep+1)
@@ -495,11 +502,65 @@ ls -1t /backups/*.dump | tail -n +%d | xargs -r rm -f --`, addonPGUser, addonPGD
 		containerSpec: containerSpec{
 			project: p, env: e, image: a.Image,
 			cmd:     []string{"sh", "-c", script},
-			envVars: []string{"PGHOST=" + a.Slug, "PGPASSWORD=" + pw},
+			envVars: []string{"PGHOST=" + a.Slug, "PGPASSWORD=" + pw, "BACKUP_FILE=" + file},
 			binds:   []string{addonVolume(p, e, a, "backups") + ":/backups"},
 		},
 		kind: "backup", addonID: &id, by: by,
+		after: func(ctx context.Context) (string, error) {
+			return s.copyBackupToStorage(ctx, p, e, a, file)
+		},
 	}, nil
+}
+
+// copyBackupToStorage envia um dump do volume do addon para o storage da
+// plataforma (addon-backups/<projeto>/<ambiente>/<addon>/<ficheiro>) e
+// apaga lá os mais antigos que remoteBackupKeep. O launcher não chega ao
+// volume: lê-o por um container parado que o monta (como "docker cp").
+func (s *Service) copyBackupToStorage(ctx context.Context, p store.Project, e store.Environment, a store.Addon, file string) (string, error) {
+	if s.cfg.Backups == nil {
+		return "", nil
+	}
+	labels := environmentLabels(p, e)
+	labels[LabelRole] = RoleJob // removido no arranque se o launcher cair a meio
+	labels[LabelNode] = LocalNode
+	id, err := s.docker.CreateContainer(ctx, "bs-"+p.Slug+"-"+e.Slug+"-copy-"+newID()[:8], dockerclient.CreateContainerRequest{
+		Image:  a.Image,
+		Labels: labels,
+		HostConfig: &dockerclient.CreateHostConfig{
+			NetworkMode: "none",
+			Binds:       []string{addonVolume(p, e, a, "backups") + ":/backups:ro"},
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("o dump ficou no volume, mas não consegui copiá-lo para o storage: %w", err)
+	}
+	defer func() { _ = s.docker.RemoveContainer(context.WithoutCancel(ctx), id, true) }()
+
+	archive, err := s.docker.CopyFromContainer(ctx, id, "/backups/"+file)
+	if err != nil {
+		return "", fmt.Errorf("o dump ficou no volume, mas não consegui lê-lo: %w", err)
+	}
+	defer archive.Close()
+	tr := tar.NewReader(archive)
+	hdr, err := tr.Next()
+	if err != nil {
+		return "", fmt.Errorf("o dump ficou no volume, mas não consegui lê-lo: %w", err)
+	}
+	prefix := path.Join(p.Slug, e.Slug, a.Slug) + "/"
+	if err := s.cfg.Backups.Put(ctx, addonBackupsBucket, prefix+file, tr, hdr.Size); err != nil {
+		return "", fmt.Errorf("o dump ficou no volume, mas a cópia para o storage falhou: %w", err)
+	}
+
+	objs, err := s.cfg.Backups.List(ctx, addonBackupsBucket, prefix)
+	if err == nil && len(objs) > remoteBackupKeep {
+		// As chaves acabam no timestamp: a ordem alfabética é a do tempo.
+		for _, o := range objs[:len(objs)-remoteBackupKeep] {
+			if err := s.cfg.Backups.Delete(ctx, addonBackupsBucket, o.Key); err != nil {
+				s.logger.Warn("backups: apagando cópia antiga no storage", "key", o.Key, "err", err)
+			}
+		}
+	}
+	return fmt.Sprintf("cópia no storage da plataforma: %s/%s%s (%d bytes)", addonBackupsBucket, prefix, file, hdr.Size), nil
 }
 
 // BackupAddon dispara um backup agora (em segundo plano).

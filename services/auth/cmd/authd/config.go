@@ -56,6 +56,9 @@ type config struct {
 	// mfaKey: a chave (32 bytes em base64) que cifra os segredos do 2FA;
 	// vazia = 2FA desligado. mfaIssuer: o nome na app autenticadora.
 	mfaKey, mfaIssuer string
+	// mfaRequired: os administradores da plataforma têm de ter 2FA
+	// (AUTH_MFA_REQUIRED=false deixa-o opcional, ex: em desenvolvimento).
+	mfaRequired bool
 }
 
 func loadConfig() config {
@@ -81,6 +84,7 @@ func loadConfig() config {
 		openRegistration:         os.Getenv("AUTH_OPEN_REGISTRATION") == "true",
 		mfaKey:                   os.Getenv("AUTH_MFA_KEY"),
 		mfaIssuer:                envString("AUTH_MFA_ISSUER", "base-stack"),
+		mfaRequired:              os.Getenv("AUTH_MFA_REQUIRED") != "false",
 	}
 
 	if cfg.databaseURL == "" {

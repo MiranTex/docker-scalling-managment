@@ -24,7 +24,8 @@ Uso:
   basestack logs <componente> [-f]
   basestack restart [componente]
   basestack set <chave> <valor>   muda a configuração (domain, portal-port,
-                        admin-email, acme-email, images-from, cluster on|off);
+                        admin-email, acme-email, images-from, cluster on|off,
+                        mfa-required on|off);
                         aplica-se no próximo up
   basestack pull        volta a buscar as imagens da plataforma (images-from)
   basestack down        pára a plataforma (as apps dos projetos continuam)
@@ -35,6 +36,9 @@ Uso:
   basestack reset-2fa <email>
                         desliga o 2FA de uma conta (perdeu o telemóvel e os códigos)
   basestack firewall    abre na ufw a rede do cluster (só para a rede local)
+  basestack backup init gera a chave que cifra a cópia da configuração
+  basestack backup status | now [--full]
+                        o que está no storage da plataforma; backup agora
   basestack dev build   constrói as imagens a partir do código (desenvolvimento)
   basestack dev build --platform linux/amd64,linux/arm64 --push
                         constrói para várias arquiteturas e envia para o registry
@@ -88,6 +92,8 @@ func main() {
 		err = cmdResetPassword(args)
 	case "firewall":
 		err = cmdFirewall(args)
+	case "backup":
+		err = cmdBackup(args)
 	case "node":
 		err = cmdNode(args)
 	case "pull":

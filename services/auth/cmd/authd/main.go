@@ -77,6 +77,10 @@ func main() {
 			os.Exit(1)
 		}
 		handler.WithMFA(db, box, cfg.mfaIssuer)
+		if !cfg.mfaRequired {
+			handler.WithMFAOptional()
+			logger.Warn("AUTH_MFA_REQUIRED=false: o 2FA é opcional, também para os administradores")
+		}
 	} else {
 		logger.Warn("AUTH_MFA_KEY não definida: 2FA desligado (e não obrigatório para os admins)")
 	}
