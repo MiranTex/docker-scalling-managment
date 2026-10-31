@@ -144,7 +144,8 @@ services:
     mem_limit: 512m
     cpus: 1.0
     networks:
-      - platform
+      platform:
+        aliases: [basestack-database]
 
   auth:
     restart: unless-stopped
@@ -177,7 +178,8 @@ services:
     mem_limit: 128m
     cpus: 0.5
     networks:
-      - platform
+      platform:
+        aliases: [basestack-auth]
 
   secretsadmin:
     restart: unless-stopped
@@ -196,7 +198,8 @@ services:
     mem_limit: 128m
     cpus: 0.25
     networks:
-      - platform
+      platform:
+        aliases: [basestack-secretsadmin]
 
   templatesadmin:
     restart: unless-stopped
@@ -217,20 +220,24 @@ services:
     mem_limit: 128m
     cpus: 0.25
     networks:
-      - platform
-      - docker-api-ro
+      platform:
+        aliases: [basestack-templatesadmin]
+      docker-api-ro: {}
 
   launcher:
     restart: unless-stopped
     image: {{image "launcher"}}
     environment:
-      LAUNCHER_DATABASE_URL: "postgres://launcher:{{.Secrets.LauncherDBPassword}}@database:5432/app?sslmode=disable"
-      AUTH_SERVICE_URL: "http://auth:8080"
+      # O launcher entra nas redes dos ambientes, onde um serviço ou addon
+      # de um projeto pode chamar-se "database" ou "auth": fala com a
+      # plataforma pelos nomes basestack-*, que os projetos não podem usar.
+      LAUNCHER_DATABASE_URL: "postgres://launcher:{{.Secrets.LauncherDBPassword}}@basestack-database:5432/app?sslmode=disable"
+      AUTH_SERVICE_URL: "http://basestack-auth:8080"
       AUTH_ISSUER: "auth.base-stack.local"
       AUTH_AUDIENCE: "base-stack"
-      TEMPLATESADMIN_SERVICE_URL: "http://templatesadmin:8093"
-      SECRETSADMIN_SERVICE_URL: "http://secretsadmin:8092"
-      LAUNCHER_SELF_URL: "http://launcher:8094"
+      TEMPLATESADMIN_SERVICE_URL: "http://basestack-templatesadmin:8093"
+      SECRETSADMIN_SERVICE_URL: "http://basestack-secretsadmin:8092"
+      LAUNCHER_SELF_URL: "http://basestack-launcher:8094"
       AUTOSCALER_GROUP_IMAGE: "{{image "autoscaler-group"}}"
       PUBLIC_BASE_DOMAIN: "{{.Domain}}"
       PUBLIC_TLS_CERT_RESOLVER: "{{.TLSCertResolver}}"
@@ -248,7 +255,7 @@ services:
       LAUNCHER_REGISTRY_TOKEN_KEY: /etc/base-stack/registry/token.key
       LAUNCHER_REGISTRY_TOKEN_CERT: /etc/base-stack/registry/token.crt
       LAUNCHER_REGISTRY_PULL_PASSWORD: "{{.Secrets.RegistryPullPassword}}"
-      LAUNCHER_REGISTRY_URL: http://registry:5000
+      LAUNCHER_REGISTRY_URL: http://basestack-registry:5000
       # Nós remotos: os agentes ligam-se por https://api.<domínio>/v1/agent.
       LAUNCHER_CA_CERT: /etc/base-stack/ca.crt
       LAUNCHER_PUBLIC_API_URL: "https://api.{{.Domain}}"
@@ -317,8 +324,9 @@ services:
     mem_limit: 128m
     cpus: 0.25
     networks:
-      - platform
-      - grafana
+      platform:
+        aliases: [basestack-launcher]
+      grafana: {}
     stop_grace_period: 20s
 
   portal:
@@ -409,7 +417,8 @@ services:
     mem_limit: 256m
     cpus: 0.5
     networks:
-      - platform
+      platform:
+        aliases: [basestack-registry]
 
   # --- Observabilidade ---
 

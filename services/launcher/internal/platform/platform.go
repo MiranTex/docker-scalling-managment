@@ -69,6 +69,23 @@ func validSlug(kind, slug string) error {
 	return nil
 }
 
+// reservedHostPrefix: os nomes com que o launcher chega à plataforma
+// (basestack-database, basestack-auth...). Serviços e addons são nomes DNS
+// nas redes dos ambientes, onde o launcher também está -- não podem
+// começar assim.
+const reservedHostPrefix = "basestack-"
+
+// validHostSlug é validSlug para o que vira nome DNS num ambiente.
+func validHostSlug(kind, slug string) error {
+	if err := validSlug(kind, slug); err != nil {
+		return err
+	}
+	if strings.HasPrefix(slug, reservedHostPrefix) {
+		return invalid("%s %q inválido -- os nomes começados por %q são da plataforma", kind, slug, reservedHostPrefix)
+	}
+	return nil
+}
+
 // Docker é o subconjunto do cliente Docker que este pacote usa.
 type Docker interface {
 	CreateLabeledNetwork(ctx context.Context, name string, labels map[string]string) (string, error)

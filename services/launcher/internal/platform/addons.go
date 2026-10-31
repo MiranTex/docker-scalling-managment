@@ -193,7 +193,7 @@ func (s *Service) CreateAddon(ctx context.Context, projectSlug, envSlug string, 
 		// A URL com a password tem de ficar guardada algures cifrada.
 		return AddonView{}, ErrSecretsDisabled
 	}
-	if err := validSlug("slug do addon", in.Slug); err != nil {
+	if err := validHostSlug("slug do addon", in.Slug); err != nil {
 		return AddonView{}, err
 	}
 	a := store.Addon{ID: newID(), EnvironmentID: e.ID, Slug: in.Slug, Kind: in.Kind, EnvVar: in.EnvVar, VCPU: in.VCPU, MemoryMB: in.MemoryMB, BackupEnabled: true, CreatedBy: by}

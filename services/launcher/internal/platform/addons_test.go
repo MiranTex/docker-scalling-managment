@@ -377,3 +377,23 @@ func TestPostgresAddonTLS(t *testing.T) {
 		t.Error("a password mudou na migração")
 	}
 }
+
+// Os nomes basestack-* são os da plataforma nas redes dos ambientes (o
+// launcher chega à base por basestack-database): nenhum serviço ou addon
+// os pode ter.
+func TestReservedHostSlugs(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newTestService(t)
+	svc.cfg.PostgresImage = "postgres:17-alpine"
+	setupEnv(t, svc)
+	if _, err := svc.CreateAddon(ctx, "loja", "prod", CreateAddonInput{Slug: "basestack-database", Kind: "postgres"}, "t"); !errors.Is(err, ErrInvalid) {
+		t.Errorf("addon basestack-database: err = %v", err)
+	}
+	if _, err := svc.CreateService(ctx, "loja", "prod", ServiceInput{Slug: "basestack-auth", Kind: "worker"}, "t"); !errors.Is(err, ErrInvalid) {
+		t.Errorf("serviço basestack-auth: err = %v", err)
+	}
+	// "database" continua a poder ser o nome de um addon de um projeto.
+	if _, err := svc.CreateAddon(ctx, "loja", "prod", CreateAddonInput{Slug: "database", Kind: "postgres"}, "t"); err != nil {
+		t.Errorf("addon database: %v", err)
+	}
+}
