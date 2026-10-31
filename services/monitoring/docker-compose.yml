@@ -68,7 +68,7 @@ services:
     # Volta a subir depois de um crash ou reboot do host; um "docker
     # compose stop" explícito continua a ser respeitado.
     restart: unless-stopped
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.15.1
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.retention.time=6h
@@ -97,7 +97,7 @@ services:
     # Volta a subir depois de um crash ou reboot do host; um "docker
     # compose stop" explícito continua a ser respeitado.
     restart: unless-stopped
-    image: grafana/loki:latest
+    image: grafana/loki:3.7.9
     command: -config.file=/etc/loki/loki-config.yml
     volumes:
       - ./loki/loki-config.yml:/etc/loki/loki-config.yml:ro
@@ -121,7 +121,7 @@ services:
     # Volta a subir depois de um crash ou reboot do host; um "docker
     # compose stop" explícito continua a ser respeitado.
     restart: unless-stopped
-    image: grafana/promtail:latest
+    image: grafana/promtail:3.6.8
     command: -config.file=/etc/promtail/promtail-config.yml
     volumes:
       - ./promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
@@ -161,7 +161,7 @@ services:
     # Volta a subir depois de um crash ou reboot do host; um "docker
     # compose stop" explícito continua a ser respeitado.
     restart: unless-stopped
-    image: grafana/grafana:latest
+    image: grafana/grafana:13.2.4
     environment:
       # Login obrigatório. A password vem de GRAFANA_ADMIN_PASSWORD; o
       # default "admin" é só para dev (o Grafana pede para a trocar no
