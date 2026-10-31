@@ -142,6 +142,15 @@ func (a *API) Register(mux *http.ServeMux) {
 	// para o cliente local -- ver tunnel.go.
 	mux.HandleFunc("POST "+addons+"/{addon}/tunnel", developer(a.addonTunnel))
 	mux.HandleFunc("GET "+addons+"/{addon}/credentials", developer(a.addonCredentials))
+	// Buckets de um storage e o acesso público (ver platform/storagepublic.go).
+	const bucket = addons + "/{addon}/buckets/{bucket}"
+	mux.HandleFunc("GET "+addons+"/{addon}/buckets", viewer(a.listBuckets))
+	mux.HandleFunc("POST "+addons+"/{addon}/buckets", developer(a.createBucket))
+	mux.HandleFunc("PATCH "+bucket, developer(a.updateBucket))
+	mux.HandleFunc("DELETE "+bucket, developer(a.deleteBucket))
+	mux.HandleFunc("POST "+bucket+"/domains", developer(a.addBucketDomain))
+	mux.HandleFunc("POST "+bucket+"/domains/{hostname}/verify", developer(a.verifyBucketDomain))
+	mux.HandleFunc("DELETE "+bucket+"/domains/{hostname}", developer(a.deleteBucketDomain))
 	mux.HandleFunc("GET /v1/projects/{project}/tunnel/ws", a.tunnelSocket)
 
 	const services = "/v1/projects/{project}/environments/{env}/services"

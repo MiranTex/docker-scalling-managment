@@ -210,6 +210,9 @@ type Service struct {
 	probe func(ctx context.Context, host string, port int, path string) error
 	// lookupHost resolve DNS -- substituível nos testes.
 	lookupHost func(ctx context.Context, host string) ([]string, error)
+	// storageURL é como o launcher chega à API de um addon storage (pela
+	// rede do ambiente, onde também está) -- substituível nos testes.
+	storageURL func(p store.Project, e store.Environment, a store.Addon) string
 	// reconcileMu: uma passagem do reconciliador e a remoção de um
 	// ambiente ou addon nunca correm ao mesmo tempo -- senão o
 	// reconciliador recria, a meio da limpeza, o que está a ser apagado.
@@ -224,6 +227,10 @@ func New(db *store.DB, docker Docker, box *secretbox.Box, cfg Config, logger *sl
 	return &Service{
 		db: db, docker: newClusterDocker(docker, ag), local: docker, box: box, cfg: cfg, logger: logger, rt: newRuntime(), agents: ag,
 		probe: defaultProbe, lookupHost: net.DefaultResolver.LookupHost,
+		storageURL: func(p store.Project, e store.Environment, a store.Addon) string {
+			// O nome do container: único, ao contrário do slug.
+			return fmt.Sprintf("http://%s:%d", addonContainerName(p, e, a), addonPort(a.Kind))
+		},
 	}
 }
 
@@ -252,7 +259,7 @@ func mapStoreErr(err error) error {
 		errors.Is(err, store.ErrAddonNotFound), errors.Is(err, store.ErrJobNotFound),
 		errors.Is(err, store.ErrServiceNotFound), errors.Is(err, store.ErrRevisionNotFound),
 		errors.Is(err, store.ErrDeploymentNotFound), errors.Is(err, store.ErrRegistryNotFound),
-		errors.Is(err, store.ErrDeployTokenNotFound),
+		errors.Is(err, store.ErrDeployTokenNotFound), errors.Is(err, store.ErrBucketNotFound),
 		errors.Is(err, store.ErrTemplateNotFound), errors.Is(err, store.ErrTemplateVersionNotFound):
 		return fmt.Errorf("%w: %v", ErrNotFound, err)
 	}

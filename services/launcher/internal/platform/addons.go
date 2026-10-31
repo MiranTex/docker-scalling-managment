@@ -65,6 +65,16 @@ type AddonView struct {
 	Host string `json:"host"`
 	// EnvVars: as variáveis que o addon injeta nos serviços do ambiente.
 	EnvVars []string `json:"envVars"`
+	// PublicURL: o endereço público de um storage, se ligado.
+	PublicURL string `json:"publicUrl,omitempty"`
+}
+
+// addonView é newAddonView com o estado lido do Docker e o endereço
+// público.
+func (s *Service) addonView(ctx context.Context, p store.Project, e store.Environment, a store.Addon) AddonView {
+	v := newAddonView(a, s.addonStatus(ctx, p, e, a))
+	v.PublicURL = s.addonPublicURL(p, e, a)
+	return v
 }
 
 func newAddonView(a store.Addon, status string) AddonView {
@@ -150,6 +160,10 @@ func addonEnvNames(a store.Addon) []string {
 	for _, kv := range addonEnv(a, "", "") {
 		names = append(names, kv[0])
 	}
+	// O endereço público de um storage (ver storagepublic.go).
+	if a.Kind == store.AddonStorage && a.PublicEndpoint {
+		names = append(names, publicURLVar(a))
+	}
 	return names
 }
 
@@ -164,7 +178,7 @@ func (s *Service) ListAddons(ctx context.Context, projectSlug, envSlug string) (
 	}
 	out := make([]AddonView, 0, len(addons))
 	for _, a := range addons {
-		out = append(out, newAddonView(a, s.addonStatus(ctx, p, e, a)))
+		out = append(out, s.addonView(ctx, p, e, a))
 	}
 	return out, nil
 }
@@ -277,6 +291,12 @@ func (s *Service) CreateAddon(ctx context.Context, projectSlug, envSlug string, 
 	if err := s.startAddonContainer(ctx, p, e, a, user, password); err != nil {
 		undo()
 		return AddonView{}, err
+	}
+	if a.Kind == store.AddonStorage {
+		// O bucket que o container cria ao arrancar (S3_BUCKET).
+		if err := s.db.CreateBucket(ctx, store.StorageBucket{AddonID: a.ID, Name: storageBucket, CreatedBy: by}); err != nil {
+			s.logger.Error("registando o bucket do storage", "addon", a.Slug, "err", err)
+		}
 	}
 	s.logger.Info("addon criado", "project", p.Slug, "env", e.Slug, "addon", a.Slug, "kind", a.Kind)
 	return newAddonView(a, "starting"), nil
@@ -465,7 +485,13 @@ func (s *Service) DeleteAddon(ctx context.Context, projectSlug, envSlug, addonSl
 		}
 	}
 	s.deleteAddonSecrets(ctx, e.ID, a)
-	return s.db.DeleteAddon(ctx, a.ID)
+	if err := s.db.DeleteAddon(ctx, a.ID); err != nil {
+		return err
+	}
+	if a.PublicEndpoint {
+		s.syncRouting(ctx)
+	}
+	return nil
 }
 
 func (s *Service) SetAddonBackups(ctx context.Context, projectSlug, envSlug, addonSlug string, enabled bool) error {

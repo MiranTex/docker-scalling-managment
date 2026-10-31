@@ -72,6 +72,9 @@ export type Addon = {
   envVar: string;
   // As variáveis que o addon injeta nos serviços do ambiente.
   envVars: string[];
+  // Storage: o endereço público (Traefik), se ligado.
+  publicEndpoint?: boolean;
+  publicUrl?: string;
   vcpu: number;
   memoryMb: number;
   backupEnabled: boolean;
@@ -83,6 +86,18 @@ export type Addon = {
 };
 
 export type Backup = { file: string; size: number };
+
+// Um bucket de um addon storage: público = leitura anónima dos ficheiros
+// (CDN); url só com o endereço público do addon ligado.
+export type Bucket = {
+  name: string;
+  public: boolean;
+  corsOrigins: string[];
+  url?: string;
+  domains: Domain[];
+  createdAt: string;
+  createdBy: string;
+};
 
 export type Job = {
   id: string;

@@ -28,17 +28,20 @@ type Addon struct {
 	MemoryMB      int64      `json:"memoryMb"`
 	BackupEnabled bool       `json:"backupEnabled"`
 	LastBackupAt  *time.Time `json:"lastBackupAt,omitempty"`
-	CreatedAt     time.Time  `json:"createdAt"`
-	CreatedBy     string     `json:"createdBy"`
+	// PublicEndpoint: um storage com endereço público (ver
+	// platform/storagepublic.go).
+	PublicEndpoint bool      `json:"publicEndpoint"`
+	CreatedAt      time.Time `json:"createdAt"`
+	CreatedBy      string    `json:"createdBy"`
 }
 
 const addonColumns = `id, environment_id, slug, kind, image, env_var, vcpu::float8, memory_mb,
-	backup_enabled, last_backup_at, created_at, created_by`
+	backup_enabled, last_backup_at, public_endpoint, created_at, created_by`
 
 func scanAddon(row interface{ Scan(...any) error }) (Addon, error) {
 	var a Addon
 	err := row.Scan(&a.ID, &a.EnvironmentID, &a.Slug, &a.Kind, &a.Image, &a.EnvVar, &a.VCPU, &a.MemoryMB,
-		&a.BackupEnabled, &a.LastBackupAt, &a.CreatedAt, &a.CreatedBy)
+		&a.BackupEnabled, &a.LastBackupAt, &a.PublicEndpoint, &a.CreatedAt, &a.CreatedBy)
 	return a, err
 }
 
