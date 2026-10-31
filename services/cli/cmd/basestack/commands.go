@@ -511,7 +511,7 @@ func firstNonZero(v ...int) int {
 // cmdSet muda uma escolha do init sem mexer nos segredos.
 func cmdSet(args []string) error {
 	if len(args) != 2 {
-		return errors.New("uso: basestack set <domain|portal-port|admin-email|acme-email|images-from|cluster> <valor>")
+		return errors.New("uso: basestack set <domain|portal-port|admin-email|acme-email|images-from|cluster|mfa-required> <valor>")
 	}
 	s, dir, err := loadSettings()
 	if err != nil {
@@ -562,13 +562,22 @@ func cmdSet(args []string) error {
 			return fmt.Errorf("origem inválida: %q (ex: registry.192.168.1.67.nip.io/basestack; vazio = construir localmente)", value)
 		}
 		s.ImageSource = strings.TrimRight(value, "/")
+	case "mfa-required":
+		on, err := parseOnOff(value)
+		if err != nil {
+			return err
+		}
+		s.MFAOptional = !on
 	default:
-		return fmt.Errorf("chave desconhecida %q -- domain, portal-port, admin-email, acme-email, images-from ou cluster", key)
+		return fmt.Errorf("chave desconhecida %q -- domain, portal-port, admin-email, acme-email, images-from, cluster ou mfa-required", key)
 	}
 	if err := saveSettings(dir, s); err != nil {
 		return err
 	}
 	fmt.Printf("%s = %s. Aplica com: basestack up\n", key, value)
+	if key == "mfa-required" && s.MFAOptional {
+		fmt.Println("Os administradores deixam de ser obrigados a ter 2FA -- só para desenvolvimento.")
+	}
 	if key == "domain" {
 		fmt.Println("Os endereços dos serviços dos projetos passam a usar este domínio, e o bs login precisa do novo URL da API.")
 	}

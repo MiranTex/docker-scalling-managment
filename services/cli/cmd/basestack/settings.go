@@ -48,6 +48,9 @@ type Settings struct {
 	// configuração no storage. A privada fica com quem opera, fora daqui
 	// (basestack backup init). Vazio = sem cópia da configuração.
 	BackupRecipient string `json:"backupRecipient,omitempty"`
+	// MFAOptional: o 2FA deixa de ser obrigatório para os administradores
+	// (basestack set mfa-required off -- para desenvolvimento).
+	MFAOptional bool `json:"mfaOptional,omitempty"`
 
 	Secrets Secrets `json:"secrets"`
 }

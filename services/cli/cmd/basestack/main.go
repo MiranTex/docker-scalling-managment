@@ -24,7 +24,8 @@ Uso:
   basestack logs <componente> [-f]
   basestack restart [componente]
   basestack set <chave> <valor>   muda a configuração (domain, portal-port,
-                        admin-email, acme-email, images-from, cluster on|off);
+                        admin-email, acme-email, images-from, cluster on|off,
+                        mfa-required on|off);
                         aplica-se no próximo up
   basestack pull        volta a buscar as imagens da plataforma (images-from)
   basestack down        pára a plataforma (as apps dos projetos continuam)

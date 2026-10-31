@@ -222,6 +222,8 @@ services:
       # que cifra os segredos, e o nome que aparece na app autenticadora.
       AUTH_MFA_KEY: "{{.Secrets.MFAKey}}"
       AUTH_MFA_ISSUER: "base-stack ({{.Domain}})"
+      # false: o 2FA fica opcional também para os admins (desenvolvimento).
+      AUTH_MFA_REQUIRED: "{{if .MFAOptional}}false{{else}}true{{end}}"
     labels:
       base-stack.managed: "true"
     volumes:
