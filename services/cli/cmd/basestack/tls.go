@@ -12,6 +12,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io/fs"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -39,6 +40,28 @@ type tlsFiles struct {
 	StorageCert, StorageKey string
 }
 
+// keyMode: as chaves privadas só para o dono. Os containers que as leem
+// (launcher, Traefik, storage) correm como root, que as lê na mesma.
+const keyMode = 0o600
+
+// tightenKeys põe a keyMode as chaves de tls/ -- as instalações antigas
+// tinham algumas a 0644.
+func tightenKeys(tdir string) error {
+	return filepath.WalkDir(tdir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || filepath.Ext(path) != ".key" {
+			return err
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if info.Mode().Perm() != keyMode {
+			return os.Chmod(path, keyMode)
+		}
+		return nil
+	})
+}
+
 func ensureTLS(dir string, s Settings) (tlsFiles, error) {
 	tdir := filepath.Join(dir, "tls")
 	if err := os.MkdirAll(filepath.Join(tdir, "traefik"), 0o755); err != nil {
@@ -56,7 +79,10 @@ func ensureTLS(dir string, s Settings) (tlsFiles, error) {
 		return tlsFiles{}, err
 	}
 	files.StorageCert, files.StorageKey, err = ensureServerCert(tdir, "storage", []string{"storage", "basestack-storage"}, caCert, caKey)
-	return files, err
+	if err != nil {
+		return files, err
+	}
+	return files, tightenKeys(tdir)
 }
 
 // ensureServerCert emite (ou reaproveita) um certificado da CA da
@@ -103,9 +129,7 @@ func ensureServerCert(tdir, name string, hosts []string, ca *x509.Certificate, c
 	if err := writePEM(filepath.Join(dir, cert), "CERTIFICATE", der, 0o644); err != nil {
 		return "", "", err
 	}
-	// O serviço corre no seu container, com outro utilizador, e tem de a
-	// ler -- como a do Traefik.
-	return cert, key, writePEM(filepath.Join(dir, key), "EC PRIVATE KEY", keyDER, 0o644)
+	return cert, key, writePEM(filepath.Join(dir, key), "EC PRIVATE KEY", keyDER, keyMode)
 }
 
 func writePEM(path, typ string, der []byte, mode os.FileMode) error {
@@ -192,9 +216,7 @@ func ensureTokenKey(tdir string) error {
 		return err
 	}
 	kder, _ := x509.MarshalPKCS8PrivateKey(key)
-	// 0644: o launcher (dentro do container) tem de a ler; o diretório da
-	// instalação é 0700.
-	if err := writePEM(keyPath, "PRIVATE KEY", kder, 0o644); err != nil {
+	if err := writePEM(keyPath, "PRIVATE KEY", kder, keyMode); err != nil {
 		return err
 	}
 	return writePEM(certPath, "CERTIFICATE", der, 0o644)
@@ -261,8 +283,7 @@ func registryFiles(tdir string, der []byte) (tlsFiles, error) {
 	if err := writePEM(filepath.Join(tdir, "traefik", f.RegistryCert), "CERTIFICATE", der, 0o644); err != nil {
 		return tlsFiles{}, err
 	}
-	// O Traefik corre no seu container e tem de a ler.
-	return f, writePEM(filepath.Join(tdir, "traefik", f.RegistryKey), "EC PRIVATE KEY", keyDER, 0o644)
+	return f, writePEM(filepath.Join(tdir, "traefik", f.RegistryKey), "EC PRIVATE KEY", keyDER, keyMode)
 }
 
 // trustCA (Mac) põe a CA em ~/.docker/certs.d/<host>/ca.crt -- sem isto,

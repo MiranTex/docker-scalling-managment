@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"crypto/x509"
 	"flag"
+	"io/fs"
 	"net"
 	"os"
 	"os/exec"
@@ -317,5 +318,34 @@ func TestBackupTargetInCompose(t *testing.T) {
 				t.Fatalf("docker compose config: %v\n%s", err, out)
 			}
 		}
+	}
+}
+
+// As chaves privadas ficam só para o dono -- também as de uma instalação
+// antiga, que tinha algumas a 0644.
+func TestKeysAreOwnerOnly(t *testing.T) {
+	dir := t.TempDir()
+	if err := render(dir, testSettings()); err != nil {
+		t.Fatal(err)
+	}
+	old := filepath.Join(dir, "tls", "token.key")
+	if err := os.Chmod(old, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := render(dir, testSettings()); err != nil {
+		t.Fatal(err)
+	}
+	keys := 0
+	_ = filepath.WalkDir(filepath.Join(dir, "tls"), func(path string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && filepath.Ext(path) == ".key" {
+			keys++
+			if info, _ := d.Info(); info.Mode().Perm() != 0o600 {
+				t.Errorf("%s: %v", path, info.Mode().Perm())
+			}
+		}
+		return nil
+	})
+	if keys < 5 {
+		t.Errorf("só %d chaves em tls/", keys)
 	}
 }
