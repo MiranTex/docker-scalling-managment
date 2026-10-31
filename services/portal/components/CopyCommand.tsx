@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { writeClipboard } from "@/lib/clipboard";
 
 // Um comando para colar no terminal, com botão de copiar.
 export default function CopyCommand({ command }: { command: string }) {
@@ -8,7 +9,7 @@ export default function CopyCommand({ command }: { command: string }) {
 
   async function copy() {
     try {
-      await navigator.clipboard.writeText(command);
+      await writeClipboard(command);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {

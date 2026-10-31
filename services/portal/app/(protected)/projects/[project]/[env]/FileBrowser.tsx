@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Modal from "@/components/Modal";
+import { copyText } from "@/lib/clipboard";
 import { api, envPath, formatBytes, type Bucket } from "@/lib/platformClient";
 
 type FileView = { key: string; name: string; size: number; lastModified: string };
@@ -36,6 +37,7 @@ export default function FileBrowser({
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [folder, setFolder] = useState("");
   const [newFolder, setNewFolder] = useState(false);
+  const [link, setLink] = useState<{ what: string; url: string } | null>(null);
   const [dragging, setDragging] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const base = envPath(project, env, "addons", addon, "buckets", bucket.name);
@@ -100,12 +102,21 @@ export default function FileBrowser({
   }
 
   async function copyLink(f: FileView) {
+    setError(null);
+    let url: string;
     try {
-      const { url } = await api<{ url: string }>(`${base}/link?key=${encodeURIComponent(f.key)}`);
-      await navigator.clipboard.writeText(url);
-      setNotice(bucket.public ? `Link de ${f.name} copiado.` : `Link de ${f.name} copiado -- assinado, válido 1 hora.`);
+      url = (await api<{ url: string }>(`${base}/link?key=${encodeURIComponent(f.key)}`)).url;
     } catch (e) {
       setError((e as Error).message);
+      return;
+    }
+    const what = bucket.public ? `Link de ${f.name}` : `Link de ${f.name} (assinado, válido 1 hora)`;
+    try {
+      await copyText(url, `${what} copiado.`);
+      setLink(null);
+    } catch {
+      // O browser não deixou copiar: fica à vista para copiar à mão.
+      setLink({ what, url });
     }
   }
 
@@ -160,6 +171,15 @@ export default function FileBrowser({
       </p>
       {error && <div className="error">{error}</div>}
       {notice && <div className="notice">{notice}</div>}
+      {link && (
+        <div className="notice">
+          {link.what} -- copia-o daqui:
+          <input readOnly value={link.url} onFocus={(e) => e.target.select()} style={{ width: "100%" }} />
+          <button className="secondary" onClick={() => setLink(null)}>
+            Fechar
+          </button>
+        </div>
+      )}
 
       <div className="row">
         <input ref={input} type="file" multiple hidden onChange={(e) => e.target.files && uploadAll(e.target.files).then(() => (e.target.value = ""))} />
