@@ -12,9 +12,23 @@ const MAX_UPLOAD = 1 << 30;
 
 // FileBrowser: os ficheiros de um bucket -- pastas, envio (vários, ou a
 // arrastar), download, links e remoção. Tudo passa pelo portal e pelo
-// launcher: as credenciais do storage nunca chegam aqui.
-export default function FileBrowser({ project, env, addon, bucket }: { project: string; env: string; addon: string; bucket: Bucket }) {
-  const [prefix, setPrefix] = useState("");
+// launcher: as credenciais do storage nunca chegam aqui. A pasta aberta é
+// de quem o usa (a página põe-na no URL).
+export default function FileBrowser({
+  project,
+  env,
+  addon,
+  bucket,
+  prefix,
+  onPrefix: setPrefix,
+}: {
+  project: string;
+  env: string;
+  addon: string;
+  bucket: Bucket;
+  prefix: string;
+  onPrefix: (prefix: string) => void;
+}) {
   const [listing, setListing] = useState<Listing | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -128,7 +142,6 @@ export default function FileBrowser({ project, env, addon, bucket }: { project: 
       }}
       style={dragging ? { outline: "2px dashed var(--accent, #4f8cff)", outlineOffset: 4 } : undefined}
     >
-      <h1>Ficheiros de {bucket.name}</h1>
       <p className="muted">
         <button className="link" onClick={() => setPrefix("")}>
           {bucket.name}

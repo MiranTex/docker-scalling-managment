@@ -7,7 +7,7 @@ import TerminalModal from "@/components/TerminalModal";
 import CopyCommand from "@/components/CopyCommand";
 import { api, envPath, formatBytes, statusBadge, type Addon, type Backup } from "@/lib/platformClient";
 import ConfirmModal from "../../../admin/database/ConfirmModal";
-import StorageCard from "./StorageCard";
+import Link from "next/link";
 import { useCan } from "@/lib/projectRole";
 
 const EMPTY = { slug: "", kind: "postgres", envVar: "", vcpu: "", memoryMb: "" };
@@ -32,9 +32,6 @@ export default function AddonsTab({ project, env }: { project: string; env: stri
   const [purge, setPurge] = useState(false);
   const [restoreTarget, setRestoreTarget] = useState<{ addon: string; file: string } | null>(null);
   const [terminal, setTerminal] = useState<Addon | null>(null);
-  // O storage aberto no painel de buckets (pelo slug: a lista recarrega).
-  const [storageOf, setStorageOf] = useState<string | null>(null);
-  const storageAddon = addons?.find((a) => a.slug === storageOf);
 
   async function load() {
     try {
@@ -168,7 +165,14 @@ export default function AddonsTab({ project, env }: { project: string; env: stri
             {addons.map((a) => (
               <tr key={a.id}>
                 <td>
-                  <strong>{a.slug}</strong>
+                  {/* Os storages têm página própria (buckets, ficheiros, acesso). */}
+                  {a.kind === "storage" ? (
+                    <Link href={`/projects/${project}/${env}/addons/${a.slug}`}>
+                      <strong>{a.slug}</strong>
+                    </Link>
+                  ) : (
+                    <strong>{a.slug}</strong>
+                  )}
                   <div className="muted">
                     {a.image} · <code>{a.host}</code>
                   </div>
@@ -235,11 +239,6 @@ export default function AddonsTab({ project, env }: { project: string; env: stri
                 <td>
                   {canEdit && (
                   <div className="actions">
-                    {a.kind === "storage" && (
-                      <button className="secondary" onClick={() => setStorageOf(a.slug)}>
-                        Buckets e acesso
-                      </button>
-                    )}
                     <button className="secondary" onClick={() => setTerminal(a)} title={`Shell no container (${KINDS[a.kind]?.shell ?? "sh"})`}>
                       Terminal
                     </button>
@@ -322,12 +321,6 @@ export default function AddonsTab({ project, env }: { project: string; env: stri
           <button className="secondary" onClick={() => setOpen(false)}>
             Cancelar
           </button>
-        </Modal>
-      )}
-
-      {storageAddon && (
-        <Modal title={`Buckets e acesso · ${storageAddon.slug}`} onClose={() => setStorageOf(null)} width={1000}>
-          <StorageCard project={project} env={env} addon={storageAddon} onChanged={load} />
         </Modal>
       )}
 
