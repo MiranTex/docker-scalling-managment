@@ -95,6 +95,20 @@ func main() {
 	}
 	platformSvc := platform.New(db, docker, box, pc, logger)
 	go platformSvc.Run(ctx)
+	if cfg.metricsAddr != "" {
+		metrics := http.NewServeMux()
+		metrics.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+			if err := platformSvc.WriteHostMetrics(r.Context(), w); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+		})
+		go func() {
+			if err := http.ListenAndServe(cfg.metricsAddr, metrics); err != nil {
+				logger.Error("servidor de métricas", "addr", cfg.metricsAddr, "err", err)
+			}
+		}()
+	}
 
 	mux := handler.Routes()
 	api := platformapi.New(platformSvc, tokens, apikeyclient.New(cfg.authServiceURL), authusers.New(cfg.authServiceURL), logger).

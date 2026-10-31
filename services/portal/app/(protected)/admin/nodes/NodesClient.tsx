@@ -7,6 +7,9 @@ import Modal from "@/components/Modal";
 import PageHeader from "@/components/PageHeader";
 import { api, type NodeCheck, type NodeJoinToken, type NodeView } from "@/lib/platformClient";
 import { formatLabels, parseLabels } from "@/lib/labels";
+import Link from "next/link";
+import UsageBar from "@/components/UsageBar";
+import { bytes, diskPercent, memoryPercent, memoryUsed } from "@/lib/hostMetrics";
 
 const gb = (mb: number) => `${(mb / 1024).toFixed(1)} GB`;
 
@@ -127,8 +130,9 @@ export default function NodesClient() {
                 <th>Estado</th>
                 <th>Plataforma</th>
                 <th>Rede das apps</th>
-                <th>CPUs</th>
-                <th>Memória alocada</th>
+                <th>CPU</th>
+                <th>Memória</th>
+                <th>Disco</th>
                 <th>Réplicas</th>
                 <th>Addons</th>
                 <th>Último sinal</th>
@@ -141,7 +145,9 @@ export default function NodesClient() {
                 return (
                   <tr key={n.name}>
                     <td>
-                      <strong>{n.name}</strong>
+                      <Link href={`/admin/nodes/${encodeURIComponent(n.name)}`}>
+                        <strong>{n.name}</strong>
+                      </Link>
                       {(Object.keys(n.autoLabels ?? {}).length > 0 || Object.keys(n.labels ?? {}).length > 0) && (
                         <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 4 }}>
                           {Object.entries(n.autoLabels ?? {})
@@ -205,11 +211,33 @@ export default function NodesClient() {
                         <span className="muted">{n.network}</span>
                       )}
                     </td>
+                    {/* O uso real da máquina, com as reservas dos containers por baixo. */}
                     <td>
-                      {n.allocated.vcpu.toFixed(2)} / {n.cpus}
+                      {n.usage ? (
+                        <UsageBar percent={n.usage.cpuPercent} detail={`load ${n.usage.load1.toFixed(2)}`} note={`reservado ${n.allocated.vcpu.toFixed(2)} de ${n.cpus} vCPU`} />
+                      ) : (
+                        <span className="muted">{n.allocated.vcpu.toFixed(2)} / {n.cpus} vCPU reservados</span>
+                      )}
                     </td>
                     <td>
-                      {gb(n.allocated.memoryMb)} / {gb(n.capacityMemoryMb)} ({pct}%)
+                      {n.usage ? (
+                        <UsageBar
+                          percent={memoryPercent(n.usage)}
+                          detail={`${bytes(memoryUsed(n.usage))} de ${bytes(n.usage.memoryTotalBytes)}`}
+                          note={`reservado ${gb(n.allocated.memoryMb)} de ${gb(n.capacityMemoryMb)} (${pct}%)`}
+                        />
+                      ) : (
+                        <span className="muted">
+                          {gb(n.allocated.memoryMb)} / {gb(n.capacityMemoryMb)} reservados
+                        </span>
+                      )}
+                    </td>
+                    <td>
+                      {n.usage ? (
+                        <UsageBar percent={diskPercent(n.usage)} detail={`${bytes(n.usage.diskAvailableBytes)} livres`} />
+                      ) : (
+                        <span className="muted">{n.online ? "a medir…" : "—"}</span>
+                      )}
                     </td>
                     <td>{n.replicas}</td>
                     <td>{n.addons}</td>

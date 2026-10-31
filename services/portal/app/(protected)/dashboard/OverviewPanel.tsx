@@ -9,6 +9,7 @@ import type { InstanceSummary } from "@/lib/autoscalerAdminClient";
 import { api, type Project } from "@/lib/platformClient";
 import { formatMemory } from "@/lib/instanceTypes";
 import CapacityPanel from "../admin/launcher/CapacityPanel";
+import ServersCard from "./ServersCard";
 import { formatBytes } from "../admin/database/format";
 
 async function getJson<T>(url: string): Promise<T | null> {
@@ -66,6 +67,8 @@ export default function OverviewPanel() {
           hint={db ? `${db.postgres.connection_count} ligações` : undefined}
         />
       </div>
+
+      <ServersCard />
 
       <div className="split-rev">
         <div className="card wide">

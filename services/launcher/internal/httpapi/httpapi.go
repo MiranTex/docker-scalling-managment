@@ -894,10 +894,10 @@ func (h *Handler) handleCreateReplica(w http.ResponseWriter, r *http.Request, _,
 	}
 
 	containerID, err := h.docker.CreateContainer(r.Context(), "", dockerclient.CreateContainerRequest{
-		Image:      req.Image,
-		Cmd:        req.Cmd,
-		Env:        resolvedEnv,
-		Labels:     labels,
+		Image:  req.Image,
+		Cmd:    req.Cmd,
+		Env:    resolvedEnv,
+		Labels: labels,
 		// Endurecido só aqui: os recursos acima substituem-se inteiros.
 		HostConfig: dockerclient.HardenApp(hostConfig),
 	})

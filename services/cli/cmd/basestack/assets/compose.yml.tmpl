@@ -337,6 +337,9 @@ services:
       LAUNCHER_BACKUP_STORAGE_ACCESS_KEY: "{{.Secrets.StorageAccessKey}}"
       LAUNCHER_BACKUP_STORAGE_SECRET_KEY: "{{.Secrets.StorageSecretKey}}"
       LAUNCHER_BACKUP_STORAGE_CA: /etc/base-stack/ca.crt
+      # As métricas das máquinas (CPU, memória, disco) para o Prometheus --
+      # só na rede de observabilidade, longe da API.
+      LAUNCHER_METRICS_ADDR: "launcher-metrics:8095"
 {{- with .BackupTarget}}
       # A cópia fora desta máquina, cifrada com a chave pública de backup.
       LAUNCHER_BACKUP_TARGET_URL: "{{.URL}}"
@@ -349,6 +352,9 @@ services:
 {{- end}}
     labels:
       base-stack.managed: "true"
+      prometheus.scrape: "true"
+      prometheus.port: "8095"
+      prometheus.host: launcher-metrics
       # A API de plataforma (CLI bs, CI) em api.<domínio> -- só /v1/projects
       # e /v1/cli (login da CLI pelo browser).
       traefik.enable: "true"
@@ -407,6 +413,8 @@ services:
       platform:
         aliases: [basestack-launcher]
       grafana: {}
+      observability:
+        aliases: [launcher-metrics]
     stop_grace_period: 20s
 
   portal:

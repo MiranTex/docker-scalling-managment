@@ -932,3 +932,16 @@ tbody tr {
     -webkit-backdrop-filter: none;
   }
 }
+
+/* Barras de uso das máquinas (CPU, memória, disco). */
+.usage { min-width: 140px; }
+.usage-track { height: 8px; border-radius: 4px; background: var(--border); overflow: hidden; }
+.usage-fill { height: 100%; border-radius: 4px; background: #16a34a; }
+.usage-fill.warn { background: #d97706; }
+.usage-fill.bad { background: var(--danger); }
+.usage-text { font-size: 0.85rem; margin-top: 2px; white-space: nowrap; }
+.usage-note { font-size: 0.75rem; }
+
+.line-chart { width: 100%; height: auto; }
+.line-chart .grid { stroke: var(--border); stroke-width: 1; }
+.line-chart .axis { fill: var(--muted); font-size: 10px; }

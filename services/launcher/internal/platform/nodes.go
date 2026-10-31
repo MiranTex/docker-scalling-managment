@@ -105,6 +105,8 @@ type NodeView struct {
 	Replicas  int     `json:"replicas"`
 	Addons    int     `json:"addons"`
 	Capacity  float64 `json:"capacityMemoryMb"` // memória que o escalonador usa (com overcommit)
+	// Usage: a última leitura da máquina (CPU, memória, disco), se recente.
+	Usage *HostSample `json:"usage,omitempty"`
 }
 
 func (s *Service) ListNodes(ctx context.Context) ([]NodeView, error) {
@@ -126,6 +128,7 @@ func (s *Service) ListNodes(ctx context.Context) ([]NodeView, error) {
 		}
 		out[i] = NodeView{Node: n, Online: online, Status: s.nodeStatus(n), Capacity: s.nodeCapacityMB(n), Network: s.nodeNetwork(n)}
 		out[i].Draining, out[i].Drain = s.rt.nodeDrainState(n.Name)
+		out[i].Usage = s.hm.latest(n.Name)
 		if n.Kind == store.NodeAgent && latest != "" && n.AgentVersion != "" && n.AgentVersion != latest {
 			out[i].AgentOutdated, out[i].AgentLatest = true, latest
 		}
