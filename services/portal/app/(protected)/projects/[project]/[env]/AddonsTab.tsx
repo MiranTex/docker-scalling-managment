@@ -326,7 +326,7 @@ export default function AddonsTab({ project, env }: { project: string; env: stri
       )}
 
       {storageAddon && (
-        <Modal title={`Buckets e acesso · ${storageAddon.slug}`} onClose={() => setStorageOf(null)}>
+        <Modal title={`Buckets e acesso · ${storageAddon.slug}`} onClose={() => setStorageOf(null)} width={1000}>
           <StorageCard project={project} env={env} addon={storageAddon} onChanged={load} />
         </Modal>
       )}

@@ -110,6 +110,9 @@ export default function StorageCard({ project, env, addon, onChanged }: { projec
       {!buckets ? (
         <p className="muted">A carregar...</p>
       ) : (
+        // Em ecrãs estreitos a tabela desliza na horizontal em vez de sair
+        // do modal.
+        <div style={{ overflowX: "auto" }}>
         <table>
           <thead>
             <tr>
@@ -149,6 +152,7 @@ export default function StorageCard({ project, env, addon, onChanged }: { projec
                 <td>
                   <div className="row">
                     <input
+                      style={{ minWidth: 220 }}
                       value={cors[b.name] ?? ""}
                       disabled={!canEdit}
                       onChange={(e) => setCors({ ...cors, [b.name]: e.target.value })}
@@ -179,6 +183,7 @@ export default function StorageCard({ project, env, addon, onChanged }: { projec
             ))}
           </tbody>
         </table>
+        </div>
       )}
 
       {domainsOf && buckets?.find((b) => b.name === domainsOf)?.public && (
