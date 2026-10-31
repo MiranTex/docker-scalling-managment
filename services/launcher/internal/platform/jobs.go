@@ -53,11 +53,10 @@ func (s *Service) runToCompletion(ctx context.Context, spec containerSpec) (int,
 		Cmd:    spec.cmd,
 		Env:    spec.envVars,
 		Labels: labels,
-		HostConfig: &dockerclient.CreateHostConfig{
+		HostConfig: dockerclient.HardenApp(&dockerclient.CreateHostConfig{
 			Binds:       spec.binds,
 			NetworkMode: spec.env.Network,
-			SecurityOpt: dockerclient.AppSecurityOpt(),
-		},
+		}),
 	})
 	if err != nil {
 		return -1, "", fmt.Errorf("criando container do job: %w", err)

@@ -574,16 +574,15 @@ func (h *Handler) launchSolo(ctx context.Context, id string, tmpl templatesclien
 		Cmd:    tmpl.Cmd,
 		Env:    resolvedEnv,
 		Labels: labels,
-		HostConfig: &dockerclient.CreateHostConfig{
+		HostConfig: dockerclient.HardenApp(&dockerclient.CreateHostConfig{
 			Binds:       tmpl.Binds,
 			NetworkMode: resolveNetwork(req.Network, tmpl.Network),
 			ExtraHosts:  tmpl.ExtraHosts,
 			// Sem isto, um crash da app ou um reboot do host deixava a
 			// instância parada até alguém a recriar à mão.
 			RestartPolicy: dockerclient.UnlessStopped(),
-			SecurityOpt:   dockerclient.AppSecurityOpt(),
 			Resources:     resources(instanceType),
-		},
+		}),
 	})
 	if err != nil {
 		return "", fmt.Errorf("criando container: %w", err)
@@ -865,7 +864,6 @@ func (h *Handler) handleCreateReplica(w http.ResponseWriter, r *http.Request, _,
 		// voltar a subir a réplica, e o group conta-a como sua na
 		// próxima reconciliação.
 		RestartPolicy: dockerclient.UnlessStopped(),
-		SecurityOpt:   dockerclient.AppSecurityOpt(),
 	}
 	// MemoryMB zero = group anterior a esta feature (ex: um group estático
 	// declarado em docker-compose): a réplica sobe sem limites, como sempre.
@@ -900,7 +898,8 @@ func (h *Handler) handleCreateReplica(w http.ResponseWriter, r *http.Request, _,
 		Cmd:        req.Cmd,
 		Env:        resolvedEnv,
 		Labels:     labels,
-		HostConfig: hostConfig,
+		// Endurecido só aqui: os recursos acima substituem-se inteiros.
+		HostConfig: dockerclient.HardenApp(hostConfig),
 	})
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "create_failed", "erro criando container: "+err.Error())
