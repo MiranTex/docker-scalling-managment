@@ -1,14 +1,19 @@
 package main
 
 import (
+	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"filippo.io/age"
+
 	"launcher/internal/httpapi"
 	"launcher/internal/objstore"
+	"launcher/internal/offsite"
 	"launcher/internal/platform"
 )
 
@@ -102,6 +107,16 @@ type config struct {
 	backupStorageSecretKey string
 	backupStorageCA        string
 
+	// O destino fora desta máquina (vazio desliga) e a chave pública com
+	// que tudo lá vai cifrado.
+	backupTargetURL       string
+	backupTargetBucket    string
+	backupTargetPrefix    string
+	backupTargetRegion    string
+	backupTargetAccessKey string
+	backupTargetSecretKey string
+	backupRecipient       string
+
 	// grafana: sincronização de organizações/membros com o Grafana (ver
 	// internal/grafanasync). GRAFANA_URL vazio desliga.
 	grafanaURL, grafanaUser, grafanaPassword, grafanaDashboards string
@@ -180,6 +195,14 @@ func loadConfig() config {
 		backupStorageAccessKey: os.Getenv("LAUNCHER_BACKUP_STORAGE_ACCESS_KEY"),
 		backupStorageSecretKey: os.Getenv("LAUNCHER_BACKUP_STORAGE_SECRET_KEY"),
 		backupStorageCA:        os.Getenv("LAUNCHER_BACKUP_STORAGE_CA"),
+
+		backupTargetURL:       os.Getenv("LAUNCHER_BACKUP_TARGET_URL"),
+		backupTargetBucket:    os.Getenv("LAUNCHER_BACKUP_TARGET_BUCKET"),
+		backupTargetPrefix:    os.Getenv("LAUNCHER_BACKUP_TARGET_PREFIX"),
+		backupTargetRegion:    envString("LAUNCHER_BACKUP_TARGET_REGION", "us-east-1"),
+		backupTargetAccessKey: os.Getenv("LAUNCHER_BACKUP_TARGET_ACCESS_KEY"),
+		backupTargetSecretKey: os.Getenv("LAUNCHER_BACKUP_TARGET_SECRET_KEY"),
+		backupRecipient:       os.Getenv("LAUNCHER_BACKUP_RECIPIENT"),
 
 		grafanaURL:        os.Getenv("GRAFANA_URL"),
 		grafanaUser:       envString("GRAFANA_ADMIN_USER", "admin"),
@@ -345,4 +368,42 @@ func (c config) backupStore() (*objstore.Client, error) {
 		return nil, nil
 	}
 	return objstore.New(c.backupStorageURL, "us-east-1", c.backupStorageAccessKey, c.backupStorageSecretKey, c.backupStorageCA)
+}
+
+// offsiteMirror é o espelho para fora; nil sem destino. Exige o storage
+// local e a chave pública (tudo vai cifrado).
+func (c config) offsiteMirror(logger *slog.Logger) (*offsite.Mirror, error) {
+	if c.backupTargetURL == "" {
+		return nil, nil
+	}
+	local, err := c.backupStore()
+	if err != nil {
+		return nil, err
+	}
+	if local == nil {
+		return nil, errors.New("há destino para os backups mas não há storage local (LAUNCHER_BACKUP_STORAGE_URL)")
+	}
+	if c.backupRecipient == "" || c.backupTargetBucket == "" {
+		return nil, errors.New("o destino dos backups precisa de LAUNCHER_BACKUP_RECIPIENT e LAUNCHER_BACKUP_TARGET_BUCKET")
+	}
+	recipient, err := age.ParseX25519Recipient(c.backupRecipient)
+	if err != nil {
+		return nil, fmt.Errorf("LAUNCHER_BACKUP_RECIPIENT: %w", err)
+	}
+	// Sem CA própria: o destino é um serviço público, com certificado
+	// das CAs do sistema.
+	target, err := objstore.New(c.backupTargetURL, c.backupTargetRegion, c.backupTargetAccessKey, c.backupTargetSecretKey, "")
+	if err != nil {
+		return nil, err
+	}
+	prefix := strings.Trim(c.backupTargetPrefix, "/")
+	if prefix != "" {
+		prefix += "/"
+	}
+	return &offsite.Mirror{
+		Local:     local,
+		Target:    offsite.Target{Store: target, Bucket: c.backupTargetBucket, Prefix: prefix},
+		Recipient: recipient,
+		Logger:    logger,
+	}, nil
 }

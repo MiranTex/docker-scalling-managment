@@ -165,8 +165,28 @@ basestack backup status    # o que está no storage e o estado do pgBackRest
 basestack backup now       # backup da base e da configuração agora (--full para completo)
 ```
 
-O `up` manda uma cópia da configuração sempre que ela muda. Tudo isto
-continua nesta máquina: a cópia para fora dela é o passo seguinte.
+O `up` manda uma cópia da configuração sempre que ela muda.
+
+### Cópia para fora desta máquina
+
+Com um destino -- qualquer serviço com a API do S3 (Backblaze B2, Hetzner,
+Wasabi, outro SeaweedFS) --, o launcher espelha os três buckets para lá de
+hora a hora, **cada objeto cifrado com a chave de backup**: o fornecedor
+não vê os dados. O que roda cá (backups expirados, dumps antigos) é
+apagado lá, mas nunca em massa: se uma passagem fosse apagar mais de metade
+do destino, ou o storage local aparecer vazio, não apaga nada e avisa.
+
+```sh
+basestack backup target set https://s3.eu-central-003.backblazeb2.com --bucket <nome> --access-key <k>
+                           # a secret key é pedida (não fica no histórico); depois: basestack up
+basestack backup target    # o destino atual (off: deixa de copiar)
+basestack backup verify    # ensaio de restauro a partir do destino -- pede a chave privada
+```
+
+O `verify` decifra a última configuração, o último dump de cada addon (e
+lista-o com `pg_restore --list`), confirma que os backups da base que o
+pgBackRest conhece estão no destino e corre o `pgbackrest verify` local.
+A chave privada passa pelo stdin e só vive durante o comando.
 
 ## Registry de imagens
 

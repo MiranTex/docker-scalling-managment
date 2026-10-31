@@ -329,6 +329,16 @@ services:
       LAUNCHER_BACKUP_STORAGE_ACCESS_KEY: "{{.Secrets.StorageAccessKey}}"
       LAUNCHER_BACKUP_STORAGE_SECRET_KEY: "{{.Secrets.StorageSecretKey}}"
       LAUNCHER_BACKUP_STORAGE_CA: /etc/base-stack/ca.crt
+{{- with .BackupTarget}}
+      # A cópia fora desta máquina, cifrada com a chave pública de backup.
+      LAUNCHER_BACKUP_TARGET_URL: "{{.URL}}"
+      LAUNCHER_BACKUP_TARGET_BUCKET: "{{.Bucket}}"
+      LAUNCHER_BACKUP_TARGET_REGION: "{{.Region}}"
+      LAUNCHER_BACKUP_TARGET_PREFIX: "{{.Prefix}}"
+      LAUNCHER_BACKUP_TARGET_ACCESS_KEY: "{{.AccessKey}}"
+      LAUNCHER_BACKUP_TARGET_SECRET_KEY: "{{.SecretKey}}"
+      LAUNCHER_BACKUP_RECIPIENT: "{{$.BackupRecipient}}"
+{{- end}}
     labels:
       base-stack.managed: "true"
       # A API de plataforma (CLI bs, CI) em api.<domínio> -- só /v1/projects

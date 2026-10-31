@@ -48,11 +48,25 @@ type Settings struct {
 	// configuração no storage. A privada fica com quem opera, fora daqui
 	// (basestack backup init). Vazio = sem cópia da configuração.
 	BackupRecipient string `json:"backupRecipient,omitempty"`
+	// BackupTarget: para onde se copia o storage da plataforma, fora desta
+	// máquina (basestack backup target set). nil = só aqui.
+	BackupTarget *BackupTarget `json:"backupTarget,omitempty"`
 	// MFAOptional: o 2FA deixa de ser obrigatório para os administradores
 	// (basestack set mfa-required off -- para desenvolvimento).
 	MFAOptional bool `json:"mfaOptional,omitempty"`
 
 	Secrets Secrets `json:"secrets"`
+}
+
+// BackupTarget é um serviço com a API do S3 (Backblaze B2, Hetzner,
+// Wasabi, outro SeaweedFS...).
+type BackupTarget struct {
+	URL       string `json:"url"`
+	Bucket    string `json:"bucket"`
+	Region    string `json:"region"`
+	Prefix    string `json:"prefix"`
+	AccessKey string `json:"accessKey"`
+	SecretKey string `json:"secretKey"`
 }
 
 type Secrets struct {

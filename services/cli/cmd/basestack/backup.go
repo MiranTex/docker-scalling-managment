@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/tar"
+	"bufio"
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"filippo.io/age"
+	"golang.org/x/term"
 )
 
 // Backups da plataforma. A base (pgBackRest) e os dumps dos addons (o
@@ -25,9 +27,14 @@ import (
 // o estado e forçar um backup.
 
 const backupUsage = `uso:
-  basestack backup init [--force]  gera a chave que cifra a cópia da configuração
-  basestack backup status          o que está no storage da plataforma
-  basestack backup now [--full]    backup da base e da configuração agora`
+  basestack backup init [--force]  gera a chave que cifra a configuração e a cópia de fora
+  basestack backup status          o que está no storage da plataforma e fora dela
+  basestack backup now [--full]    backup da base e da configuração agora (e cópia para fora)
+  basestack backup target set <url> --bucket <nome> [--region R] [--prefix P] --access-key K
+                                   copiar tudo, cifrado, para um S3 fora desta máquina
+  basestack backup target [off]    o destino atual; off deixa de copiar
+  basestack backup verify [--key <ficheiro>]
+                                   ensaio de restauro a partir do destino (pede a chave privada)`
 
 func cmdBackup(args []string) error {
 	if len(args) == 0 {
@@ -40,6 +47,10 @@ func cmdBackup(args []string) error {
 		return cmdBackupStatus(args[1:])
 	case "now":
 		return cmdBackupNow(args[1:])
+	case "target":
+		return cmdBackupTarget(args[1:])
+	case "verify":
+		return cmdBackupVerify(args[1:])
 	}
 	return fmt.Errorf("backup %q desconhecido\n%s", args[0], backupUsage)
 }
@@ -124,8 +135,135 @@ func cmdBackupNow(args []string) error {
 	} else {
 		fmt.Println("\nConfiguração: cópia guardada.")
 	}
+	if s.BackupTarget != nil {
+		fmt.Println("\nFora desta máquina:")
+		if err := compose(dir, "exec", "-T", "launcher", "launcher", "backup-sync").Run(); err != nil {
+			return fmt.Errorf("a cópia para fora falhou: %w", err)
+		}
+	}
 	fmt.Println("\nOs addons Postgres dos projetos têm um dump por dia, com cópia no storage\n(no portal: Addons > Backup agora).")
 	return nil
+}
+
+func cmdBackupTarget(args []string) error {
+	s, dir, err := loadSettings()
+	if err != nil {
+		return err
+	}
+	if len(args) == 0 {
+		if t := s.BackupTarget; t != nil {
+			fmt.Printf("%s, bucket %s, prefixo %q, região %s, access key %s\n", t.URL, t.Bucket, t.Prefix, t.Region, t.AccessKey)
+		} else {
+			fmt.Println("sem destino: os backups estão só nesta máquina")
+		}
+		return nil
+	}
+	switch args[0] {
+	case "off":
+		s.BackupTarget = nil
+		if err := saveSettings(dir, s); err != nil {
+			return err
+		}
+		fmt.Println("Deixa de copiar para fora (o que lá está fica). Aplica com: basestack up")
+		return nil
+	case "set":
+	default:
+		return errors.New(backupUsage)
+	}
+	fs := flag.NewFlagSet("backup target set", flag.ContinueOnError)
+	bucket := fs.String("bucket", "", "bucket no destino")
+	region := fs.String("region", "us-east-1", "região (a do fornecedor)")
+	prefix := fs.String("prefix", "basestack", "pasta dentro do bucket (várias instalações no mesmo bucket)")
+	accessKey := fs.String("access-key", "", "access key do destino")
+	secretKey := fs.String("secret-key", "", "secret key (sem ela, é pedida -- não fica no histórico da shell)")
+	rest, err := parseInterspersed(fs, args[1:])
+	if err != nil {
+		return err
+	}
+	if len(rest) != 1 || *bucket == "" || *accessKey == "" {
+		return errors.New("uso: basestack backup target set <https://s3.fornecedor> --bucket <nome> --access-key <k> [--region R] [--prefix P]")
+	}
+	if !strings.HasPrefix(rest[0], "https://") && !strings.HasPrefix(rest[0], "http://") {
+		return fmt.Errorf("o destino é um URL (ex: https://s3.eu-central-003.backblazeb2.com): %q", rest[0])
+	}
+	if s.BackupRecipient == "" {
+		return errors.New("tudo vai cifrado com a chave de backup, e ainda não há: basestack backup init")
+	}
+	if *secretKey == "" {
+		if *secretKey, err = readSecret("Secret key do destino: "); err != nil {
+			return err
+		}
+	}
+	s.BackupTarget = &BackupTarget{
+		URL: strings.TrimRight(rest[0], "/"), Bucket: *bucket, Region: *region,
+		Prefix: strings.Trim(*prefix, "/"), AccessKey: *accessKey, SecretKey: *secretKey,
+	}
+	if err := saveSettings(dir, s); err != nil {
+		return err
+	}
+	fmt.Println("Destino guardado. Aplica com: basestack up -- a primeira cópia começa uns minutos depois\n(ou já: basestack backup now). O estado: basestack backup status")
+	return nil
+}
+
+// cmdBackupVerify passa a chave privada ao launcher pelo stdin (nunca em
+// argumentos ou variáveis, que ficam à vista), e corre o pgbackrest verify
+// à base.
+func cmdBackupVerify(args []string) error {
+	fs := flag.NewFlagSet("backup verify", flag.ContinueOnError)
+	keyFile := fs.String("key", "", "ficheiro com a chave privada (AGE-SECRET-KEY-...); sem ele, é pedida")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	s, dir, err := loadSettings()
+	if err != nil {
+		return err
+	}
+	if s.BackupTarget == nil {
+		return errors.New("sem destino fora desta máquina: não há de onde restaurar (basestack backup target set ...)")
+	}
+	var key string
+	if *keyFile != "" {
+		raw, err := os.ReadFile(*keyFile)
+		if err != nil {
+			return err
+		}
+		key = string(raw)
+	} else if key, err = readSecret("Chave privada de backup (AGE-SECRET-KEY-...): "); err != nil {
+		return err
+	}
+	identity, err := age.ParseX25519Identity(strings.TrimSpace(key))
+	if err != nil {
+		return errors.New("isto não é uma chave privada age (AGE-SECRET-KEY-...)")
+	}
+	if identity.Recipient().String() != s.BackupRecipient {
+		return errors.New("esta chave não é a desta instalação: não corresponde à chave pública em settings.json")
+	}
+	fmt.Println("A partir do destino:")
+	cmd := compose(dir, "exec", "-T", "launcher", "launcher", "backup-verify")
+	cmd.Stdin = strings.NewReader(strings.TrimSpace(key) + "\n")
+	failed := cmd.Run() != nil
+	fmt.Println("\nRepositório local da base (pgbackrest verify):")
+	if err := compose(dir, "exec", "-T", "-u", "postgres", "database", "pgbackrest", "--stanza=basestack", "verify").Run(); err != nil {
+		failed = true
+	}
+	if failed {
+		return errors.New("o ensaio de restauro encontrou problemas -- vê acima")
+	}
+	fmt.Println("\nEnsaio de restauro sem problemas.")
+	return nil
+}
+
+// readSecret pede um valor sem o mostrar no terminal.
+func readSecret(prompt string) (string, error) {
+	fmt.Print(prompt)
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+		fmt.Println()
+		return strings.TrimSpace(line), err
+	}
+	raw, err := term.ReadPassword(int(os.Stdin.Fd()))
+	fmt.Println()
+	return strings.TrimSpace(string(raw)), err
 }
 
 // lastConfigFile guarda o hash da última configuração enviada: o up só

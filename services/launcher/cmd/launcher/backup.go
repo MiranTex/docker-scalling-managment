@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path"
 	"regexp"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"launcher/internal/objstore"
+	"launcher/internal/offsite"
 )
 
 // Subcomandos para o "basestack backup" (corre-os com docker compose exec
@@ -92,11 +94,70 @@ func backupStatus(cfg config) int {
 			printLatestPerAddon(objs)
 		}
 	}
+	if !printTarget(ctx, cfg) {
+		failed = true
+	}
 	if failed {
 		return 1
 	}
 	return 0
 }
+
+// printTarget mostra o destino fora desta máquina: a última passagem
+// completa e o que lá falta. false se não o conseguiu ler.
+func printTarget(ctx context.Context, cfg config) bool {
+	m, err := cfg.offsiteMirror(quietLogger())
+	if err != nil {
+		fmt.Printf("\nFora desta máquina: configuração inválida: %v\n", err)
+		return false
+	}
+	if m == nil {
+		fmt.Println("\nFora desta máquina: sem destino -- tudo isto está só neste servidor\n  (basestack backup target set ...)")
+		return true
+	}
+	fmt.Printf("\nFora desta máquina: %s, bucket %s/%s (cifrado)\n", cfg.backupTargetURL, m.Target.Bucket, m.Target.Prefix)
+	st, err := m.Status(ctx)
+	if err != nil {
+		fmt.Printf("  erro: %v\n", err)
+		return false
+	}
+	if st.LastSync.IsZero() {
+		fmt.Println("  última cópia completa: nunca")
+	} else {
+		fmt.Printf("  última cópia completa: %s (há %s)\n", st.LastSync.Local().Format("2006-01-02 15:04"), time.Since(st.LastSync).Round(time.Minute))
+	}
+	for _, b := range offsite.Buckets {
+		fmt.Printf("  %-14s %d objetos lá, %d por copiar\n", b, st.Remote[b], st.Missing[b])
+	}
+	return true
+}
+
+// backupSync ("launcher backup-sync") faz uma passagem do espelho agora.
+func backupSync(cfg config) int {
+	m, err := cfg.offsiteMirror(quietLogger())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	if m == nil {
+		fmt.Println("sem destino fora desta máquina (basestack backup target set ...)")
+		return 0
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
+	defer cancel()
+	r, err := m.Once(ctx)
+	fmt.Printf("cópia para fora: %d objetos (%s) copiados, %d apagados\n", r.Copied, humanBytes(r.Bytes), r.Deleted)
+	for b, n := range r.Held {
+		fmt.Printf("  AVISO: %d apagamentos travados em %s -- o storage local perdeu demasiado de uma vez\n", n, b)
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	return 0
+}
+
+func quietLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
 // printLatestPerAddon: uma linha por <projeto>/<ambiente>/<addon>, com o
 // dump mais recente.

@@ -294,3 +294,28 @@ func TestACMEForcesHTTPS(t *testing.T) {
 		}
 	}
 }
+
+// O destino dos backups só entra no launcher quando existe, com a chave
+// pública -- e o compose continua válido.
+func TestBackupTargetInCompose(t *testing.T) {
+	for _, target := range []*BackupTarget{nil, {URL: "https://s3.exemplo.pt", Bucket: "b", Region: "eu", Prefix: "bs", AccessKey: "AK", SecretKey: "SK"}} {
+		dir := t.TempDir()
+		s := testSettings()
+		s.BackupRecipient = "age1exemplo"
+		s.BackupTarget = target
+		if err := render(dir, s); err != nil {
+			t.Fatal(err)
+		}
+		raw, _ := os.ReadFile(filepath.Join(dir, "compose.yml"))
+		has := strings.Contains(string(raw), `LAUNCHER_BACKUP_TARGET_URL: "https://s3.exemplo.pt"`) &&
+			strings.Contains(string(raw), `LAUNCHER_BACKUP_RECIPIENT: "age1exemplo"`)
+		if has != (target != nil) {
+			t.Errorf("destino %v: variáveis no compose = %v", target, has)
+		}
+		if _, err := exec.LookPath("docker"); err == nil {
+			if out, err := exec.Command("docker", "compose", "--file", filepath.Join(dir, "compose.yml"), "config", "--quiet").CombinedOutput(); err != nil {
+				t.Fatalf("docker compose config: %v\n%s", err, out)
+			}
+		}
+	}
+}

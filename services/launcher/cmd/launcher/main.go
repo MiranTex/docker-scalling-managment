@@ -50,6 +50,10 @@ func main() {
 			os.Exit(backupConfig(cfg, os.Args[2:]))
 		case "backup-status":
 			os.Exit(backupStatus(cfg))
+		case "backup-sync":
+			os.Exit(backupSync(cfg))
+		case "backup-verify":
+			os.Exit(backupVerify(cfg))
 		}
 	}
 
@@ -80,6 +84,15 @@ func main() {
 		os.Exit(1)
 	}
 	pc.Backups = backups
+	mirror, err := cfg.offsiteMirror(logger)
+	if err != nil {
+		logger.Error("configuração inválida do destino dos backups", "err", err)
+		os.Exit(1)
+	}
+	if mirror != nil {
+		// A primeira passagem pouco depois do arranque; depois de hora a hora.
+		go mirror.Run(ctx, 2*time.Minute, time.Hour)
+	}
 	platformSvc := platform.New(db, docker, box, pc, logger)
 	go platformSvc.Run(ctx)
 
