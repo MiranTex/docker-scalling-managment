@@ -29,8 +29,9 @@ func (d *addonDocker) CreateContainer(_ context.Context, name string, req docker
 	d.labels[name] = req.Labels
 	return "cid-" + name, nil
 }
-func (d *addonDocker) StartContainer(context.Context, string) error        { return nil }
-func (d *addonDocker) RemoveContainer(context.Context, string, bool) error { return nil }
+func (d *addonDocker) CopyToContainer(context.Context, string, string, io.Reader) error { return nil }
+func (d *addonDocker) StartContainer(context.Context, string) error                     { return nil }
+func (d *addonDocker) RemoveContainer(context.Context, string, bool) error              { return nil }
 func (d *addonDocker) InspectContainer(_ context.Context, name string) (*dockerclient.ContainerInspect, error) {
 	var info dockerclient.ContainerInspect
 	info.ID = "cid-" + name

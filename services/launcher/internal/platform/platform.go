@@ -84,6 +84,7 @@ type Docker interface {
 	InspectContainer(ctx context.Context, id string) (*dockerclient.ContainerInspect, error)
 	WaitContainer(ctx context.Context, id string) (int, error)
 	ContainerLogs(ctx context.Context, id string, tail int) (string, error)
+	CopyToContainer(ctx context.Context, id, dir string, archive io.Reader) error
 	CreateVolume(ctx context.Context, name string, labels map[string]string) error
 	RemoveVolume(ctx context.Context, name string) error
 	ListVolumesByLabel(ctx context.Context, label string) ([]dockerclient.Volume, error)

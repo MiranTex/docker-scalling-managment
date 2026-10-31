@@ -65,7 +65,7 @@ func TestCreatePostgresAddon(t *testing.T) {
 			pw = v
 		}
 	}
-	if pw == "" || resolved[0] != "X=postgres://app:"+pw+"@db:5432/app?sslmode=disable" {
+	if pw == "" || resolved[0] != "X=postgres://app:"+pw+"@db:5432/app?sslmode=require" {
 		t.Errorf("URL = %q (password do container %q)", resolved[0], pw)
 	}
 
@@ -329,5 +329,51 @@ func TestStorageAddon(t *testing.T) {
 	}
 	if !contains(got, "MEDIA_BUCKET=app") {
 		t.Errorf("o outro storage perdeu as variáveis: %v", got)
+	}
+}
+
+// O Postgres arranca com TLS: certificado copiado antes de arrancar, label
+// a marcá-lo e o URL em sslmode=require. Um addon de antes do TLS é
+// recriado pelo reconciliador com a mesma password, e o URL muda.
+func TestPostgresAddonTLS(t *testing.T) {
+	ctx := context.Background()
+	svc, docker := newTestService(t)
+	svc.cfg.PostgresImage = "postgres:17-alpine"
+	setupEnv(t, svc)
+	if _, err := svc.CreateAddon(ctx, "loja", "prod", CreateAddonInput{Slug: "db", Kind: "postgres"}, "t"); err != nil {
+		t.Fatal(err)
+	}
+	req := docker.created["bs-loja-prod-db"]
+	if req.Labels[LabelAddonTLS] != "1" || !strings.Contains(strings.Join(req.Cmd, " "), "ssl=on") {
+		t.Errorf("container sem TLS: labels %v, cmd %v", req.Labels, req.Cmd)
+	}
+	if !docker.copied["cid-bs-loja-prod-db:/etc/bs-tls/server.key"] || !docker.copied["cid-bs-loja-prod-db:/etc/bs-tls/server.crt"] {
+		t.Errorf("certificado não entrou no container: %v", docker.copied)
+	}
+
+	// Um addon de antes: sem a label, e com o URL antigo.
+	_, env, _ := svc.Scope(ctx, "loja", "prod")
+	a, _ := svc.db.GetAddonBySlug(ctx, env.ID, "db")
+	_, pw, _ := svc.addonLogin(ctx, env.ID, a)
+	if err := svc.putSecret(ctx, env.ID, "DATABASE_URL", "postgres://app:"+pw+"@db:5432/app?sslmode=disable", "addon:db", "t"); err != nil {
+		t.Fatal(err)
+	}
+	docker.mu.Lock()
+	c := docker.containers["cid-bs-loja-prod-db"]
+	c.Labels = map[string]string{}
+	c.State = "running"
+	docker.containers["cid-bs-loja-prod-db"] = c
+	docker.mu.Unlock()
+
+	svc.reconcileOnce(ctx)
+	if docker.created["bs-loja-prod-db"].Labels[LabelAddonTLS] != "1" {
+		t.Error("o reconciliador não recriou o addon com TLS")
+	}
+	got, _ := svc.ResolveEnv(ctx, env.ID, []string{"${secret:DATABASE_URL}"})
+	if got[0] != "postgres://app:"+pw+"@db:5432/app?sslmode=require" {
+		t.Errorf("URL depois da migração = %q", got[0])
+	}
+	if !contains(docker.created["bs-loja-prod-db"].Env, "POSTGRES_PASSWORD="+pw) {
+		t.Error("a password mudou na migração")
 	}
 }
