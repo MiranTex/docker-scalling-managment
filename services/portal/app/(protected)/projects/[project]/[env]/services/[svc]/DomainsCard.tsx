@@ -1,15 +1,27 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, servicePath, statusBadge, type Domain } from "@/lib/platformClient";
+import { api, statusBadge, type Domain } from "@/lib/platformClient";
 import { useCan } from "@/lib/projectRole";
 
-export default function DomainsCard({ project, env, svc }: { project: string; env: string; svc: string }) {
+// DomainsCard serve os domínios próprios de um serviço e os de um bucket
+// público: base é o caminho da coleção na API (.../domains).
+export default function DomainsCard({
+  base,
+  owner = "este serviço",
+  placeholder = "loja.pt",
+  title = "Domínios próprios",
+}: {
+  base: string;
+  owner?: string;
+  placeholder?: string;
+  title?: string;
+}) {
   const canEdit = useCan("developer");
   const [domains, setDomains] = useState<Domain[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [hostname, setHostname] = useState("");
-  const path = (...rest: string[]) => servicePath(project, env, svc, "domains", ...rest);
+  const path = (...rest: string[]) => [base, ...rest.map(encodeURIComponent)].join("/");
 
   async function load() {
     try {
@@ -23,7 +35,7 @@ export default function DomainsCard({ project, env, svc }: { project: string; en
     load();
     const t = setInterval(load, 15000);
     return () => clearInterval(t);
-  }, [project, env, svc]);
+  }, [base]);
 
   async function add() {
     setError(null);
@@ -46,7 +58,7 @@ export default function DomainsCard({ project, env, svc }: { project: string; en
   }
 
   async function remove(host: string) {
-    if (!confirm(`Remover ${host}? Deixa de responder por este serviço.`)) return;
+    if (!confirm(`Remover ${host}? Deixa de responder por ${owner}.`)) return;
     try {
       await api(path(host), { method: "DELETE" });
       await load();
@@ -59,7 +71,7 @@ export default function DomainsCard({ project, env, svc }: { project: string; en
 
   return (
     <div className="card full">
-      <h1>Domínios próprios</h1>
+      <h1>{title}</h1>
       <p className="muted">
         Um domínio só passa a responder (e só pede certificado HTTPS) depois de o DNS apontar para este servidor. Os
         pendentes são verificados de novo a cada 2 minutos.
@@ -128,7 +140,7 @@ export default function DomainsCard({ project, env, svc }: { project: string; en
       )}
       {canEdit && (
       <div className="row">
-        <input value={hostname} onChange={(e) => setHostname(e.target.value)} placeholder="loja.pt" />
+        <input value={hostname} onChange={(e) => setHostname(e.target.value)} placeholder={placeholder} />
         <button className="secondary" disabled={!hostname.trim()} onClick={add}>
           Adicionar
         </button>

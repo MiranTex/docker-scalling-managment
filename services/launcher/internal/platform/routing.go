@@ -61,6 +61,13 @@ type traefikMiddleware struct {
 	Retry     *traefikRetry     `json:"retry,omitempty"`
 	Headers   *traefikHeaders   `json:"headers,omitempty"`
 	BasicAuth *traefikBasicAuth `json:"basicAuth,omitempty"`
+	AddPrefix *traefikAddPrefix `json:"addPrefix,omitempty"`
+}
+
+// traefikAddPrefix: o domínio próprio de um bucket (cdn.loja.pt/foto.jpg)
+// chega ao storage como /<bucket>/foto.jpg.
+type traefikAddPrefix struct {
+	Prefix string `json:"prefix"`
 }
 
 // traefikBasicAuth: a proteção com password de um serviço (ver
@@ -260,6 +267,9 @@ func (s *Service) buildRouting(ctx context.Context) (traefikConfig, error) {
 		}
 		cfg.HTTP.Routers[name] = httpRouter
 	}
+	if err := s.storageRouting(ctx, &cfg, scopes); err != nil {
+		return cfg, err
+	}
 	if len(cfg.HTTP.Routers) > 0 {
 		cfg.HTTP.Middlewares[retryMiddleware] = traefikMiddleware{Retry: &traefikRetry{Attempts: 3, InitialInterval: "100ms"}}
 	}
@@ -323,4 +333,84 @@ func (s *Service) syncRouting(ctx context.Context) {
 		routers = len(cfg.HTTP.Routers)
 	}
 	s.logger.Info("routing atualizado", "routers", routers)
+}
+
+// storageRouting acrescenta os addons storage com endereço público e os
+// domínios próprios dos buckets públicos. O Traefik chega ao container
+// pelo IP dele na rede do ambiente, como às réplicas.
+func (s *Service) storageRouting(ctx context.Context, cfg *traefikConfig, scopes *scopeCache) error {
+	addons, err := s.db.ListAllAddons(ctx)
+	if err != nil {
+		return err
+	}
+	var containers map[string]dockerclient.Container
+	for _, a := range addons {
+		if a.Kind != store.AddonStorage {
+			continue
+		}
+		domains, err := s.db.ListActiveAddonDomains(ctx, a.ID)
+		if err != nil {
+			return err
+		}
+		if !a.PublicEndpoint && len(domains) == 0 {
+			continue
+		}
+		if containers == nil {
+			list, err := s.docker.ListContainers(ctx, false, map[string][]string{"label": {LabelRole + "=" + RoleAddon}})
+			if err != nil {
+				return err
+			}
+			containers = map[string]dockerclient.Container{}
+			for _, c := range list {
+				containers[c.Labels[LabelAddon]] = c
+			}
+		}
+		c, ok := containers[a.ID]
+		if !ok {
+			continue
+		}
+		p, e, err := scopes.get(ctx, a.EnvironmentID)
+		if err != nil {
+			continue
+		}
+		name := "bsa_" + p.Slug + "_" + e.Slug + "_" + a.Slug
+		cfg.HTTP.Services[name] = traefikService{LoadBalancer: traefikLB{
+			Servers: []traefikServer{{URL: fmt.Sprintf("http://%s:%d", replicaAddr(c), addonPort(a.Kind))}}, PassHostHeader: true,
+		}}
+		if a.PublicEndpoint && s.cfg.PublicBaseDomain != "" {
+			s.addRouters(cfg, name, name, hostRule([]string{addonHost(p, e, a, s.cfg.PublicBaseDomain)}), nil)
+		}
+		// Os domínios de cada bucket público, com o prefixo dele.
+		buckets, err := s.db.ListBuckets(ctx, a.ID)
+		if err != nil {
+			return err
+		}
+		public := map[string]bool{}
+		for _, b := range buckets {
+			public[b.Name] = b.Public
+		}
+		byBucket := map[string][]string{}
+		for _, d := range domains {
+			if public[d.Bucket] {
+				byBucket[d.Bucket] = append(byBucket[d.Bucket], d.Hostname)
+			}
+		}
+		for bucket, hosts := range byBucket {
+			router := name + "_" + bucket
+			cfg.HTTP.Middlewares[router+"-prefix"] = traefikMiddleware{AddPrefix: &traefikAddPrefix{Prefix: "/" + bucket}}
+			s.addRouters(cfg, router, name, hostRule(hosts), []string{router + "-prefix"})
+		}
+	}
+	return nil
+}
+
+// addRouters: o router HTTP e, com HTTPS, o TLS -- como os dos serviços.
+func (s *Service) addRouters(cfg *traefikConfig, router, service, rule string, middlewares []string) {
+	httpRouter := traefikRouter{Rule: rule, EntryPoints: []string{"web"}, Service: service, Middlewares: append(append([]string{}, middlewares...), retryMiddleware)}
+	if s.cfg.TLSCertResolver != "" {
+		httpRouter.Middlewares = []string{redirectMiddleware}
+		cfg.HTTP.Routers[router+"-tls"] = traefikRouter{Rule: rule, EntryPoints: []string{"websecure"}, Service: service,
+			Middlewares: append(append([]string{hstsMiddleware}, middlewares...), retryMiddleware), TLS: &traefikTLS{CertResolver: s.cfg.TLSCertResolver}}
+	}
+	cfg.HTTP.Routers[router] = httpRouter
 }

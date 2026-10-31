@@ -431,7 +431,7 @@ export default function ServiceClient({ project, env, svc }: { project: string; 
       {tab === "domains" &&
         (service.kind === "web" ? (
           <>
-            <DomainsCard project={project} env={env} svc={svc} />
+            <DomainsCard base={servicePath(project, env, svc, "domains")} />
             <BasicAuthCard project={project} env={env} service={service} onSaved={load} />
           </>
         ) : (

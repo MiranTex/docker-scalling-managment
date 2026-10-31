@@ -5,11 +5,14 @@
 package objstore
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
+	"crypto/md5"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/xml"
 	"errors"
@@ -283,4 +286,88 @@ func hmacSHA256(key []byte, data string) []byte {
 	m := hmac.New(sha256.New, key)
 	m.Write([]byte(data))
 	return m.Sum(nil)
+}
+
+// send faz um pedido com um corpo pequeno, assinado (o hash entra na
+// assinatura) e com Content-MD5, que a API exige em ?policy e ?cors.
+func (c *Client) send(ctx context.Context, method, bucket, sub string, body []byte) error {
+	var q url.Values
+	if sub != "" {
+		q = url.Values{sub: {""}}
+	}
+	req, err := c.request(ctx, method, bucket, "", q, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	// url.Values codifica "policy=" -- a API quer "?policy".
+	req.URL.RawQuery = strings.TrimSuffix(req.URL.RawQuery, "=")
+	req.ContentLength = int64(len(body))
+	if len(body) > 0 {
+		sum := md5.Sum(body)
+		req.Header.Set("Content-MD5", base64.StdEncoding.EncodeToString(sum[:]))
+	}
+	res, err := c.do(req, hexSHA256(string(body)))
+	if err != nil {
+		return err
+	}
+	res.Body.Close()
+	return nil
+}
+
+// CreateBucket cria um bucket; já existir não é erro.
+func (c *Client) CreateBucket(ctx context.Context, bucket string) error {
+	err := c.send(ctx, http.MethodPut, bucket, "", nil)
+	if err != nil && (strings.Contains(err.Error(), "BucketAlreadyOwnedByYou") || strings.Contains(err.Error(), "BucketAlreadyExists")) {
+		return nil
+	}
+	return err
+}
+
+// DeleteBucket apaga um bucket vazio (com objetos, a API recusa:
+// BucketNotEmpty).
+func (c *Client) DeleteBucket(ctx context.Context, bucket string) error {
+	return c.send(ctx, http.MethodDelete, bucket, "", nil)
+}
+
+// SetPublicRead liga ou desliga a leitura anónima dos objetos de um
+// bucket (só GetObject: listar e escrever continuam a exigir credenciais).
+func (c *Client) SetPublicRead(ctx context.Context, bucket string, public bool) error {
+	if !public {
+		if err := c.send(ctx, http.MethodDelete, bucket, "policy", nil); err != nil && !errors.Is(err, ErrNotFound) {
+			return err
+		}
+		return nil
+	}
+	policy := fmt.Sprintf(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":["s3:GetObject"],"Resource":["arn:aws:s3:::%s/*"]}]}`, bucket)
+	return c.send(ctx, http.MethodPut, bucket, "policy", []byte(policy))
+}
+
+// SetCORS define as origens de onde um browser pode usar o bucket (GET,
+// HEAD e PUT -- este para envios com links assinados). Vazio tira o CORS.
+func (c *Client) SetCORS(ctx context.Context, bucket string, origins []string) error {
+	if len(origins) == 0 {
+		if err := c.send(ctx, http.MethodDelete, bucket, "cors", nil); err != nil && !errors.Is(err, ErrNotFound) {
+			return err
+		}
+		return nil
+	}
+	type rule struct {
+		AllowedOrigin []string
+		AllowedMethod []string
+		AllowedHeader []string
+		ExposeHeader  []string
+		MaxAgeSeconds int
+	}
+	cfg := struct {
+		XMLName  xml.Name `xml:"CORSConfiguration"`
+		CORSRule []rule
+	}{CORSRule: []rule{{
+		AllowedOrigin: origins, AllowedMethod: []string{"GET", "HEAD", "PUT"},
+		AllowedHeader: []string{"*"}, ExposeHeader: []string{"ETag"}, MaxAgeSeconds: 3600,
+	}}}
+	body, err := xml.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	return c.send(ctx, http.MethodPut, bucket, "cors", body)
 }

@@ -62,22 +62,31 @@ func (s *Service) AddDomain(ctx context.Context, projectSlug, envSlug, svcSlug, 
 	if svc.Kind != store.ServiceWeb {
 		return DomainView{}, invalid("só serviços web recebem domínios")
 	}
-	hostname = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(hostname)), ".")
-	if len(hostname) > 253 || !hostnameRe.MatchString(hostname) {
-		return DomainView{}, invalid("domínio %q inválido -- só o hostname, ex: loja.pt ou www.loja.pt", hostname)
-	}
-	if base := s.cfg.PublicBaseDomain; base != "" && (hostname == base || strings.HasSuffix(hostname, "."+base)) {
-		return DomainView{}, invalid("%s está dentro do domínio da plataforma (%s), que já tem host próprio por serviço", hostname, base)
+	if hostname, err = s.normalizeHostname(hostname); err != nil {
+		return DomainView{}, err
 	}
 	err = s.db.CreateDomain(ctx, store.Domain{Hostname: hostname, ServiceID: svc.ID, CreatedBy: by})
 	if errors.Is(err, store.ErrConflict) {
-		return DomainView{}, fmt.Errorf("%w: o domínio %s já está associado a um serviço", ErrConflict, hostname)
+		return DomainView{}, fmt.Errorf("%w: o domínio %s já está associado a um serviço ou bucket", ErrConflict, hostname)
 	}
 	if err != nil {
 		return DomainView{}, err
 	}
 	s.verifyDomain(ctx, hostname)
 	return s.getDomain(ctx, p, e, svc, hostname)
+}
+
+// normalizeHostname valida um domínio próprio (de um serviço ou de um
+// bucket) e devolve-o em minúsculas, sem o ponto final.
+func (s *Service) normalizeHostname(hostname string) (string, error) {
+	hostname = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(hostname)), ".")
+	if len(hostname) > 253 || !hostnameRe.MatchString(hostname) {
+		return "", invalid("domínio %q inválido -- só o hostname, ex: loja.pt ou www.loja.pt", hostname)
+	}
+	if base := s.cfg.PublicBaseDomain; base != "" && (hostname == base || strings.HasSuffix(hostname, "."+base)) {
+		return "", invalid("%s está dentro do domínio da plataforma (%s), que já tem host próprio por serviço", hostname, base)
+	}
+	return hostname, nil
 }
 
 func (s *Service) getDomain(ctx context.Context, p store.Project, e store.Environment, svc store.Service, hostname string) (DomainView, error) {

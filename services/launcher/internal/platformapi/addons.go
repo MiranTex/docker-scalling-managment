@@ -1,6 +1,7 @@
 package platformapi
 
 import (
+	"fmt"
 	"net/http"
 
 	"launcher/internal/platform"
@@ -29,9 +30,10 @@ func (a *API) createAddon(w http.ResponseWriter, r *http.Request, who principal)
 	writeJSON(w, http.StatusCreated, addon)
 }
 
-func (a *API) updateAddon(w http.ResponseWriter, r *http.Request, _ principal) {
+func (a *API) updateAddon(w http.ResponseWriter, r *http.Request, who principal) {
 	var in struct {
-		BackupEnabled *bool `json:"backupEnabled"`
+		BackupEnabled  *bool `json:"backupEnabled"`
+		PublicEndpoint *bool `json:"publicEndpoint"`
 	}
 	if !decode(w, r, &in) {
 		return
@@ -42,6 +44,105 @@ func (a *API) updateAddon(w http.ResponseWriter, r *http.Request, _ principal) {
 			return
 		}
 	}
+	if in.PublicEndpoint != nil {
+		p, e, addon := r.PathValue("project"), r.PathValue("env"), r.PathValue("addon")
+		if _, err := a.svc.SetStoragePublic(r.Context(), p, e, addon, *in.PublicEndpoint, who.Subject); err != nil {
+			a.fail(w, err)
+			return
+		}
+		a.audit.Log(who.Subject, "addon.public_endpoint", p+"/"+e+"/"+addon, fmt.Sprint(*in.PublicEndpoint))
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func addonPath(r *http.Request) (project, env, addon string) {
+	return r.PathValue("project"), r.PathValue("env"), r.PathValue("addon")
+}
+
+func (a *API) listBuckets(w http.ResponseWriter, r *http.Request, _ principal) {
+	p, e, addon := addonPath(r)
+	buckets, err := a.svc.ListBuckets(r.Context(), p, e, addon)
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, buckets)
+}
+
+func (a *API) createBucket(w http.ResponseWriter, r *http.Request, who principal) {
+	var in platform.BucketInput
+	if !decode(w, r, &in) {
+		return
+	}
+	p, e, addon := addonPath(r)
+	b, err := a.svc.CreateBucket(r.Context(), p, e, addon, in, who.Subject)
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	a.audit.Log(who.Subject, "bucket.create", p+"/"+e+"/"+addon+"/"+in.Name, fmt.Sprintf("público=%v", in.Public))
+	writeJSON(w, http.StatusCreated, b)
+}
+
+func (a *API) updateBucket(w http.ResponseWriter, r *http.Request, who principal) {
+	var in platform.BucketUpdate
+	if !decode(w, r, &in) {
+		return
+	}
+	p, e, addon := addonPath(r)
+	b, err := a.svc.UpdateBucket(r.Context(), p, e, addon, r.PathValue("bucket"), in)
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	a.audit.Log(who.Subject, "bucket.update", p+"/"+e+"/"+addon+"/"+b.Name, fmt.Sprintf("público=%v cors=%v", b.Public, b.CORSOrigins))
+	writeJSON(w, http.StatusOK, b)
+}
+
+func (a *API) deleteBucket(w http.ResponseWriter, r *http.Request, who principal) {
+	p, e, addon := addonPath(r)
+	if err := a.svc.DeleteBucket(r.Context(), p, e, addon, r.PathValue("bucket")); err != nil {
+		a.fail(w, err)
+		return
+	}
+	a.audit.Log(who.Subject, "bucket.delete", p+"/"+e+"/"+addon+"/"+r.PathValue("bucket"), "")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *API) addBucketDomain(w http.ResponseWriter, r *http.Request, who principal) {
+	var in struct {
+		Hostname string `json:"hostname"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	p, e, addon := addonPath(r)
+	d, err := a.svc.AddBucketDomain(r.Context(), p, e, addon, r.PathValue("bucket"), in.Hostname, who.Subject)
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	a.audit.Log(who.Subject, "bucket.domain", p+"/"+e+"/"+addon+"/"+r.PathValue("bucket"), "acrescentado "+d.Hostname)
+	writeJSON(w, http.StatusCreated, d)
+}
+
+func (a *API) verifyBucketDomain(w http.ResponseWriter, r *http.Request, _ principal) {
+	p, e, addon := addonPath(r)
+	d, err := a.svc.VerifyBucketDomain(r.Context(), p, e, addon, r.PathValue("bucket"), r.PathValue("hostname"))
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, d)
+}
+
+func (a *API) deleteBucketDomain(w http.ResponseWriter, r *http.Request, who principal) {
+	p, e, addon := addonPath(r)
+	if err := a.svc.DeleteBucketDomain(r.Context(), p, e, addon, r.PathValue("bucket"), r.PathValue("hostname")); err != nil {
+		a.fail(w, err)
+		return
+	}
+	a.audit.Log(who.Subject, "bucket.domain", p+"/"+e+"/"+addon+"/"+r.PathValue("bucket"), "removido "+r.PathValue("hostname"))
 	w.WriteHeader(http.StatusNoContent)
 }
 
