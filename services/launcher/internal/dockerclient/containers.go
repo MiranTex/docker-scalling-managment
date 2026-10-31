@@ -385,6 +385,9 @@ func (c *Client) ContainerLogs(ctx context.Context, id string, tail int) (string
 	return demuxLogs(raw), nil
 }
 
+// Demux é demuxLogs para quem lê o output de um exec sem TTY.
+func Demux(raw []byte) string { return demuxLogs(raw) }
+
 // demuxLogs tira os cabeçalhos de 8 bytes que o Docker põe em cada frame
 // de stdout/stderr quando o container não tem TTY. Se o formato não bater
 // (container com TTY, stream já cru), devolve o texto tal como veio.
@@ -405,10 +408,30 @@ func demuxLogs(raw []byte) string {
 	return string(out)
 }
 
-// Stats é o subconjunto de /containers/{id}/stats usado para autoscaling.
+// Stats é o subconjunto de /containers/{id}/stats usado para autoscaling
+// e para o consumo de cada container num nó.
 type Stats struct {
 	CPUStats    cpuStats `json:"cpu_stats"`
 	PreCPUStats cpuStats `json:"precpu_stats"`
+	MemoryStats struct {
+		Usage uint64            `json:"usage"`
+		Limit uint64            `json:"limit"`
+		Stats map[string]uint64 `json:"stats"`
+	} `json:"memory_stats"`
+}
+
+// MemoryBytes é a memória "em uso" como o docker stats a mostra: o total
+// menos a cache de ficheiros que o kernel pode largar.
+func (s *Stats) MemoryBytes() uint64 {
+	used := s.MemoryStats.Usage
+	cache := s.MemoryStats.Stats["inactive_file"] // cgroup v2
+	if cache == 0 {
+		cache = s.MemoryStats.Stats["total_inactive_file"] // cgroup v1
+	}
+	if cache < used {
+		return used - cache
+	}
+	return used
 }
 
 type cpuStats struct {

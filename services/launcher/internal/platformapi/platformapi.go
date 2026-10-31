@@ -110,6 +110,9 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /v1/nodes/{node}", platformAdmin(a.deleteNode))
 	mux.HandleFunc("POST /v1/nodes/{node}/check", platformAdmin(a.checkNode))
 	mux.HandleFunc("POST /v1/nodes/{node}/drain", platformAdmin(a.drainNode))
+	// O que a máquina está a usar: o histórico (24h) e os containers agora.
+	mux.HandleFunc("GET /v1/nodes/{node}/metrics", platformAdmin(a.nodeMetrics))
+	mux.HandleFunc("GET /v1/nodes/{node}/top", platformAdmin(a.nodeTop))
 	mux.HandleFunc("POST /v1/nodes/join-tokens", platformAdmin(a.createJoinToken))
 	// Os agentes dos nós remotos (sem sessão de utilizador -- ver agents.go).
 	// Login da CLI pelo browser (ver clilogin.go): o bs começa e pergunta

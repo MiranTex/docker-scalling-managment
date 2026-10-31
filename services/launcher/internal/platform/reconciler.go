@@ -45,6 +45,7 @@ func (s *Service) Run(ctx context.Context) {
 	heartbeat := time.NewTicker(nodeHeartbeat)
 	defer heartbeat.Stop()
 
+	go s.runHostMetrics(ctx)
 	s.reconcileOnce(ctx)
 	for {
 		select {

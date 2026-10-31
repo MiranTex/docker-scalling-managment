@@ -204,6 +204,7 @@ type Service struct {
 	logger *slog.Logger
 	rt     *runtime
 	agents *agents // ligações dos agentes dos nós remotos
+	hm     *hostMetrics
 	swarm  swarmState
 	// probe faz o health check HTTP/TCP a uma réplica -- substituível nos
 	// testes.
@@ -225,7 +226,7 @@ func New(db *store.DB, docker Docker, box *secretbox.Box, cfg Config, logger *sl
 	}
 	ag := &agents{m: map[string]*agentConn{}, watch: newNodeWatch()}
 	return &Service{
-		db: db, docker: newClusterDocker(docker, ag), local: docker, box: box, cfg: cfg, logger: logger, rt: newRuntime(), agents: ag,
+		db: db, docker: newClusterDocker(docker, ag), local: docker, box: box, cfg: cfg, logger: logger, rt: newRuntime(), agents: ag, hm: newHostMetrics(),
 		probe: defaultProbe, lookupHost: net.DefaultResolver.LookupHost,
 		storageURL: func(p store.Project, e store.Environment, a store.Addon) string {
 			// O nome do container: único, ao contrário do slug.

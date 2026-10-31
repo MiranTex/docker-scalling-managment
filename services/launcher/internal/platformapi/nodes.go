@@ -60,3 +60,22 @@ func (a *API) drainNode(w http.ResponseWriter, r *http.Request, who principal) {
 	a.audit.Log(who.Subject, "node.drain", name, "iniciado")
 	w.WriteHeader(http.StatusAccepted)
 }
+
+func (a *API) nodeMetrics(w http.ResponseWriter, r *http.Request, _ principal) {
+	hours, _ := strconv.Atoi(r.URL.Query().Get("hours"))
+	samples, err := a.svc.HostMetrics(r.Context(), r.PathValue("node"), hours)
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, samples)
+}
+
+func (a *API) nodeTop(w http.ResponseWriter, r *http.Request, _ principal) {
+	top, err := a.svc.TopContainers(r.Context(), r.PathValue("node"))
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, top)
+}

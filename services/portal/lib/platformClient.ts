@@ -234,6 +234,33 @@ export type NodeView = {
   // As etiquetas que um admin pôs e as detetadas (ex: gpu=nvidia).
   labels: Record<string, string>;
   autoLabels: Record<string, string>;
+  // A última leitura da máquina, se recente.
+  usage?: HostSample;
+};
+
+// Uma leitura de uma máquina (ver launcher/internal/platform/hostmetrics.go).
+export type HostSample = {
+  at: string;
+  cpuPercent: number;
+  load1: number;
+  load5: number;
+  load15: number;
+  memoryTotalBytes: number;
+  memoryAvailableBytes: number;
+  diskTotalBytes: number;
+  diskAvailableBytes: number;
+};
+
+// O consumo de um container agora (o top de um nó).
+export type ContainerUsage = {
+  name: string;
+  project?: string;
+  environment?: string;
+  service?: string;
+  role?: string;
+  cpuPercent: number;
+  memoryBytes: number;
+  memoryLimitBytes: number;
 };
 
 export type NodeJoinToken = { token: string; expiresAt: string; caHash: string; command: string };

@@ -109,6 +109,11 @@ type config struct {
 
 	// O destino fora desta máquina (vazio desliga) e a chave pública com
 	// que tudo lá vai cifrado.
+	// metricsAddr: onde servir /metrics (as métricas das máquinas) ao
+	// Prometheus -- num endereço só da rede de observabilidade. Vazio
+	// desliga.
+	metricsAddr string
+
 	backupTargetURL       string
 	backupTargetBucket    string
 	backupTargetPrefix    string
@@ -195,6 +200,8 @@ func loadConfig() config {
 		backupStorageAccessKey: os.Getenv("LAUNCHER_BACKUP_STORAGE_ACCESS_KEY"),
 		backupStorageSecretKey: os.Getenv("LAUNCHER_BACKUP_STORAGE_SECRET_KEY"),
 		backupStorageCA:        os.Getenv("LAUNCHER_BACKUP_STORAGE_CA"),
+
+		metricsAddr: os.Getenv("LAUNCHER_METRICS_ADDR"),
 
 		backupTargetURL:       os.Getenv("LAUNCHER_BACKUP_TARGET_URL"),
 		backupTargetBucket:    os.Getenv("LAUNCHER_BACKUP_TARGET_BUCKET"),
