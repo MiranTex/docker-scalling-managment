@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { api, envPath, type Addon, type Bucket } from "@/lib/platformClient";
 import { useCan } from "@/lib/projectRole";
 import DomainsCard from "./services/[svc]/DomainsCard";
+import FileBrowser from "./FileBrowser";
 
 const EMPTY = { name: "", public: false, cors: "" };
 
@@ -24,6 +25,7 @@ export default function StorageCard({ project, env, addon, onChanged }: { projec
   const [form, setForm] = useState(EMPTY);
   const [cors, setCors] = useState<Record<string, string>>({});
   const [domainsOf, setDomainsOf] = useState<string | null>(null);
+  const [filesOf, setFilesOf] = useState<string | null>(null);
   const base = envPath(project, env, "addons", addon.slug);
 
   async function load() {
@@ -167,8 +169,25 @@ export default function StorageCard({ project, env, addon, onChanged }: { projec
                 </td>
                 <td>
                   <div className="actions">
+                    {canEdit && (
+                      <button
+                        className="secondary"
+                        onClick={() => {
+                          setFilesOf(filesOf === b.name ? null : b.name);
+                          setDomainsOf(null);
+                        }}
+                      >
+                        Ficheiros
+                      </button>
+                    )}
                     {b.public && (
-                      <button className="secondary" onClick={() => setDomainsOf(domainsOf === b.name ? null : b.name)}>
+                      <button
+                        className="secondary"
+                        onClick={() => {
+                          setDomainsOf(domainsOf === b.name ? null : b.name);
+                          setFilesOf(null);
+                        }}
+                      >
                         Domínios
                       </button>
                     )}
@@ -184,6 +203,10 @@ export default function StorageCard({ project, env, addon, onChanged }: { projec
           </tbody>
         </table>
         </div>
+      )}
+
+      {filesOf && buckets?.find((b) => b.name === filesOf) && (
+        <FileBrowser project={project} env={env} addon={addon.slug} bucket={buckets.find((b) => b.name === filesOf)!} />
       )}
 
       {domainsOf && buckets?.find((b) => b.name === domainsOf)?.public && (
