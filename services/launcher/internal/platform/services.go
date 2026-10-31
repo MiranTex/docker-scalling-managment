@@ -234,7 +234,7 @@ func (s *Service) CreateService(ctx context.Context, projectSlug, envSlug string
 	if err != nil {
 		return ServiceView{}, err
 	}
-	if err := validSlug("slug do serviço", in.Slug); err != nil {
+	if err := validHostSlug("slug do serviço", in.Slug); err != nil {
 		return ServiceView{}, err
 	}
 	if in.Template != "" {
