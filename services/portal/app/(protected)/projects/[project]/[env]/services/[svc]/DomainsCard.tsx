@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Modal from "@/components/Modal";
 import { api, statusBadge, type Domain } from "@/lib/platformClient";
 import { useCan } from "@/lib/projectRole";
 
@@ -21,6 +22,7 @@ export default function DomainsCard({
   const [domains, setDomains] = useState<Domain[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [hostname, setHostname] = useState("");
+  const [adding, setAdding] = useState(false);
   const path = (...rest: string[]) => [base, ...rest.map(encodeURIComponent)].join("/");
 
   async function load() {
@@ -42,6 +44,7 @@ export default function DomainsCard({
     try {
       await api(path(), { method: "POST", body: JSON.stringify({ hostname: hostname.trim() }) });
       setHostname("");
+      setAdding(false);
       await load();
     } catch (e) {
       setError((e as Error).message);
@@ -71,12 +74,20 @@ export default function DomainsCard({
 
   return (
     <div className="card full">
-      <h1>{title}</h1>
+      <div className="page-header">
+        <h1>{title}</h1>
+        {canEdit && (
+          <button className="primary" onClick={() => setAdding(true)}>
+            Acrescentar domínio
+          </button>
+        )}
+      </div>
       <p className="muted">
         Um domínio só passa a responder (e só pede certificado HTTPS) depois de o DNS apontar para este servidor. Os
         pendentes são verificados de novo a cada 2 minutos.
       </p>
-      {error && <div className="error">{error}</div>}
+      {!adding && error && <div className="error">{error}</div>}
+      {domains && domains.length === 0 && <p className="muted">Sem domínios próprios.</p>}
       {domains && domains.length > 0 && (
         <table>
           <thead>
@@ -138,13 +149,16 @@ export default function DomainsCard({
           </ul>
         </div>
       )}
-      {canEdit && (
-      <div className="row">
-        <input value={hostname} onChange={(e) => setHostname(e.target.value)} placeholder={placeholder} />
-        <button className="secondary" disabled={!hostname.trim()} onClick={add}>
-          Adicionar
-        </button>
-      </div>
+      {adding && (
+        <Modal title="Acrescentar domínio" onClose={() => setAdding(false)}>
+          {error && <div className="error">{error}</div>}
+          <label htmlFor="domain-host">Domínio</label>
+          <input id="domain-host" value={hostname} onChange={(e) => setHostname(e.target.value)} placeholder={placeholder} onKeyDown={(e) => e.key === "Enter" && hostname.trim() && add()} />
+          <p className="muted">Fica à espera até o DNS apontar para este servidor (as instruções aparecem na lista).</p>
+          <button className="primary" disabled={!hostname.trim()} onClick={add}>
+            Acrescentar
+          </button>
+        </Modal>
       )}
     </div>
   );

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Modal from "@/components/Modal";
 import { api, envPath, formatBytes, type Bucket } from "@/lib/platformClient";
 
 type FileView = { key: string; name: string; size: number; lastModified: string };
@@ -34,6 +35,7 @@ export default function FileBrowser({
   const [notice, setNotice] = useState<string | null>(null);
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [folder, setFolder] = useState("");
+  const [newFolder, setNewFolder] = useState(false);
   const [dragging, setDragging] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const base = envPath(project, env, "addons", addon, "buckets", bucket.name);
@@ -122,6 +124,7 @@ export default function FileBrowser({
     if (!name) return;
     setPrefix(prefix + name + "/");
     setFolder("");
+    setNewFolder(false);
     setNotice(`Pasta ${name}: só passa a existir quando enviares um ficheiro para lá.`);
   }
 
@@ -163,14 +166,24 @@ export default function FileBrowser({
         <button className="primary" onClick={() => input.current?.click()}>
           Enviar ficheiros
         </button>
-        <span className="muted">ou arrasta-os para aqui (até 1 GB cada)</span>
-      </div>
-      <div className="row">
-        <input value={folder} onChange={(e) => setFolder(e.target.value)} placeholder="nova pasta" onKeyDown={(e) => e.key === "Enter" && openFolder()} />
-        <button className="secondary" disabled={!folder.trim()} onClick={openFolder}>
-          Abrir pasta
+        <button className="secondary" onClick={() => setNewFolder(true)}>
+          Nova pasta
         </button>
+        <span className="muted">ou arrasta ficheiros para aqui (até 1 GB cada)</span>
       </div>
+
+      {newFolder && (
+        <Modal title="Nova pasta" onClose={() => setNewFolder(false)}>
+          <p className="muted">
+            Dentro de <code>{bucket.name}/{prefix}</code>. Uma pasta só passa a existir quando lá enviares um ficheiro.
+          </p>
+          <label htmlFor="folder-name">Nome</label>
+          <input id="folder-name" value={folder} onChange={(e) => setFolder(e.target.value)} placeholder="fotos" onKeyDown={(e) => e.key === "Enter" && openFolder()} />
+          <button className="primary" disabled={!folder.trim()} onClick={openFolder}>
+            Abrir pasta
+          </button>
+        </Modal>
+      )}
 
       {uploads.length > 0 && (
         <ul className="plain">

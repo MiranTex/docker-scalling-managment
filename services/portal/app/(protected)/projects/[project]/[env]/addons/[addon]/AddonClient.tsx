@@ -5,6 +5,7 @@ import Breadcrumbs from "@/components/Breadcrumbs";
 import CopyCommand from "@/components/CopyCommand";
 import TabBar, { useActiveTab } from "@/components/TabBar";
 import TerminalModal from "@/components/TerminalModal";
+import Modal from "@/components/Modal";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -37,6 +38,7 @@ export default function AddonClient({ project, env, addon: slug }: { project: st
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [form, setForm] = useState(EMPTY);
+  const [creating, setCreating] = useState(false);
   const [terminal, setTerminal] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [purge, setPurge] = useState(false);
@@ -97,16 +99,21 @@ export default function AddonClient({ project, env, addon: slug }: { project: st
         : `Endereço público ligado. Os serviços recebem ${addon.envVar}_PUBLIC_URL no próximo deploy.`,
     );
 
-  const create = () =>
-    run(async () => {
+  async function create() {
+    setError(null);
+    try {
       const name = form.name.trim();
       await api(`${base}/buckets`, {
         method: "POST",
         body: JSON.stringify({ name, public: form.public, corsOrigins: parseOrigins(form.cors) }),
       });
       setForm(EMPTY);
+      setCreating(false);
       router.push(`${envHref}/addons/${slug}/buckets/${name}`);
-    });
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
 
   async function remove() {
     setConfirmDelete(false);
@@ -194,6 +201,14 @@ export default function AddonClient({ project, env, addon: slug }: { project: st
 
       {tab === "buckets" && (
         <div className="card full">
+          {canEdit && (
+            <div className="page-header">
+              <span />
+              <button className="primary" onClick={() => setCreating(true)}>
+                Novo bucket
+              </button>
+            </div>
+          )}
           {!buckets ? (
             <Loading />
           ) : (
@@ -226,9 +241,12 @@ export default function AddonClient({ project, env, addon: slug }: { project: st
             </div>
           )}
 
-          {canEdit && (
-            <>
-              <h2>Novo bucket</h2>
+        </div>
+      )}
+
+      {creating && (
+        <Modal title="Novo bucket" onClose={() => setCreating(false)}>
+          {error && <div className="error">{error}</div>}
               <div className="form-grid">
                 <div>
                   <label htmlFor="bucket-name">Nome</label>
@@ -246,9 +264,7 @@ export default function AddonClient({ project, env, addon: slug }: { project: st
               <button className="primary" disabled={!form.name.trim()} onClick={create}>
                 Criar bucket
               </button>
-            </>
-          )}
-        </div>
+        </Modal>
       )}
 
       {terminal && <TerminalModal title={`Terminal · ${slug}`} path={`${base}/terminal`} onClose={() => setTerminal(false)} />}
