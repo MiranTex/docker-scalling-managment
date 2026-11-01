@@ -358,7 +358,16 @@ func (f *fakeDocker) InspectNetwork(_ context.Context, name string) (*dockerclie
 	return d, nil
 }
 
-func (f *fakeDocker) StopContainer(context.Context, string, int) error { return nil }
+func (f *fakeDocker) StopContainer(_ context.Context, idOrName string, _ int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if id, ok := f.find(idOrName); ok {
+		c := f.containers[id]
+		c.State = "exited"
+		f.containers[id] = c
+	}
+	return nil
+}
 
 func (f *fakeDocker) RemoveContainer(_ context.Context, idOrName string, _ bool) error {
 	f.mu.Lock()

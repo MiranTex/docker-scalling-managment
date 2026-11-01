@@ -195,7 +195,8 @@ func (c *scopeCache) get(ctx context.Context, envID string) (store.Project, stor
 
 // reconcileAddons garante que todo addon tem o seu container a correr: um
 // container apagado à mão é recriado (o volume de dados continua lá), um
-// parado é arrancado.
+// parado é arrancado. Os parados de propósito (desired_state stopped)
+// ficam parados.
 func (s *Service) reconcileAddons(ctx context.Context) {
 	addons, err := s.db.ListAllAddons(ctx)
 	if err != nil {
@@ -213,6 +214,13 @@ func (s *Service) reconcileAddons(ctx context.Context) {
 		}
 		name := addonContainerName(p, e, a)
 		info, err := s.docker.InspectContainer(ctx, name)
+		if a.DesiredState == store.DesiredStopped {
+			if err == nil && info.State.Running {
+				s.logger.Warn("reconciliador: addon parado de propósito estava a correr, a parar", "addon", name)
+				_ = s.docker.StopContainer(ctx, name, 30)
+			}
+			continue
+		}
 		switch {
 		case isNotFound(err):
 			user, pw, err := s.addonLogin(ctx, e.ID, a)
@@ -264,7 +272,7 @@ func (s *Service) runDueBackups(ctx context.Context) {
 	now := time.Now()
 	scopes := s.newScopeCache()
 	for _, a := range addons {
-		if a.Kind != store.AddonPostgres || !a.BackupEnabled {
+		if a.Kind != store.AddonPostgres || !a.BackupEnabled || a.DesiredState == store.DesiredStopped {
 			continue
 		}
 		due := a.LastBackupAt == nil && now.Sub(a.CreatedAt) > firstBackupAfter ||

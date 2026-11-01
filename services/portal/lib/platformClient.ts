@@ -79,6 +79,8 @@ export type Addon = {
   memoryMb: number;
   backupEnabled: boolean;
   lastBackupAt?: string;
+  // stopped = parado de propósito (o reconciliador não o arranca).
+  desiredState: "running" | "stopped";
   createdAt: string;
   createdBy: string;
   status: "running" | "starting" | "unhealthy" | "stopped" | "missing";
@@ -124,6 +126,25 @@ export function statusBadge(status: string): string {
   if (["starting", "pending", "pulling", "releasing", "deploying", "switching"].includes(status)) return "badge pending";
   if (status === "cancelled") return "badge";
   return "badge failed";
+}
+
+// setAddonState pára ou arranca um addon; ao parar pede confirmação, porque
+// os serviços que o usam deixam de lhe chegar. Devolve false se cancelado.
+export async function setAddonState(project: string, env: string, a: Addon, state: "stop" | "start"): Promise<boolean> {
+  if (
+    state === "stop" &&
+    !confirm(`Parar ${a.slug}? Os serviços que usam ${a.envVars.join(", ")} deixam de lhe chegar até o arrancares. Os dados ficam.`)
+  ) {
+    return false;
+  }
+  await api(envPath(project, env, "addons", a.slug, state), { method: "POST" });
+  return true;
+}
+
+// addonStatus: um addon parado de propósito mostra-se "parado", não falhado.
+export function addonStatus(a: Addon): { label: string; className: string } {
+  if (a.desiredState === "stopped") return { label: a.status === "stopped" || a.status === "missing" ? "parado" : "a parar", className: "badge" };
+  return { label: a.status, className: statusBadge(a.status) };
 }
 
 export function formatBytes(n: number): string {
