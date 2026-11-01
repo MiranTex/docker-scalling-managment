@@ -152,6 +152,64 @@ func TestDeleteAddonPurge(t *testing.T) {
 	}
 }
 
+func TestAddonStopStart(t *testing.T) {
+	ctx := context.Background()
+	svc, docker := newTestService(t)
+	svc.cfg.PostgresImage = "postgres:17-alpine"
+	setupEnv(t, svc)
+	if _, err := svc.CreateAddon(ctx, "loja", "prod", CreateAddonInput{Slug: "db", Kind: "postgres"}, "t"); err != nil {
+		t.Fatal(err)
+	}
+	state := func() string {
+		info, err := docker.InspectContainer(ctx, "bs-loja-prod-db")
+		if err != nil {
+			return "missing"
+		}
+		return info.State.Status
+	}
+
+	if err := svc.SetAddonState(ctx, "loja", "prod", "db", "stopped"); err != nil {
+		t.Fatal(err)
+	}
+	if got := state(); got != "exited" {
+		t.Fatalf("depois de parar: %s", got)
+	}
+	// O reconciliador deixa-o parado, e o que precisa dele falha logo.
+	svc.reconcileAddons(ctx)
+	if got := state(); got != "exited" {
+		t.Errorf("o reconciliador arrancou um addon parado de propósito: %s", got)
+	}
+	if _, err := svc.BackupAddon(ctx, "loja", "prod", "db", "t"); !errors.Is(err, ErrConflict) {
+		t.Errorf("backup de um addon parado: err = %v", err)
+	}
+	if _, err := svc.AddonTerminalTarget(ctx, "loja", "prod", "db"); !errors.Is(err, ErrConflict) {
+		t.Errorf("terminal de um addon parado: err = %v", err)
+	}
+	views, _ := svc.ListAddons(ctx, "loja", "prod")
+	if views[0].Status != "stopped" || views[0].DesiredState != "stopped" {
+		t.Errorf("vista = %s / %s", views[0].Status, views[0].DesiredState)
+	}
+
+	if err := svc.SetAddonState(ctx, "loja", "prod", "db", "running"); err != nil {
+		t.Fatal(err)
+	}
+	if got := state(); got != "running" {
+		t.Errorf("depois de arrancar: %s", got)
+	}
+	// Arrancar recria o container se entretanto desapareceu.
+	_ = svc.SetAddonState(ctx, "loja", "prod", "db", "stopped")
+	_ = docker.RemoveContainer(ctx, "bs-loja-prod-db", true)
+	if err := svc.SetAddonState(ctx, "loja", "prod", "db", "running"); err != nil {
+		t.Fatal(err)
+	}
+	if got := state(); got != "running" {
+		t.Errorf("depois de arrancar sem container: %s", got)
+	}
+	if err := svc.SetAddonState(ctx, "loja", "prod", "db", "paused"); !errors.Is(err, ErrInvalid) {
+		t.Errorf("estado inválido: err = %v", err)
+	}
+}
+
 func TestBackupJob(t *testing.T) {
 	ctx := context.Background()
 	svc, docker := newTestService(t)

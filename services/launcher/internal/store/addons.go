@@ -30,18 +30,20 @@ type Addon struct {
 	LastBackupAt  *time.Time `json:"lastBackupAt,omitempty"`
 	// PublicEndpoint: um storage com endereço público (ver
 	// platform/storagepublic.go).
-	PublicEndpoint bool      `json:"publicEndpoint"`
-	CreatedAt      time.Time `json:"createdAt"`
-	CreatedBy      string    `json:"createdBy"`
+	PublicEndpoint bool `json:"publicEndpoint"`
+	// DesiredState: running ou stopped (parado de propósito).
+	DesiredState string    `json:"desiredState"`
+	CreatedAt    time.Time `json:"createdAt"`
+	CreatedBy    string    `json:"createdBy"`
 }
 
 const addonColumns = `id, environment_id, slug, kind, image, env_var, vcpu::float8, memory_mb,
-	backup_enabled, last_backup_at, public_endpoint, created_at, created_by`
+	backup_enabled, last_backup_at, public_endpoint, desired_state, created_at, created_by`
 
 func scanAddon(row interface{ Scan(...any) error }) (Addon, error) {
 	var a Addon
 	err := row.Scan(&a.ID, &a.EnvironmentID, &a.Slug, &a.Kind, &a.Image, &a.EnvVar, &a.VCPU, &a.MemoryMB,
-		&a.BackupEnabled, &a.LastBackupAt, &a.PublicEndpoint, &a.CreatedAt, &a.CreatedBy)
+		&a.BackupEnabled, &a.LastBackupAt, &a.PublicEndpoint, &a.DesiredState, &a.CreatedAt, &a.CreatedBy)
 	return a, err
 }
 
@@ -107,6 +109,14 @@ func (db *DB) SetAddonBackupEnabled(ctx context.Context, id string, enabled bool
 	_, err := db.sql.ExecContext(ctx, `UPDATE launcher.addons SET backup_enabled = $2 WHERE id = $1`, id, enabled)
 	if err != nil {
 		return fmt.Errorf("store: atualizando addon %q: %w", id, err)
+	}
+	return nil
+}
+
+func (db *DB) SetAddonDesiredState(ctx context.Context, id, state string) error {
+	_, err := db.sql.ExecContext(ctx, `UPDATE launcher.addons SET desired_state = $2 WHERE id = $1`, id, state)
+	if err != nil {
+		return fmt.Errorf("store: atualizando estado do addon %q: %w", id, err)
 	}
 	return nil
 }

@@ -9,7 +9,7 @@ import Modal from "@/components/Modal";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { api, envPath, statusBadge, type Addon, type Bucket } from "@/lib/platformClient";
+import { addonStatus, api, envPath, setAddonState, type Addon, type Bucket } from "@/lib/platformClient";
 import { useCan } from "@/lib/projectRole";
 import ConfirmModal from "../../../../../admin/database/ConfirmModal";
 
@@ -54,7 +54,7 @@ export default function AddonClient({ project, env, addon: slug }: { project: st
         return;
       }
       setAddon(a);
-      if (a.kind === "storage") setBuckets(await api<Bucket[]>(`${base}/buckets`));
+      if (a.kind === "storage" && a.desiredState !== "stopped") setBuckets(await api<Bucket[]>(`${base}/buckets`));
     } catch (e) {
       setError((e as Error).message);
     }
@@ -91,6 +91,7 @@ export default function AddonClient({ project, env, addon: slug }: { project: st
     );
   }
 
+  const stopped = addon.desiredState === "stopped";
   const togglePublic = () =>
     run(
       () => api(base, { method: "PATCH", body: JSON.stringify({ publicEndpoint: !addon.publicEndpoint }) }),
@@ -110,6 +111,19 @@ export default function AddonClient({ project, env, addon: slug }: { project: st
       setForm(EMPTY);
       setCreating(false);
       router.push(`${envHref}/addons/${slug}/buckets/${name}`);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  async function changeState(state: "stop" | "start") {
+    setError(null);
+    setNotice(null);
+    try {
+      if (!(await setAddonState(project, env, addon!, state))) return;
+      setNotice(state === "stop" ? `${slug} parado.` : `${slug} a arrancar.`);
+      setBuckets(null);
+      await load();
     } catch (e) {
       setError((e as Error).message);
     }
@@ -137,7 +151,7 @@ export default function AddonClient({ project, env, addon: slug }: { project: st
           ]}
         />
         <h1>
-          {slug} <span className={statusBadge(addon.status)}>{addon.status}</span>
+          {slug} <span className={addonStatus(addon).className}>{addonStatus(addon).label}</span>
         </h1>
         {error && <div className="error">{error}</div>}
         {notice && <div className="notice">{notice}</div>}
@@ -146,9 +160,20 @@ export default function AddonClient({ project, env, addon: slug }: { project: st
         </p>
         {canEdit && (
           <div className="actions">
-            <button className="secondary" onClick={() => setTerminal(true)} title="Shell no container (weed shell disponível)">
-              Terminal
-            </button>
+            {stopped ? (
+              <button className="secondary" onClick={() => changeState("start")}>
+                Arrancar
+              </button>
+            ) : (
+              <>
+                <button className="secondary" onClick={() => setTerminal(true)} title="Shell no container (weed shell disponível)">
+                  Terminal
+                </button>
+                <button className="secondary" onClick={() => changeState("stop")}>
+                  Parar
+                </button>
+              </>
+            )}
             <button className="danger" onClick={() => setConfirmDelete(true)}>
               Apagar addon
             </button>
@@ -201,7 +226,7 @@ export default function AddonClient({ project, env, addon: slug }: { project: st
 
       {tab === "buckets" && (
         <div className="card full">
-          {canEdit && (
+          {canEdit && !stopped && (
             <div className="page-header">
               <span />
               <button className="primary" onClick={() => setCreating(true)}>
@@ -209,7 +234,9 @@ export default function AddonClient({ project, env, addon: slug }: { project: st
               </button>
             </div>
           )}
-          {!buckets ? (
+          {stopped ? (
+            <p className="muted">O {slug} está parado -- arranca-o para ver e gerir os buckets.</p>
+          ) : !buckets ? (
             <Loading />
           ) : (
             <div style={{ overflowX: "auto" }}>

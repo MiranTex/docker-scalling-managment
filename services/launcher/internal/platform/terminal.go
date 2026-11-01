@@ -65,6 +65,9 @@ func (s *Service) AddonTerminalTarget(ctx context.Context, projectSlug, envSlug,
 	if err != nil {
 		return TerminalTarget{}, err
 	}
+	if err := errAddonStopped(a); err != nil {
+		return TerminalTarget{}, err
+	}
 	name := addonContainerName(p, e, a)
 	info, err := s.docker.InspectContainer(ctx, name)
 	if err != nil || !info.State.Running || info.Config.Labels[LabelAddon] != a.ID || !inEnvironment(info.Config.Labels, p, e) {

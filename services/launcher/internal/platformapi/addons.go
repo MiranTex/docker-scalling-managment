@@ -160,6 +160,18 @@ func (a *API) deleteAddon(w http.ResponseWriter, r *http.Request, _ principal) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (a *API) setAddonState(state string) handlerFunc {
+	return func(w http.ResponseWriter, r *http.Request, who principal) {
+		p, e, addon := addonPath(r)
+		if err := a.svc.SetAddonState(r.Context(), p, e, addon, state); err != nil {
+			a.fail(w, err)
+			return
+		}
+		a.audit.Log(who.Subject, "addon."+map[string]string{"stopped": "stop", "running": "start"}[state], p+"/"+e+"/"+addon, "")
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
 func (a *API) listBackups(w http.ResponseWriter, r *http.Request, _ principal) {
 	backups, err := a.svc.ListAddonBackups(r.Context(), r.PathValue("project"), r.PathValue("env"), r.PathValue("addon"))
 	if err != nil {

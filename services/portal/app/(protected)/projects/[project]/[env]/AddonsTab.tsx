@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import Modal from "@/components/Modal";
 import TerminalModal from "@/components/TerminalModal";
 import CopyCommand from "@/components/CopyCommand";
-import { api, envPath, formatBytes, statusBadge, type Addon, type Backup } from "@/lib/platformClient";
+import { addonStatus, api, envPath, formatBytes, setAddonState, type Addon, type Backup } from "@/lib/platformClient";
 import ConfirmModal from "../../../admin/database/ConfirmModal";
 import Link from "next/link";
 import { useCan } from "@/lib/projectRole";
@@ -88,6 +88,18 @@ export default function AddonsTab({ project, env }: { project: string; env: stri
     try {
       await api(envPath(project, env, "addons", a.slug, "backups"), { method: "POST" });
       setNotice(`Backup de ${a.slug} a correr -- acompanha no separador Jobs.`);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  async function setState(a: Addon, state: "stop" | "start") {
+    setError(null);
+    setNotice(null);
+    try {
+      if (!(await setAddonState(project, env, a, state))) return;
+      setNotice(state === "stop" ? `${a.slug} parado.` : `${a.slug} a arrancar.`);
+      await load();
     } catch (e) {
       setError((e as Error).message);
     }
@@ -183,7 +195,7 @@ export default function AddonsTab({ project, env }: { project: string; env: stri
                   )}
                 </td>
                 <td>
-                  <span className={statusBadge(a.status)}>{a.status}</span>
+                  <span className={addonStatus(a).className}>{addonStatus(a).label}</span>
                 </td>
                 <td>
                   {(a.envVars ?? [a.envVar]).map((v) => (
@@ -239,9 +251,20 @@ export default function AddonsTab({ project, env }: { project: string; env: stri
                 <td>
                   {canEdit && (
                   <div className="actions">
-                    <button className="secondary" onClick={() => setTerminal(a)} title={`Shell no container (${KINDS[a.kind]?.shell ?? "sh"})`}>
-                      Terminal
-                    </button>
+                    {a.desiredState !== "stopped" && (
+                      <button className="secondary" onClick={() => setTerminal(a)} title={`Shell no container (${KINDS[a.kind]?.shell ?? "sh"})`}>
+                        Terminal
+                      </button>
+                    )}
+                    {a.desiredState === "stopped" ? (
+                      <button className="secondary" onClick={() => setState(a, "start")}>
+                        Arrancar
+                      </button>
+                    ) : (
+                      <button className="secondary" onClick={() => setState(a, "stop")}>
+                        Parar
+                      </button>
+                    )}
                     <button className="danger" onClick={() => setDeleteTarget(a)}>
                       Apagar
                     </button>

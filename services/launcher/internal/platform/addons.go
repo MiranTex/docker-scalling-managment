@@ -216,7 +216,7 @@ func (s *Service) CreateAddon(ctx context.Context, projectSlug, envSlug string, 
 	if err := validHostSlug("slug do addon", in.Slug); err != nil {
 		return AddonView{}, err
 	}
-	a := store.Addon{ID: newID(), EnvironmentID: e.ID, Slug: in.Slug, Kind: in.Kind, EnvVar: in.EnvVar, VCPU: in.VCPU, MemoryMB: in.MemoryMB, BackupEnabled: true, CreatedBy: by}
+	a := store.Addon{ID: newID(), EnvironmentID: e.ID, Slug: in.Slug, Kind: in.Kind, EnvVar: in.EnvVar, VCPU: in.VCPU, MemoryMB: in.MemoryMB, BackupEnabled: true, DesiredState: store.DesiredRunning, CreatedBy: by}
 	switch in.Kind {
 	case store.AddonPostgres:
 		a.Image = s.cfg.PostgresImage
@@ -461,6 +461,68 @@ func (s *Service) addonScope(ctx context.Context, projectSlug, envSlug, addonSlu
 	return p, e, a, nil
 }
 
+// errAddonStopped: o que precisa do container a correr (terminal, túnel,
+// ficheiros, backup) falha logo, em vez de esperar por um timeout.
+func errAddonStopped(a store.Addon) error {
+	if a.DesiredState == store.DesiredStopped {
+		return fmt.Errorf("%w: o addon %s está parado -- arranca-o primeiro", ErrConflict, a.Slug)
+	}
+	return nil
+}
+
+// SetAddonState pára ("stopped") ou arranca ("running") um addon. Parado,
+// o container fica (e os dados no volume) e o reconciliador deixa-o
+// estar; arrancar é imediato.
+func (s *Service) SetAddonState(ctx context.Context, projectSlug, envSlug, addonSlug, state string) error {
+	p, e, a, err := s.addonScope(ctx, projectSlug, envSlug, addonSlug)
+	if err != nil {
+		return err
+	}
+	if state != store.DesiredRunning && state != store.DesiredStopped {
+		return invalid("estado %q desconhecido", state)
+	}
+	s.reconcileMu.Lock()
+	defer s.reconcileMu.Unlock()
+	if err := s.db.SetAddonDesiredState(ctx, a.ID, state); err != nil {
+		return err
+	}
+	a.DesiredState = state
+	name := addonContainerName(p, e, a)
+	if state == store.DesiredStopped {
+		if err := s.docker.StopContainer(ctx, name, 30); err != nil && !isNotFound(err) {
+			return fmt.Errorf("parando o addon: %w", err)
+		}
+	} else if err := s.ensureAddonRunning(ctx, p, e, a); err != nil {
+		return err
+	}
+	// O routing de um storage (endereço público, domínios dos buckets) só
+	// aponta para containers a correr.
+	if a.Kind == store.AddonStorage {
+		s.syncRouting(ctx)
+	}
+	return nil
+}
+
+// ensureAddonRunning recria o container se desapareceu (o volume de dados
+// continua lá) e arranca-o se estiver parado.
+func (s *Service) ensureAddonRunning(ctx context.Context, p store.Project, e store.Environment, a store.Addon) error {
+	name := addonContainerName(p, e, a)
+	info, err := s.docker.InspectContainer(ctx, name)
+	switch {
+	case isNotFound(err):
+		user, pw, err := s.addonLogin(ctx, e.ID, a)
+		if err != nil {
+			return err
+		}
+		return s.startAddonContainer(ctx, p, e, a, user, pw)
+	case err != nil:
+		return err
+	case !info.State.Running && info.State.Status != "restarting":
+		return s.docker.StartContainer(ctx, name)
+	}
+	return nil
+}
+
 // DeleteAddon remove o container e o segredo. Os volumes (dados e
 // backups) só vão com purge -- apagar uma base por engano não deve ser
 // irreversível por defeito.
@@ -594,6 +656,9 @@ func (s *Service) BackupAddon(ctx context.Context, projectSlug, envSlug, addonSl
 	if err != nil {
 		return store.Job{}, err
 	}
+	if err := errAddonStopped(a); err != nil {
+		return store.Job{}, err
+	}
 	req, err := s.backupJob(ctx, p, e, a, by)
 	if err != nil {
 		return store.Job{}, err
@@ -659,6 +724,9 @@ func (s *Service) RestoreAddon(ctx context.Context, projectSlug, envSlug, addonS
 	}
 	if a.Kind != store.AddonPostgres {
 		return store.Job{}, invalid("restore só existe para addons postgres")
+	}
+	if err := errAddonStopped(a); err != nil {
+		return store.Job{}, err
 	}
 	if !backupFileRe.MatchString(file) {
 		return store.Job{}, invalid("ficheiro de backup %q inválido", file)

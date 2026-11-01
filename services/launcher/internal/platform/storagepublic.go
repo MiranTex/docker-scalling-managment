@@ -76,6 +76,9 @@ func (s *Service) storageScope(ctx context.Context, projectSlug, envSlug, addonS
 
 // storageClient fala com a API do addon com as credenciais dele.
 func (s *Service) storageClient(ctx context.Context, p store.Project, e store.Environment, a store.Addon) (*objstore.Client, error) {
+	if err := errAddonStopped(a); err != nil {
+		return nil, err
+	}
 	user, pw, err := s.addonLogin(ctx, e.ID, a)
 	if err != nil {
 		return nil, err

@@ -137,6 +137,8 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+addons, developer(a.createAddon))
 	mux.HandleFunc("PATCH "+addons+"/{addon}", developer(a.updateAddon))
 	mux.HandleFunc("DELETE "+addons+"/{addon}", developer(a.deleteAddon))
+	mux.HandleFunc("POST "+addons+"/{addon}/stop", developer(a.setAddonState("stopped")))
+	mux.HandleFunc("POST "+addons+"/{addon}/start", developer(a.setAddonState("running")))
 	mux.HandleFunc("GET "+addons+"/{addon}/backups", viewer(a.listBackups))
 	mux.HandleFunc("POST "+addons+"/{addon}/backups", developer(a.createBackup))
 	mux.HandleFunc("POST "+addons+"/{addon}/restore", developer(a.restoreBackup))
